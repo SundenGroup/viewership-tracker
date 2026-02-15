@@ -1,0 +1,285 @@
+import { useState, useMemo, useCallback } from 'react';
+import { Card, Button, FormField } from '@/components/common';
+import { Select } from '@/components/common/Select';
+import { useMutation } from '@/hooks/useMutation';
+import * as api from '@/services/api';
+import { formatTimeAgo, formatDate } from '@/utils/formatters';
+import type { SeriesWithStages, ScopeLevel, ReportPayload } from '@/types/api';
+import type { ReportPayloadQuery } from '@/services/api';
+
+interface ExportPanelProps {
+  seriesId: string;
+  seriesDetail: SeriesWithStages | null;
+}
+
+interface ExportRecord {
+  id: string;
+  timestamp: string;
+  scope: string;
+  entityLabel: string;
+  format: string;
+  url?: string;
+}
+
+const SCOPE_OPTIONS = [
+  { value: 'series', label: 'Series' },
+  { value: 'stage', label: 'Stage' },
+  { value: 'day', label: 'Broadcast Day' },
+];
+
+const FORMAT_OPTIONS = [
+  { value: 'csv', label: 'CSV' },
+  { value: 'json', label: 'JSON' },
+  { value: 'report', label: 'Report (PDF-ready)' },
+];
+
+export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
+  const [scope, setScope] = useState<ScopeLevel>('series');
+  const [entityId, setEntityId] = useState<string>(seriesId);
+  const [format, setFormat] = useState<'csv' | 'json' | 'report'>('csv');
+  const [recentExports, setRecentExports] = useState<ExportRecord[]>([]);
+  const [reportData, setReportData] = useState<ReportPayload | null>(null);
+
+  // Build entity options based on scope
+  const entityOptions = useMemo(() => {
+    if (!seriesDetail) return [];
+
+    if (scope === 'series') {
+      return [{ value: seriesId, label: seriesDetail.name }];
+    }
+
+    if (scope === 'stage') {
+      return seriesDetail.stages.map((s) => ({
+        value: s.id,
+        label: s.name,
+      }));
+    }
+
+    // scope === 'day'
+    const days: { value: string; label: string }[] = [];
+    for (const stage of seriesDetail.stages) {
+      for (const day of stage.broadcast_days) {
+        days.push({
+          value: day.id,
+          label: `${stage.name} > ${day.label} (${formatDate(day.date)})`,
+        });
+      }
+    }
+    return days;
+  }, [scope, seriesId, seriesDetail]);
+
+  // Auto-select first entity when scope changes
+  const handleScopeChange = useCallback(
+    (newScope: ScopeLevel) => {
+      setScope(newScope);
+      setReportData(null);
+      if (newScope === 'series') {
+        setEntityId(seriesId);
+      } else {
+        // Reset entity - will be set by next render
+        setEntityId('');
+      }
+    },
+    [seriesId],
+  );
+
+  // Report mutation
+  const fetchReport = useCallback(
+    (query: ReportPayloadQuery) => api.getReportPayload(query),
+    [],
+  );
+  const { mutate: generateReport, loading: reportLoading, error: reportError } =
+    useMutation<ReportPayload, [ReportPayloadQuery]>(fetchReport);
+
+  const getEntityLabel = useCallback(() => {
+    const found = entityOptions.find((o) => o.value === entityId);
+    return found?.label ?? entityId;
+  }, [entityOptions, entityId]);
+
+  const addExportRecord = useCallback(
+    (fmt: string, url?: string) => {
+      setRecentExports((prev) => [
+        {
+          id: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          scope,
+          entityLabel: getEntityLabel(),
+          format: fmt,
+          url,
+        },
+        ...prev,
+      ]);
+    },
+    [scope, getEntityLabel],
+  );
+
+  const handleExport = async () => {
+    if (!entityId) return;
+
+    if (format === 'csv' || format === 'json') {
+      const url =
+        format === 'csv'
+          ? api.getExportCsvUrl(scope, entityId)
+          : api.getExportJsonUrl(scope, entityId);
+
+      // Trigger browser download
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `clutch-export-${scope}-${entityId.slice(0, 8)}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      addExportRecord(format.toUpperCase(), url);
+    } else {
+      // Report
+      const result = await generateReport({ scope, id: entityId });
+      if (result) {
+        setReportData(result);
+        addExportRecord('Report');
+      }
+    }
+  };
+
+  return (
+    <Card title="Export Data" subtitle="Download viewership data or generate reports">
+      <div className="space-y-4">
+        {/* Selectors row */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <FormField label="Scope">
+            <Select
+              options={SCOPE_OPTIONS}
+              value={scope}
+              onChange={(e) => handleScopeChange(e.target.value as ScopeLevel)}
+            />
+          </FormField>
+
+          <FormField label="Entity">
+            <Select
+              options={entityOptions}
+              value={entityId}
+              onChange={(e) => {
+                setEntityId(e.target.value);
+                setReportData(null);
+              }}
+              placeholder={entityOptions.length === 0 ? 'No options' : 'Select...'}
+              disabled={entityOptions.length === 0}
+            />
+          </FormField>
+
+          <FormField label="Format">
+            <Select
+              options={FORMAT_OPTIONS}
+              value={format}
+              onChange={(e) => {
+                setFormat(e.target.value as 'csv' | 'json' | 'report');
+                setReportData(null);
+              }}
+            />
+          </FormField>
+        </div>
+
+        {/* Export button */}
+        <div className="flex items-center gap-3">
+          <Button
+            variant="primary"
+            onClick={handleExport}
+            loading={reportLoading}
+            disabled={!entityId}
+          >
+            {format === 'report' ? 'Generate Report' : `Export ${format.toUpperCase()}`}
+          </Button>
+
+          {reportError && (
+            <span className="text-xs text-accent-red">{reportError}</span>
+          )}
+        </div>
+
+        {/* Report preview */}
+        {reportData && (
+          <div className="rounded-lg border border-navy-700/50 bg-navy-800/60 p-4">
+            <div className="mb-2 flex items-center gap-2">
+              <svg className="h-4 w-4 text-accent-green" viewBox="0 0 20 20" fill="currentColor">
+                <path
+                  fillRule="evenodd"
+                  d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              <span className="text-sm font-medium text-gray-200">Report Generated</span>
+            </div>
+            <div className="space-y-1 text-xs text-gray-400">
+              <p>
+                <span className="text-gray-500">Series:</span>{' '}
+                {reportData.series.name}
+              </p>
+              <p>
+                <span className="text-gray-500">Generated:</span>{' '}
+                {formatDate(reportData.generatedAt)}
+              </p>
+              <p>
+                <span className="text-gray-500">Snapshots:</span>{' '}
+                {reportData.snapshotCount.toLocaleString()}
+              </p>
+              <p>
+                <span className="text-gray-500">Stages:</span>{' '}
+                {reportData.stages.length}
+              </p>
+              <p>
+                <span className="text-gray-500">Broadcast Days:</span>{' '}
+                {reportData.broadcastDays.length}
+              </p>
+            </div>
+            <p className="mt-2 text-[11px] text-gray-600">
+              Use your browser&apos;s Print function (Ctrl+P / Cmd+P) to save as PDF.
+            </p>
+          </div>
+        )}
+
+        {/* Recent exports */}
+        {recentExports.length > 0 && (
+          <div>
+            <h4 className="mb-2 text-xs font-medium text-gray-500">Recent Exports</h4>
+            <div className="space-y-1">
+              {recentExports.slice(0, 5).map((exp) => (
+                <div
+                  key={exp.id}
+                  className="flex items-center justify-between rounded-lg bg-navy-800/40 px-3 py-1.5 text-xs"
+                >
+                  <div className="flex items-center gap-2 text-gray-400">
+                    <span className="font-mono text-[10px] text-gray-600">
+                      {formatTimeAgo(exp.timestamp)}
+                    </span>
+                    <span>{exp.scope}</span>
+                    <span className="text-gray-600">/</span>
+                    <span className="truncate max-w-[150px]">{exp.entityLabel}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded bg-navy-700 px-1.5 py-0.5 text-[10px] font-medium text-gray-300">
+                      {exp.format}
+                    </span>
+                    {exp.url && (
+                      <a
+                        href={exp.url}
+                        download
+                        className="text-clutch-red hover:text-[#ff4070] transition-colors"
+                      >
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                          <path
+                            fillRule="evenodd"
+                            d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}

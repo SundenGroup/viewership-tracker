@@ -1,0 +1,527 @@
+import type { Knex } from 'knex';
+import logger from '../utils/logger';
+import { config } from '../utils/config';
+import { AdapterRegistry } from '../adapters';
+import type { MultiPlatformChannel } from '../adapters';
+import type { ChannelSnapshot } from '../adapters/types';
+import type { BroadcastDay } from '../models/broadcast-day';
+import type { Channel } from '../models/channel';
+import type { DiscoveryService } from './discovery-service';
+import type { ReportAgent } from '../agent/report-agent';
+
+// ── Callback types ──────────────────────────────────────────────────────
+
+export type SnapshotBroadcastFn = (pollResult: PollCycleResult, seriesIds: string[]) => void;
+export type StatusBroadcastFn = (
+  seriesId: string,
+  broadcastDayId: string,
+  previousStatus: string,
+  newStatus: string,
+) => void;
+
+// ── Result / Status types ───────────────────────────────────────────────
+
+export interface PollCycleResult {
+  timestamp: Date;
+  channelsPolled: number;
+  totalCCV: number;
+  snapshotsCreated: number;
+  errors: string[];
+  duration: number;
+}
+
+export interface OrchestratorStatus {
+  state: 'running' | 'stopped';
+  activeBroadcastDays: number;
+  lastPollTime: Date | null;
+  lastPollResult: PollCycleResult | null;
+}
+
+// ── Constants ───────────────────────────────────────────────────────────
+
+const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 5;
+
+// ── PollingOrchestrator ─────────────────────────────────────────────────
+
+export class PollingOrchestrator {
+  private readonly registry: AdapterRegistry;
+  private readonly db: Knex;
+  private discoveryService: DiscoveryService | null = null;
+  private intervalHandle: ReturnType<typeof setInterval> | null = null;
+  private activeBroadcastDayCount = 0;
+  private lastPollTime: Date | null = null;
+  private lastPollResult: PollCycleResult | null = null;
+  private consecutiveZeroResults = 0;
+  private activeSeriesIds = new Set<string>();
+  private snapshotBroadcast: SnapshotBroadcastFn | null = null;
+  private statusBroadcast: StatusBroadcastFn | null = null;
+  private reportAgent: ReportAgent | null = null;
+
+  constructor(registry: AdapterRegistry, db: Knex) {
+    this.registry = registry;
+    this.db = db;
+  }
+
+  /**
+   * Attach a DiscoveryService for automatic lifecycle management.
+   * When a broadcast day goes live, discovery starts for that series.
+   * When all broadcast days for a series complete, discovery stops.
+   */
+  setDiscoveryService(service: DiscoveryService): void {
+    this.discoveryService = service;
+  }
+
+  /**
+   * Attach a callback to broadcast snapshot updates via WebSocket
+   * after each successful poll cycle.
+   */
+  setSnapshotBroadcast(fn: SnapshotBroadcastFn): void {
+    this.snapshotBroadcast = fn;
+  }
+
+  /**
+   * Attach a callback to broadcast status updates via WebSocket
+   * when broadcast day statuses transition.
+   */
+  setStatusBroadcast(fn: StatusBroadcastFn): void {
+    this.statusBroadcast = fn;
+  }
+
+  /**
+   * Attach a ReportAgent for auto-triggered report generation.
+   * When broadcast days complete, the agent checks series metadata
+   * for auto-report configuration and generates reports accordingly.
+   */
+  setReportAgent(agent: ReportAgent): void {
+    this.reportAgent = agent;
+  }
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────
+
+  start(): void {
+    if (this.intervalHandle) {
+      logger.warn('[Poll] Orchestrator already running — ignoring start()');
+      return;
+    }
+
+    const intervalMs = config.polling.intervalMs;
+    logger.info(`[Poll] Starting polling orchestrator (interval: ${intervalMs}ms)`);
+
+    // Run the first cycle immediately
+    this.tick();
+
+    // Schedule subsequent cycles
+    this.intervalHandle = setInterval(() => this.tick(), intervalMs);
+  }
+
+  stop(): void {
+    if (this.intervalHandle) {
+      clearInterval(this.intervalHandle);
+      this.intervalHandle = null;
+    }
+    // Also stop all discovery intervals
+    if (this.discoveryService) {
+      this.discoveryService.stopAll();
+    }
+    this.activeSeriesIds.clear();
+    logger.info('[Poll] Polling orchestrator stopped');
+  }
+
+  getStatus(): OrchestratorStatus {
+    return {
+      state: this.intervalHandle ? 'running' : 'stopped',
+      activeBroadcastDays: this.activeBroadcastDayCount,
+      lastPollTime: this.lastPollTime,
+      lastPollResult: this.lastPollResult,
+    };
+  }
+
+  // ── Tick (wraps executePollCycle with lifecycle management) ────────────
+
+  private async tick(): Promise<void> {
+    try {
+      await this.executePollCycle();
+    } catch (err) {
+      logger.error('[Poll] Unhandled error in tick', {
+        error: (err as Error).message,
+        stack: (err as Error).stack,
+      });
+    }
+  }
+
+  // ── Broadcast day status transitions ──────────────────────────────────
+
+  private async transitionBroadcastDayStatuses(): Promise<void> {
+    const now = new Date();
+
+    try {
+      // Identify days about to go live (so we know which series are affected)
+      const goingLive = await this.db<BroadcastDay>('broadcast_days')
+        .where('status', 'scheduled')
+        .whereNotNull('broadcast_start')
+        .where('broadcast_start', '<=', now)
+        .select('id', 'series_id');
+
+      if (goingLive.length > 0) {
+        // Scheduled → Live: broadcast_start has passed
+        await this.db('broadcast_days')
+          .whereIn('id', goingLive.map((d) => d.id))
+          .update({ status: 'live', updated_at: this.db.fn.now() });
+
+        logger.info(`[Poll] Auto-transitioned ${goingLive.length} broadcast day(s) from scheduled → live`);
+
+        // Broadcast status updates via WebSocket
+        if (this.statusBroadcast) {
+          for (const day of goingLive) {
+            this.statusBroadcast(day.series_id, day.id, 'scheduled', 'live');
+          }
+        }
+
+        // Start discovery for newly live series
+        const newLiveSeriesIds = [...new Set(goingLive.map((d) => d.series_id))];
+        for (const sid of newLiveSeriesIds) {
+          if (!this.activeSeriesIds.has(sid) && this.discoveryService) {
+            this.discoveryService.startDiscovery(sid);
+            this.activeSeriesIds.add(sid);
+          }
+        }
+      }
+
+      // Identify days about to complete (so we can check if all days for that series are done)
+      const goingCompleted = await this.db<BroadcastDay>('broadcast_days')
+        .where('status', 'live')
+        .whereNotNull('broadcast_end')
+        .where('broadcast_end', '<=', now)
+        .select('id', 'series_id');
+
+      if (goingCompleted.length > 0) {
+        // Live → Completed: broadcast_end has passed
+        await this.db('broadcast_days')
+          .whereIn('id', goingCompleted.map((d) => d.id))
+          .update({ status: 'completed', updated_at: this.db.fn.now() });
+
+        logger.info(`[Poll] Auto-transitioned ${goingCompleted.length} broadcast day(s) from live → completed`);
+
+        // Broadcast status updates via WebSocket
+        if (this.statusBroadcast) {
+          for (const day of goingCompleted) {
+            this.statusBroadcast(day.series_id, day.id, 'live', 'completed');
+          }
+        }
+
+        // Check if all broadcast days for each affected series are now completed
+        const completedSeriesIds = [...new Set(goingCompleted.map((d) => d.series_id))];
+        for (const sid of completedSeriesIds) {
+          const remainingLive = await this.db('broadcast_days')
+            .where('series_id', sid)
+            .where('status', 'live')
+            .count('* as count')
+            .first();
+
+          const liveCount = parseInt((remainingLive as { count: string })?.count ?? '0', 10);
+          if (liveCount === 0 && this.discoveryService) {
+            this.discoveryService.stopDiscovery(sid);
+            this.activeSeriesIds.delete(sid);
+          }
+        }
+
+        // Auto-trigger report generation for completed broadcast days
+        if (this.reportAgent) {
+          // Fire-and-forget: don't block the poll cycle on report generation
+          for (const day of goingCompleted) {
+            this.reportAgent.onBroadcastDayCompleted(day.id, day.series_id).catch((err) => {
+              logger.error('[Poll] Auto daily recap trigger failed', {
+                broadcastDayId: day.id,
+                error: (err as Error).message,
+              });
+            });
+          }
+
+          // Check for completed stages (all days in stage are completed)
+          const completedStageIds = new Set<string>();
+          for (const day of goingCompleted) {
+            const stageDay = await this.db<BroadcastDay>('broadcast_days')
+              .where('id', day.id)
+              .select('stage_id')
+              .first();
+            if (stageDay?.stage_id) {
+              const remainingInStage = await this.db('broadcast_days')
+                .where('stage_id', stageDay.stage_id)
+                .whereNot('status', 'completed')
+                .count('* as count')
+                .first();
+              const remaining = parseInt((remainingInStage as { count: string })?.count ?? '0', 10);
+              if (remaining === 0 && !completedStageIds.has(stageDay.stage_id)) {
+                completedStageIds.add(stageDay.stage_id);
+                this.reportAgent.onStageCompleted(stageDay.stage_id, day.series_id).catch((err) => {
+                  logger.error('[Poll] Auto stage report trigger failed', {
+                    stageId: stageDay.stage_id,
+                    error: (err as Error).message,
+                  });
+                });
+              }
+            }
+          }
+
+          // Check for completed series (all stages/days are completed)
+          for (const sid of completedSeriesIds) {
+            const remainingScheduledOrLive = await this.db('broadcast_days')
+              .where('series_id', sid)
+              .whereNot('status', 'completed')
+              .count('* as count')
+              .first();
+            const remaining = parseInt((remainingScheduledOrLive as { count: string })?.count ?? '0', 10);
+            if (remaining === 0) {
+              this.reportAgent.onSeriesCompleted(sid).catch((err) => {
+                logger.error('[Poll] Auto series report trigger failed', {
+                  seriesId: sid,
+                  error: (err as Error).message,
+                });
+              });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      logger.error('[Poll] Failed to transition broadcast day statuses', {
+        error: (err as Error).message,
+      });
+    }
+  }
+
+  // ── Core poll cycle ───────────────────────────────────────────────────
+
+  async executePollCycle(): Promise<PollCycleResult> {
+    const startTime = Date.now();
+    const timestamp = new Date();
+    const errors: string[] = [];
+
+    // 0. Auto-transition broadcast day statuses before querying
+    await this.transitionBroadcastDayStatuses();
+
+    // 1. Find all active (live) broadcast days
+    const activeDays = await this.db<BroadcastDay>('broadcast_days')
+      .where('status', 'live')
+      .select('*');
+
+    this.activeBroadcastDayCount = activeDays.length;
+
+    // Ensure discovery is running for all series with live broadcast days
+    if (this.discoveryService && activeDays.length > 0) {
+      const liveSeriesIds = [...new Set(activeDays.map((d) => d.series_id))];
+      for (const sid of liveSeriesIds) {
+        if (!this.activeSeriesIds.has(sid)) {
+          this.discoveryService.startDiscovery(sid);
+          this.activeSeriesIds.add(sid);
+        }
+      }
+    }
+
+    if (activeDays.length === 0) {
+      logger.debug('[Poll] No active broadcast days — idle cycle');
+      const result: PollCycleResult = {
+        timestamp,
+        channelsPolled: 0,
+        totalCCV: 0,
+        snapshotsCreated: 0,
+        errors: [],
+        duration: Date.now() - startTime,
+      };
+      this.lastPollResult = result;
+      this.lastPollTime = result.timestamp;
+      return result;
+    }
+
+    logger.debug(`[Poll] ${activeDays.length} active broadcast day(s)`);
+
+    // 2. Collect all active channels for each broadcast day's series
+    //    Deduplicate by channel ID (same channel may appear across overlapping days)
+    const seriesIds = [...new Set(activeDays.map((d) => d.series_id))];
+
+    const channels = await this.db<Channel>('channels')
+      .whereIn('series_id', seriesIds)
+      .where('is_active', true)
+      .select('*');
+
+    if (channels.length === 0) {
+      logger.debug('[Poll] No active channels found for live broadcast days');
+      const result: PollCycleResult = {
+        timestamp,
+        channelsPolled: 0,
+        totalCCV: 0,
+        snapshotsCreated: 0,
+        errors: [],
+        duration: Date.now() - startTime,
+      };
+      this.lastPollResult = result;
+      this.lastPollTime = result.timestamp;
+      return result;
+    }
+
+    // Deduplicate channels by id (a channel belongs to one series, but we want unique set)
+    const uniqueChannels = new Map<string, Channel>();
+    for (const ch of channels) {
+      uniqueChannels.set(ch.id, ch);
+    }
+
+    const channelList = Array.from(uniqueChannels.values());
+
+    // 3. Build multi-platform request
+    const multiPlatformChannels: MultiPlatformChannel[] = channelList.map((ch) => ({
+      platform: ch.platform as MultiPlatformChannel['platform'],
+      channelIdentifier: ch.channel_identifier,
+    }));
+
+    // 4. Fetch viewer counts from all platforms in parallel
+    let snapshots: ChannelSnapshot[];
+    try {
+      snapshots = await this.registry.getViewerCountsMultiPlatform(multiPlatformChannels);
+    } catch (err) {
+      const errMsg = `All adapters failed: ${(err as Error).message}`;
+      logger.error(`[Poll] ${errMsg}`);
+      errors.push(errMsg);
+      this.trackConsecutiveFailure(true);
+      const result: PollCycleResult = {
+        timestamp,
+        channelsPolled: channelList.length,
+        totalCCV: 0,
+        snapshotsCreated: 0,
+        errors,
+        duration: Date.now() - startTime,
+      };
+      this.lastPollResult = result;
+      this.lastPollTime = result.timestamp;
+      return result;
+    }
+
+    // 5. Build a lookup: channel_identifier+platform → adapter snapshot
+    const snapshotMap = new Map<string, ChannelSnapshot>();
+    for (const snap of snapshots) {
+      // Use the original identifier (lowercase for matching)
+      snapshotMap.set(snap.channelIdentifier.toLowerCase(), snap);
+    }
+
+    // 6. Build broadcast day lookup: series_id → broadcast_day(s)
+    const seriesToDays = new Map<string, BroadcastDay[]>();
+    for (const day of activeDays) {
+      const list = seriesToDays.get(day.series_id) ?? [];
+      list.push(day);
+      seriesToDays.set(day.series_id, list);
+    }
+
+    // 7. Build snapshot insert rows
+    //    Each channel gets one snapshot per active broadcast day in its series
+    interface SnapshotInsertRow {
+      channel_id: string;
+      broadcast_day_id: string;
+      stage_id: string;
+      series_id: string;
+      timestamp: Date;
+      concurrent_viewers: number;
+      platform: string;
+      language: string | null;
+      region: string | null;
+    }
+
+    const insertRows: SnapshotInsertRow[] = [];
+    let totalCCV = 0;
+
+    for (const channel of channelList) {
+      const adapterResult = snapshotMap.get(channel.channel_identifier.toLowerCase());
+      const viewers = adapterResult?.concurrentViewers ?? 0;
+
+      // Each channel's series may have multiple active broadcast days
+      const days = seriesToDays.get(channel.series_id) ?? [];
+      for (const day of days) {
+        insertRows.push({
+          channel_id: channel.id,
+          broadcast_day_id: day.id,
+          stage_id: day.stage_id,
+          series_id: day.series_id,
+          timestamp,
+          concurrent_viewers: viewers,
+          platform: channel.platform,
+          language: channel.language,
+          region: channel.region,
+        });
+      }
+
+      // Only count CCV once per unique channel (avoid double-counting across days)
+      totalCCV += viewers;
+    }
+
+    // 8. Batch insert in a single transaction
+    let snapshotsCreated = 0;
+    if (insertRows.length > 0) {
+      try {
+        await this.db.transaction(async (trx) => {
+          // Knex batch insert in chunks of 500 to avoid query size limits
+          const BATCH_SIZE = 500;
+          for (let i = 0; i < insertRows.length; i += BATCH_SIZE) {
+            const batch = insertRows.slice(i, i + BATCH_SIZE);
+            await trx('viewership_snapshots').insert(batch);
+          }
+        });
+        snapshotsCreated = insertRows.length;
+      } catch (err) {
+        const errMsg = `Database insert failed: ${(err as Error).message}`;
+        logger.error(`[Poll] ${errMsg}`);
+        errors.push(errMsg);
+      }
+    }
+
+    // 9. Track consecutive failures
+    const hasResults = snapshotsCreated > 0;
+    this.trackConsecutiveFailure(!hasResults);
+
+    const duration = Date.now() - startTime;
+
+    logger.info(
+      `[Poll] Cycle complete: ${channelList.length} channels, ${totalCCV} total CCV, ${snapshotsCreated} snapshots, ${duration}ms`,
+    );
+
+    const result: PollCycleResult = {
+      timestamp,
+      channelsPolled: channelList.length,
+      totalCCV,
+      snapshotsCreated,
+      errors,
+      duration,
+    };
+
+    this.lastPollResult = result;
+    this.lastPollTime = result.timestamp;
+
+    // Broadcast snapshot update via WebSocket
+    if (this.snapshotBroadcast && snapshotsCreated > 0) {
+      try {
+        this.snapshotBroadcast(result, seriesIds);
+      } catch (err) {
+        logger.error('[Poll] Snapshot broadcast failed', { error: (err as Error).message });
+      }
+    }
+
+    return result;
+  }
+
+  // ── Consecutive failure tracking ──────────────────────────────────────
+
+  private trackConsecutiveFailure(failed: boolean): void {
+    if (failed) {
+      this.consecutiveZeroResults++;
+      if (this.consecutiveZeroResults >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD) {
+        logger.error(
+          `[Poll] CRITICAL: ${this.consecutiveZeroResults} consecutive cycles with zero results. ` +
+          `Check adapter health and database connectivity.`,
+        );
+      }
+    } else {
+      if (this.consecutiveZeroResults > 0) {
+        logger.info(
+          `[Poll] Recovery: successful cycle after ${this.consecutiveZeroResults} consecutive failures`,
+        );
+      }
+      this.consecutiveZeroResults = 0;
+    }
+  }
+}

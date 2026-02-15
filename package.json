@@ -1,0 +1,44 @@
+{
+  "name": "clutch-viewership-tracker",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "nodemon --exec ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "migrate": "knex migrate:latest --knexfile knexfile.ts",
+    "migrate:make": "knex migrate:make --knexfile knexfile.ts -x ts",
+    "test": "echo \"No tests configured yet\" && exit 0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
+    "axios": "^1.13.5",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.4",
+    "express": "^5.2.1",
+    "knex": "^3.1.0",
+    "node-cron": "^4.2.1",
+    "pg": "^8.18.0",
+    "playwright": "^1.58.2",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "uuid": "^13.0.0",
+    "winston": "^3.19.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.2.2",
+    "@types/node-cron": "^3.0.11",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "nodemon": "^3.1.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

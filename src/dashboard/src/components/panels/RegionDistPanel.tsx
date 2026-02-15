@@ -1,0 +1,111 @@
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+} from 'recharts';
+import { Card, LoadingOverlay } from '@/components/common';
+import { formatCompact, formatNumber, formatPercent } from '@/utils/formatters';
+import type { BreakdownEntry } from '@/types/api';
+
+interface RegionDistPanelProps {
+  data: BreakdownEntry[];
+  loading: boolean;
+}
+
+// Warm neutral palette (distinct from LanguageDistPanel)
+const BAR_COLORS = [
+  '#f59e0b', // amber-500
+  '#10b981', // emerald-500
+  '#6366f1', // indigo-500
+  '#ec4899', // pink-500
+  '#14b8a6', // teal-500
+  '#f97316', // orange-500
+  '#8b5cf6', // violet-500
+  '#06b6d4', // cyan-500
+  '#84cc16', // lime-500
+  '#ef4444', // red-500
+];
+
+export function RegionDistPanel({ data, loading }: RegionDistPanelProps) {
+  if (loading && data.length === 0) {
+    return <Card title="Region Distribution"><LoadingOverlay /></Card>;
+  }
+
+  if (data.length === 0) {
+    return (
+      <Card title="Region Distribution">
+        <p className="py-8 text-center text-sm text-gray-500">No region data available.</p>
+      </Card>
+    );
+  }
+
+  // Sort descending by totalCCV
+  const sorted = [...data]
+    .filter((d) => d.region ?? d.key)
+    .sort((a, b) => b.totalCCV - a.totalCCV);
+
+  const grandTotal = sorted.reduce((sum, d) => sum + d.totalCCV, 0);
+
+  const chartData = sorted.map((d, i) => ({
+    name: d.region ?? d.key ?? 'Unknown',
+    value: d.totalCCV,
+    pct: grandTotal > 0 ? d.totalCCV / grandTotal : 0,
+    color: BAR_COLORS[i % BAR_COLORS.length]!,
+  }));
+
+  const chartHeight = Math.max(200, chartData.length * 36 + 40);
+
+  return (
+    <Card title="Region Distribution" subtitle={`${sorted.length} regions detected`}>
+      <ResponsiveContainer width="100%" height={chartHeight}>
+        <BarChart
+          data={chartData}
+          layout="vertical"
+          margin={{ top: 0, right: 10, left: 0, bottom: 0 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" horizontal={false} />
+          <XAxis
+            type="number"
+            stroke="#6b7280"
+            fontSize={11}
+            tickLine={false}
+            axisLine={false}
+            tickFormatter={(v: number) => formatCompact(v)}
+          />
+          <YAxis
+            type="category"
+            dataKey="name"
+            stroke="#6b7280"
+            fontSize={11}
+            tickLine={false}
+            axisLine={false}
+            width={80}
+          />
+          <Tooltip
+            contentStyle={{
+              backgroundColor: '#141820',
+              border: '1px solid #2A2F36',
+              borderRadius: '8px',
+              fontSize: '12px',
+            }}
+            labelStyle={{ color: '#9ca3af' }}
+            formatter={(value: number, _name: string, entry: { payload?: { pct: number } }) => [
+              `${formatNumber(value)} (${formatPercent(entry.payload?.pct ?? 0)})`,
+              'Total CCV',
+            ]}
+          />
+          <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
+            {chartData.map((entry, i) => (
+              <Cell key={i} fill={entry.color} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </Card>
+  );
+}

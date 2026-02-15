@@ -1,0 +1,50 @@
+{
+  "platform_colors": {
+    "twitch": "#9146FF",
+    "youtube": "#FF0000",
+    "kick": "#53FC18",
+    "tiktok": "#010101"
+  },
+  "language_colors": [
+    "#3b82f6",
+    "#22d3ee",
+    "#a78bfa",
+    "#34d399",
+    "#fbbf24",
+    "#fb923c",
+    "#f472b6",
+    "#818cf8",
+    "#2dd4bf",
+    "#e879f9"
+  ],
+  "region_colors": [
+    "#f59e0b",
+    "#10b981",
+    "#6366f1",
+    "#ec4899",
+    "#14b8a6",
+    "#f97316",
+    "#8b5cf6",
+    "#06b6d4",
+    "#84cc16",
+    "#ef4444"
+  ],
+  "font": {
+    "family": "Arial",
+    "title_size": 14,
+    "label_size": 10,
+    "tick_size": 9,
+    "annotation_size": 8
+  },
+  "dpi": 300,
+  "figure_width_full": 10,
+  "figure_width_half": 5,
+  "figure_height_default": 5,
+  "background_color": "#FFFFFF",
+  "grid_color": "#E5E7EB",
+  "grid_alpha": 0.5,
+  "text_color": "#374151",
+  "border_color": "#D1D5DB",
+  "bar_width": 0.6,
+  "donut_inner_radius": 0.55
+}

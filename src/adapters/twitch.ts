@@ -1,0 +1,279 @@
+import axios, { AxiosInstance, AxiosError } from 'axios';
+import logger from '../utils/logger';
+import { config } from '../utils/config';
+import type { PlatformAdapter, ChannelSnapshot, DiscoveredStream } from './types';
+
+const HELIX_BASE = 'https://api.twitch.tv/helix';
+const TOKEN_URL = 'https://id.twitch.tv/oauth2/token';
+const MAX_CHANNELS_PER_REQUEST = 100;
+const MAX_RETRIES = 3;
+const BASE_RETRY_DELAY_MS = 1000;
+const TOKEN_REFRESH_BUFFER_MS = 60_000; // refresh 60s before expiry
+
+interface TwitchTokenResponse {
+  access_token: string;
+  expires_in: number;
+  token_type: string;
+}
+
+interface TwitchStreamData {
+  id: string;
+  user_id: string;
+  user_login: string;
+  user_name: string;
+  game_id: string;
+  game_name: string;
+  type: string;
+  title: string;
+  viewer_count: number;
+  started_at: string;
+  language: string;
+  tags: string[];
+}
+
+interface TwitchGameData {
+  id: string;
+  name: string;
+  box_art_url: string;
+}
+
+interface TwitchPaginatedResponse<T> {
+  data: T[];
+  pagination: { cursor?: string };
+}
+
+export class TwitchAdapter implements PlatformAdapter {
+  readonly platform = 'twitch';
+
+  private accessToken: string | null = null;
+  private tokenExpiresAt = 0;
+  private readonly clientId: string;
+  private readonly clientSecret: string;
+  private readonly client: AxiosInstance;
+  private readonly gameIdCache = new Map<string, string>();
+
+  constructor(clientId?: string, clientSecret?: string) {
+    this.clientId = clientId ?? config.twitch.clientId;
+    this.clientSecret = clientSecret ?? config.twitch.clientSecret;
+
+    this.client = axios.create({ baseURL: HELIX_BASE });
+    this.client.interceptors.request.use(async (reqConfig) => {
+      await this.ensureToken();
+      reqConfig.headers['Client-ID'] = this.clientId;
+      reqConfig.headers['Authorization'] = `Bearer ${this.accessToken}`;
+      return reqConfig;
+    });
+  }
+
+  // ── Authentication ──────────────────────────────────────────────────
+
+  private async ensureToken(): Promise<void> {
+    if (this.accessToken && Date.now() < this.tokenExpiresAt - TOKEN_REFRESH_BUFFER_MS) {
+      return;
+    }
+    await this.refreshToken();
+  }
+
+  private async refreshToken(): Promise<void> {
+    try {
+      const { data } = await axios.post<TwitchTokenResponse>(TOKEN_URL, null, {
+        params: {
+          client_id: this.clientId,
+          client_secret: this.clientSecret,
+          grant_type: 'client_credentials',
+        },
+      });
+
+      this.accessToken = data.access_token;
+      this.tokenExpiresAt = Date.now() + data.expires_in * 1000;
+      logger.info('Twitch OAuth token refreshed', {
+        expiresIn: data.expires_in,
+      });
+    } catch (err) {
+      this.accessToken = null;
+      this.tokenExpiresAt = 0;
+      logger.error('Failed to refresh Twitch OAuth token', { error: err });
+      throw err;
+    }
+  }
+
+  // ── Retry wrapper ───────────────────────────────────────────────────
+
+  private async requestWithRetry<T>(
+    fn: () => Promise<T>,
+    context: string,
+  ): Promise<T | null> {
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        const axErr = err as AxiosError;
+        const status = axErr.response?.status;
+        const retryable = status === 429 || (status !== undefined && status >= 500);
+
+        if (!retryable || attempt === MAX_RETRIES) {
+          logger.warn(`Twitch API ${context} failed after ${attempt + 1} attempt(s)`, {
+            status,
+            message: axErr.message,
+          });
+          return null;
+        }
+
+        const delay = BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+        logger.warn(`Twitch API ${context} returned ${status}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`, {
+          status,
+        });
+        await sleep(delay);
+      }
+    }
+    return null;
+  }
+
+  // ── Core Methods ────────────────────────────────────────────────────
+
+  async getViewerCounts(channelNames: string[]): Promise<ChannelSnapshot[]> {
+    if (channelNames.length === 0) return [];
+
+    const batches = chunk(channelNames, MAX_CHANNELS_PER_REQUEST);
+    const results: ChannelSnapshot[] = [];
+
+    for (const batch of batches) {
+      const liveStreams = await this.requestWithRetry(async () => {
+        const params = new URLSearchParams();
+        for (const name of batch) {
+          params.append('user_login', name);
+        }
+        params.set('first', '100');
+
+        const { data } = await this.client.get<TwitchPaginatedResponse<TwitchStreamData>>(
+          '/streams',
+          { params },
+        );
+        return data.data;
+      }, 'getViewerCounts');
+
+      const liveMap = new Map<string, TwitchStreamData>();
+      if (liveStreams) {
+        for (const stream of liveStreams) {
+          liveMap.set(stream.user_login.toLowerCase(), stream);
+        }
+      }
+
+      for (const name of batch) {
+        const stream = liveMap.get(name.toLowerCase());
+        if (stream) {
+          results.push({
+            channelIdentifier: stream.user_login,
+            displayName: stream.user_name,
+            concurrentViewers: stream.viewer_count,
+            isLive: true,
+            language: stream.language,
+            gameName: stream.game_name,
+            title: stream.title,
+            startedAt: stream.started_at,
+          });
+        } else {
+          results.push({
+            channelIdentifier: name,
+            displayName: name,
+            concurrentViewers: 0,
+            isLive: false,
+            language: null,
+            gameName: null,
+            title: null,
+            startedAt: null,
+          });
+        }
+      }
+    }
+
+    logger.debug(`Twitch getViewerCounts: ${results.filter(r => r.isLive).length}/${channelNames.length} live`);
+    return results;
+  }
+
+  async searchLiveStreams(
+    gameId?: string,
+    keywords?: string[],
+  ): Promise<DiscoveredStream[]> {
+    const allStreams: DiscoveredStream[] = [];
+    let cursor: string | undefined;
+    const maxPages = 5;
+
+    for (let page = 0; page < maxPages; page++) {
+      const pageResult = await this.requestWithRetry(async () => {
+        const params: Record<string, string> = { first: '100' };
+        if (gameId) params.game_id = gameId;
+        if (cursor) params.after = cursor;
+
+        const { data } = await this.client.get<TwitchPaginatedResponse<TwitchStreamData>>(
+          '/streams',
+          { params },
+        );
+        return data;
+      }, 'searchLiveStreams');
+
+      if (!pageResult || pageResult.data.length === 0) break;
+
+      for (const stream of pageResult.data) {
+        const matches = !keywords || keywords.length === 0 || keywords.some(
+          (kw) => stream.title.toLowerCase().includes(kw.toLowerCase()),
+        );
+
+        if (matches) {
+          allStreams.push({
+            channelIdentifier: stream.user_login,
+            displayName: stream.user_name,
+            concurrentViewers: stream.viewer_count,
+            language: stream.language,
+            title: stream.title,
+          });
+        }
+      }
+
+      cursor = pageResult.pagination.cursor;
+      if (!cursor) break;
+    }
+
+    logger.debug(`Twitch searchLiveStreams: found ${allStreams.length} streams`, {
+      gameId,
+      keywords,
+    });
+    return allStreams;
+  }
+
+  async getGameId(gameName: string): Promise<string | null> {
+    const cached = this.gameIdCache.get(gameName.toLowerCase());
+    if (cached) return cached;
+
+    const result = await this.requestWithRetry(async () => {
+      const { data } = await this.client.get<TwitchPaginatedResponse<TwitchGameData>>(
+        '/games',
+        { params: { name: gameName } },
+      );
+      return data.data;
+    }, 'getGameId');
+
+    if (!result || result.length === 0) {
+      logger.warn(`Twitch game not found: "${gameName}"`);
+      return null;
+    }
+
+    const id = result[0].id;
+    this.gameIdCache.set(gameName.toLowerCase(), id);
+    return id;
+  }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

@@ -1,0 +1,112 @@
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+} from 'recharts';
+import { Card, LoadingOverlay } from '@/components/common';
+import { formatCompact, formatNumber, formatPercent } from '@/utils/formatters';
+import type { BreakdownEntry } from '@/types/api';
+
+interface LanguageDistPanelProps {
+  data: BreakdownEntry[];
+  loading: boolean;
+}
+
+// Accessible neutral palette
+const BAR_COLORS = [
+  '#60a5fa', // blue-400
+  '#34d399', // emerald-400
+  '#a78bfa', // violet-400
+  '#fbbf24', // amber-400
+  '#fb923c', // orange-400
+  '#f472b6', // pink-400
+  '#2dd4bf', // teal-400
+  '#818cf8', // indigo-400
+  '#a3e635', // lime-400
+  '#e879f9', // fuchsia-400
+];
+
+export function LanguageDistPanel({ data, loading }: LanguageDistPanelProps) {
+  if (loading && data.length === 0) {
+    return <Card title="Language Distribution"><LoadingOverlay /></Card>;
+  }
+
+  if (data.length === 0) {
+    return (
+      <Card title="Language Distribution">
+        <p className="py-8 text-center text-sm text-gray-500">No language data available.</p>
+      </Card>
+    );
+  }
+
+  // Sort descending by totalCCV
+  const sorted = [...data]
+    .filter((d) => d.language ?? d.key)
+    .sort((a, b) => b.totalCCV - a.totalCCV);
+
+  // Compute grand total for percentages
+  const grandTotal = sorted.reduce((sum, d) => sum + d.totalCCV, 0);
+
+  const chartData = sorted.map((d, i) => ({
+    name: (d.language ?? d.key ?? 'Unknown').toUpperCase(),
+    value: d.totalCCV,
+    pct: grandTotal > 0 ? d.totalCCV / grandTotal : 0,
+    color: BAR_COLORS[i % BAR_COLORS.length]!,
+  }));
+
+  const chartHeight = Math.max(200, chartData.length * 36 + 40);
+
+  return (
+    <Card title="Language Distribution" subtitle={`${sorted.length} languages detected`}>
+      <ResponsiveContainer width="100%" height={chartHeight}>
+        <BarChart
+          data={chartData}
+          layout="vertical"
+          margin={{ top: 0, right: 10, left: 0, bottom: 0 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" horizontal={false} />
+          <XAxis
+            type="number"
+            stroke="#6b7280"
+            fontSize={11}
+            tickLine={false}
+            axisLine={false}
+            tickFormatter={(v: number) => formatCompact(v)}
+          />
+          <YAxis
+            type="category"
+            dataKey="name"
+            stroke="#6b7280"
+            fontSize={11}
+            tickLine={false}
+            axisLine={false}
+            width={50}
+          />
+          <Tooltip
+            contentStyle={{
+              backgroundColor: '#141820',
+              border: '1px solid #2A2F36',
+              borderRadius: '8px',
+              fontSize: '12px',
+            }}
+            labelStyle={{ color: '#9ca3af' }}
+            formatter={(value: number, _name: string, entry: { payload?: { pct: number } }) => [
+              `${formatNumber(value)} (${formatPercent(entry.payload?.pct ?? 0)})`,
+              'Total CCV',
+            ]}
+          />
+          <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
+            {chartData.map((entry, i) => (
+              <Cell key={i} fill={entry.color} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </Card>
+  );
+}
