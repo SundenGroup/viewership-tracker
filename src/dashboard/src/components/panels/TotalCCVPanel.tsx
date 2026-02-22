@@ -86,7 +86,7 @@ export function TotalCCVPanel({ data, loading }: TotalCCVPanelProps) {
 
         {/* Main CCV number */}
         <div
-          className={`font-mono text-5xl font-bold tracking-tight transition-colors duration-300 lg:text-6xl ${
+          className={`font-mono text-7xl font-bold tracking-tight transition-colors duration-300 lg:text-8xl ${
             loading && !data
               ? 'text-gray-700'
               : isLive
@@ -98,12 +98,12 @@ export function TotalCCVPanel({ data, loading }: TotalCCVPanelProps) {
         </div>
 
         {/* Label */}
-        <div className="mt-1 text-sm font-medium text-gray-400">
+        <div className="mt-2 text-base font-medium text-gray-400">
           Concurrent Viewers
         </div>
 
         {/* Subtitle */}
-        <div className="mt-3 text-xs text-gray-500">
+        <div className="mt-2 text-sm text-gray-500">
           {loading && !data
             ? 'Loading...'
             : channelCount === 0

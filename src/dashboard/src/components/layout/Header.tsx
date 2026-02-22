@@ -40,29 +40,16 @@ export function Header({
       <div className="flex h-14 items-center justify-between px-6">
         {/* Logo / Brand + Nav */}
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
-            {/* Clutch Brand Mark — abstract 'C' in white on dark */}
-            <div className="flex h-8 w-8 items-center justify-center">
-              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10c2.04 0 3.93-.61 5.51-1.66l-1.53-1.78A7.96 7.96 0 0112 20c-4.42 0-8-3.58-8-8s3.58-8 8-8c1.75 0 3.36.57 4.68 1.52l1.56-1.75A9.96 9.96 0 0012 2z"
-                  fill="#EBEFF4"
-                />
-                <path
-                  d="M19.5 6.5l-2.8 3.15A5.96 5.96 0 0118 12c0 3.31-2.69 6-6 6-1.2 0-2.31-.35-3.24-.96l-1.53 1.72C8.64 19.58 10.25 20 12 20c4.42 0 8-3.58 8-8 0-2.1-.81-4.01-2.14-5.44l1.64-1.84V6.5z"
-                  fill="#EBEFF4"
-                  opacity="0.4"
-                />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-sm font-extrabold text-clutch-white tracking-wide">
-                CLUTCH
-              </h1>
-              <p className="text-[10px] font-medium text-gray-500 uppercase tracking-widest">
-                Viewership Tracker
-              </p>
-            </div>
+          <div className="flex items-center gap-2">
+            {/* Official Clutch horizontal logo */}
+            <img
+              src="/assets/clutch-logo-white.png"
+              alt="Clutch Group"
+              className="h-6"
+            />
+            <span className="text-[10px] font-medium text-gray-500 uppercase tracking-widest border-l border-navy-700 pl-2">
+              Viewership Tracker
+            </span>
           </div>
 
           {/* Navigation */}
