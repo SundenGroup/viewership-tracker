@@ -17,6 +17,7 @@ jobs:
           username: root
           key: ${{ secrets.DROPLET_SSH_KEY }}
           port: 22
+          fingerprint: SHA256:p2c3kljX/n/rSdoTpP59M9lFgOGinkHwE6yO4HjlxrA
           command_timeout: 8m
           script: |
             export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
