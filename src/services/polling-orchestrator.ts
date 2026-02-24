@@ -194,14 +194,7 @@ export class PollingOrchestrator {
           }
         }
 
-        // Start discovery for newly live series (unless user explicitly stopped it)
-        const newLiveSeriesIds = [...new Set(goingLive.map((d) => d.series_id))];
-        for (const sid of newLiveSeriesIds) {
-          if (!this.activeSeriesIds.has(sid) && !this.userStoppedDiscoveryIds.has(sid) && this.discoveryService) {
-            this.discoveryService.startDiscovery(sid);
-            this.activeSeriesIds.add(sid);
-          }
-        }
+        // Discovery is user-initiated only — no auto-start here
       }
 
       // Identify days about to complete (so we can check if all days for that series are done)
@@ -323,17 +316,7 @@ export class PollingOrchestrator {
 
     this.activeBroadcastDayCount = activeDays.length;
 
-    // Ensure discovery is running for all series with live broadcast days
-    // (unless user explicitly stopped it via the UI)
-    if (this.discoveryService && activeDays.length > 0) {
-      const liveSeriesIds = [...new Set(activeDays.map((d) => d.series_id))];
-      for (const sid of liveSeriesIds) {
-        if (!this.activeSeriesIds.has(sid) && !this.userStoppedDiscoveryIds.has(sid)) {
-          this.discoveryService.startDiscovery(sid);
-          this.activeSeriesIds.add(sid);
-        }
-      }
-    }
+    // Discovery is user-initiated only — no auto-start in poll cycle
 
     if (activeDays.length === 0) {
       logger.debug('[Poll] No active broadcast days — idle cycle');
