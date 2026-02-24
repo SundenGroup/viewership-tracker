@@ -10,15 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DROPLET_IP }}
-          username: root
-          key: ${{ secrets.DROPLET_SSH_KEY }}
-          port: 22
-          fingerprint: SHA256:p2c3kljX/n/rSdoTpP59M9lFgOGinkHwE6yO4HjlxrA
-          command_timeout: 8m
-          script: |
-            export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-            bash /opt/clutch-viewership-tracker/deploy/update.sh
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -t ed25519 ${{ secrets.DROPLET_IP }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@${{ secrets.DROPLET_IP }} \
+            'bash /opt/clutch-viewership-tracker/deploy/update.sh'
