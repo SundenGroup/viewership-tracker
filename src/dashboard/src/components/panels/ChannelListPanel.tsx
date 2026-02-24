@@ -102,6 +102,11 @@ function ChannelRow({
 }) {
   const [acting, setActing] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editLang, setEditLang] = useState(channel.language ?? '');
+  const [editRegion, setEditRegion] = useState(channel.region ?? '');
+  const [editTier, setEditTier] = useState(channel.tier ?? 'community');
+  const [editDisplayName, setEditDisplayName] = useState(channel.display_name);
 
   const handleToggle = async () => {
     setActing(true);
@@ -139,6 +144,95 @@ function ChannelRow({
       setConfirmRemove(false);
     }
   };
+
+  const handleSaveEdit = async () => {
+    setActing(true);
+    try {
+      await api.updateChannel(channel.id, {
+        display_name: editDisplayName,
+        language: editLang || undefined,
+        region: editRegion || undefined,
+        tier: editTier,
+      });
+      setEditing(false);
+      onRefresh();
+    } catch {
+      // Silently fail
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditLang(channel.language ?? '');
+    setEditRegion(channel.region ?? '');
+    setEditTier(channel.tier ?? 'community');
+    setEditDisplayName(channel.display_name);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <tr className="border-b border-navy-700/30 last:border-0 bg-navy-800/50">
+        <td colSpan={7} className="py-3 px-2">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <PlatformBadge platform={channel.platform} />
+              <span className="text-gray-200 font-medium">{channel.channel_identifier}</span>
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              <div>
+                <label className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-gray-500">Display Name</label>
+                <input
+                  type="text"
+                  value={editDisplayName}
+                  onChange={(e) => setEditDisplayName(e.target.value)}
+                  className="w-full rounded bg-navy-800 border border-navy-700 px-2 py-1 text-xs text-gray-200 focus:border-clutch-red/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-gray-500">Language</label>
+                <input
+                  type="text"
+                  value={editLang}
+                  onChange={(e) => setEditLang(e.target.value)}
+                  placeholder="e.g. en"
+                  className="w-full rounded bg-navy-800 border border-navy-700 px-2 py-1 text-xs text-gray-200 focus:border-clutch-red/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-gray-500">Region</label>
+                <input
+                  type="text"
+                  value={editRegion}
+                  onChange={(e) => setEditRegion(e.target.value)}
+                  placeholder="e.g. NA"
+                  className="w-full rounded bg-navy-800 border border-navy-700 px-2 py-1 text-xs text-gray-200 focus:border-clutch-red/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-gray-500">Tier</label>
+                <select
+                  value={editTier}
+                  onChange={(e) => setEditTier(e.target.value as Channel['tier'])}
+                  className="w-full rounded bg-navy-800 border border-navy-700 px-2 py-1 text-xs text-gray-200 focus:border-clutch-red/50 focus:outline-none"
+                >
+                  <option value="official">Official</option>
+                  <option value="partner">Partner</option>
+                  <option value="community">Community</option>
+                  <option value="watchparty">Watch Party</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end gap-1">
+              <Button variant="ghost" size="sm" onClick={handleCancelEdit}>Cancel</Button>
+              <Button variant="primary" size="sm" onClick={handleSaveEdit} loading={acting}>Save</Button>
+            </div>
+          </div>
+        </td>
+      </tr>
+    );
+  }
 
   return (
     <tr className="border-b border-navy-700/30 last:border-0 hover:bg-navy-800/30">
@@ -183,6 +277,15 @@ function ChannelRow({
       <td className="py-2 text-xs text-gray-500">{formatDate(channel.added_at)}</td>
       <td className="py-2 text-right">
         <div className="flex justify-end gap-1">
+          <button
+            onClick={() => setEditing(true)}
+            className="text-gray-600 transition-colors hover:text-gray-300"
+            title="Edit channel"
+          >
+            <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+            </svg>
+          </button>
           <Button
             variant="ghost"
             size="sm"
