@@ -26,6 +26,7 @@
     "playwright": "^1.58.2",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "tsx": "^4.21.0",
     "uuid": "^13.0.0",
     "winston": "^3.19.0",
     "ws": "^8.19.0"

@@ -8,6 +8,7 @@ jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
@@ -15,4 +16,8 @@ jobs:
           host: ${{ secrets.DROPLET_IP }}
           username: root
           key: ${{ secrets.DROPLET_SSH_KEY }}
-          script: bash /opt/clutch-viewership-tracker/deploy/update.sh
+          port: 22
+          command_timeout: 8m
+          script: |
+            export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
+            bash /opt/clutch-viewership-tracker/deploy/update.sh
