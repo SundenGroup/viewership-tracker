@@ -69,15 +69,18 @@ export function usePollingApi<T>(
   const { intervalMs = 10_000, enabled = true } = options;
   const state = useApi(fetcher, deps);
 
+  // Keep a ref to always call the latest refetch (avoids stale closure in setInterval)
+  const refetchRef = useRef(state.refetch);
+  refetchRef.current = state.refetch;
+
   useEffect(() => {
     if (!enabled) return;
 
     const handle = setInterval(() => {
-      state.refetch();
+      refetchRef.current();
     }, intervalMs);
 
     return () => clearInterval(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, intervalMs]);
 
   return state;

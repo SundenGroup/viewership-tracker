@@ -53,6 +53,7 @@ export class PollingOrchestrator {
   private lastPollResult: PollCycleResult | null = null;
   private consecutiveZeroResults = 0;
   private activeSeriesIds = new Set<string>();
+  private userStoppedDiscoveryIds = new Set<string>();
   private snapshotBroadcast: SnapshotBroadcastFn | null = null;
   private statusBroadcast: StatusBroadcastFn | null = null;
   private reportAgent: ReportAgent | null = null;
@@ -94,6 +95,22 @@ export class PollingOrchestrator {
    */
   setReportAgent(agent: ReportAgent): void {
     this.reportAgent = agent;
+  }
+
+  /**
+   * Mark a series as user-stopped so the orchestrator won't auto-restart discovery.
+   */
+  markDiscoveryUserStopped(seriesId: string): void {
+    this.userStoppedDiscoveryIds.add(seriesId);
+    this.activeSeriesIds.delete(seriesId);
+  }
+
+  /**
+   * Clear the user-stopped flag when the user explicitly starts discovery.
+   */
+  markDiscoveryUserStarted(seriesId: string): void {
+    this.userStoppedDiscoveryIds.delete(seriesId);
+    this.activeSeriesIds.add(seriesId);
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────
@@ -177,10 +194,10 @@ export class PollingOrchestrator {
           }
         }
 
-        // Start discovery for newly live series
+        // Start discovery for newly live series (unless user explicitly stopped it)
         const newLiveSeriesIds = [...new Set(goingLive.map((d) => d.series_id))];
         for (const sid of newLiveSeriesIds) {
-          if (!this.activeSeriesIds.has(sid) && this.discoveryService) {
+          if (!this.activeSeriesIds.has(sid) && !this.userStoppedDiscoveryIds.has(sid) && this.discoveryService) {
             this.discoveryService.startDiscovery(sid);
             this.activeSeriesIds.add(sid);
           }
@@ -307,10 +324,11 @@ export class PollingOrchestrator {
     this.activeBroadcastDayCount = activeDays.length;
 
     // Ensure discovery is running for all series with live broadcast days
+    // (unless user explicitly stopped it via the UI)
     if (this.discoveryService && activeDays.length > 0) {
       const liveSeriesIds = [...new Set(activeDays.map((d) => d.series_id))];
       for (const sid of liveSeriesIds) {
-        if (!this.activeSeriesIds.has(sid)) {
+        if (!this.activeSeriesIds.has(sid) && !this.userStoppedDiscoveryIds.has(sid)) {
           this.discoveryService.startDiscovery(sid);
           this.activeSeriesIds.add(sid);
         }

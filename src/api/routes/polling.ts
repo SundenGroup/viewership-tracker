@@ -114,6 +114,8 @@ router.post('/discovery/start/:seriesId', (_req: Request, res: Response, next: N
     if (!svc) return;
     const seriesId = (_req as Request).params.seriesId as string;
     svc.startDiscovery(seriesId);
+    // Clear user-stopped flag so orchestrator won't block auto-start
+    if (orchestrator) orchestrator.markDiscoveryUserStarted(seriesId);
     res.json({ started: true, seriesId });
   } catch (err) {
     next(err);
@@ -127,6 +129,8 @@ router.post('/discovery/stop/:seriesId', (_req: Request, res: Response, next: Ne
     if (!svc) return;
     const seriesId = (_req as Request).params.seriesId as string;
     svc.stopDiscovery(seriesId);
+    // Mark as user-stopped so orchestrator won't auto-restart
+    if (orchestrator) orchestrator.markDiscoveryUserStopped(seriesId);
     res.json({ stopped: true, seriesId });
   } catch (err) {
     next(err);
