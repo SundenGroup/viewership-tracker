@@ -4,6 +4,7 @@ module.exports = {
       name: 'clutch-viewership',
       script: 'dist/index.js',
       cwd: '/opt/clutch-viewership-tracker',
+      node_args: '--import tsx',
       env_production: {
         NODE_ENV: 'production',
       },

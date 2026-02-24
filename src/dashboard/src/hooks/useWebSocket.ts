@@ -39,7 +39,9 @@ export interface UseWebSocketReturn {
 
 // ── Constants ────────────────────────────────────────────────────────────
 
-const DEFAULT_WS_URL = `ws://${window.location.hostname}:${import.meta.env.VITE_WS_PORT ?? '3001'}`;
+const DEFAULT_WS_URL = import.meta.env.DEV
+  ? `ws://${window.location.hostname}:${import.meta.env.VITE_WS_PORT ?? '3001'}`
+  : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const BASE_RECONNECT_DELAY_MS = 1_000;
 const PING_INTERVAL_MS = 25_000;
