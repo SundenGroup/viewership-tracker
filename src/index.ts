@@ -128,7 +128,23 @@ async function bootstrap(): Promise<void> {
   // ── 9. Start WebSocket server ──────────────────────────────────────────
   wsServer.start();
 
-  // ── 10. Startup complete ───────────────────────────────────────────────
+  // ── 10. Auto-resume polling if there are live broadcast days ──────────
+  try {
+    const liveDays = await db('broadcast_days').where('status', 'live').count('* as count').first();
+    const liveCount = parseInt((liveDays as { count: string })?.count ?? '0', 10);
+    if (liveCount > 0) {
+      logger.info(`[CVT] Found ${liveCount} live broadcast day(s) — auto-starting polling orchestrator`);
+      orchestrator.start();
+    } else {
+      logger.info('[CVT] No live broadcast days — polling will start when a broadcast day goes live');
+    }
+  } catch (err) {
+    logger.warn('[CVT] Could not check for live broadcast days on startup', {
+      error: (err as Error).message,
+    });
+  }
+
+  // ── 11. Startup complete ───────────────────────────────────────────────
   logger.info(
     `[CVT] Clutch Viewership Tracker started — API on port ${config.server.port}, WebSocket on port ${config.server.wsPort}`,
   );
