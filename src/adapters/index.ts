@@ -112,17 +112,17 @@ export class AdapterRegistry {
 
     const settled = await Promise.all(platformPromises);
 
-    // Build a lookup: platform+channelIdentifier → ChannelSnapshot
+    // Build a lookup: platform+channelIdentifier (lowercased) → ChannelSnapshot
     const resultMap = new Map<string, ChannelSnapshot>();
     for (const { platform, results } of settled) {
       for (const snapshot of results) {
-        resultMap.set(`${platform}:${snapshot.channelIdentifier}`, snapshot);
+        resultMap.set(`${platform}:${snapshot.channelIdentifier.toLowerCase()}`, snapshot);
       }
     }
 
-    // Return results in the same order as the input
+    // Return results in the same order as the input (case-insensitive match)
     return channels.map((ch) => {
-      const key = `${ch.platform}:${ch.channelIdentifier}`;
+      const key = `${ch.platform}:${ch.channelIdentifier.toLowerCase()}`;
       return resultMap.get(key) ?? {
         channelIdentifier: ch.channelIdentifier,
         displayName: ch.channelIdentifier,
