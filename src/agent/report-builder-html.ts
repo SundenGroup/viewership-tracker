@@ -181,13 +181,13 @@ export function buildHTMLReport(data: HTMLReportData): string {
   const platLabels = aggregated.platformBreakdown.map((p) => capitalize(p.platform));
   const platVH = aggregated.platformBreakdown.map((p) => {
     // Compute viewed hours from totalCCV (which is really sum of per-minute viewers)
-    return parseFloat((p.totalCCV / 60).toFixed(1));
+    return Math.round(p.totalCCV / 60);
   });
   const platColors = aggregated.platformBreakdown.map((p) => platformColor(p.platform));
 
   // Language breakdown for pie chart
   const langLabels = aggregated.languageBreakdown.map((l) => capitalize(l.language || 'Unknown'));
-  const langVH = aggregated.languageBreakdown.map((l) => parseFloat((l.totalCCV / 60).toFixed(1)));
+  const langVH = aggregated.languageBreakdown.map((l) => Math.round(l.totalCCV / 60));
   const langColors = aggregated.languageBreakdown.map((_, i) => langColor(i));
 
   // Tier/category breakdown: aggregate from channels + leaderboard
@@ -210,7 +210,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
   }
   const tierEntries = [...tierMap.entries()].sort((a, b) => b[1].totalCCV - a[1].totalCCV);
   const tierLabels = tierEntries.map(([t]) => tierLabel(t));
-  const tierVH = tierEntries.map(([, v]) => parseFloat((v.totalCCV / 60).toFixed(1)));
+  const tierVH = tierEntries.map(([, v]) => Math.round(v.totalCCV / 60));
   const TIER_COLORS: Record<string, string> = {
     official: '#FF154D',
     partner: '#f0c040',
@@ -230,7 +230,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
       lang: capitalize(channel?.language ?? 'Unknown'),
       avg: Math.round(ch.avgCCV),
       peak: ch.peakCCV,
-      vh: parseFloat(((ch.totalViewedMinutes ?? 0) / 60).toFixed(1)),
+      vh: Math.round((ch.totalViewedMinutes ?? 0) / 60),
     };
   });
 
@@ -238,7 +238,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
   const platTableRows = aggregated.platformBreakdown.map((p) => ({
     label: capitalize(p.platform),
     dotClass: `dot-${p.platform.toLowerCase()}`,
-    vh: fmtDecimal(p.totalCCV / 60),
+    vh: fmtNum(Math.round(p.totalCCV / 60)),
     avg: fmtNum(Math.round(p.avgCCV)),
     peak: fmtNum(p.peakCCV),
   }));
@@ -246,7 +246,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
   const langTableRows = aggregated.languageBreakdown.map((l, i) => ({
     label: capitalize(l.language || 'Unknown'),
     colorIdx: i,
-    vh: fmtDecimal(l.totalCCV / 60),
+    vh: fmtNum(Math.round(l.totalCCV / 60)),
     avg: fmtNum(Math.round(l.avgCCV)),
     peak: fmtNum(l.peakCCV),
   }));
@@ -254,7 +254,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
   const tierTableRows = tierEntries.map(([tier, v]) => ({
     label: tierLabel(tier),
     tierClass: tierTagClass(tier),
-    vh: fmtDecimal(v.totalCCV / 60),
+    vh: fmtNum(Math.round(v.totalCCV / 60)),
     avg: fmtNum(Math.round(v.avgCCV)),
     peak: fmtNum(v.peakCCV),
   }));
@@ -674,7 +674,7 @@ ${platTableRows.map((r) => `          <tr>
           </tr>`).join('\n')}
           <tr class="total-row">
             <td>Total</td>
-            <td>${fmtDecimal(aggregated.totalViewedHours)}</td>
+            <td>${fmtNum(Math.round(aggregated.totalViewedHours))}</td>
             <td>${fmtNum(aggregated.avgCCV)}</td>
             <td>${fmtNum(aggregated.peakCCV)}</td>
           </tr>
@@ -693,7 +693,7 @@ ${langTableRows.map((r) => `          <tr>
           </tr>`).join('\n')}
           <tr class="total-row">
             <td>Total</td>
-            <td>${fmtDecimal(aggregated.totalViewedHours)}</td>
+            <td>${fmtNum(Math.round(aggregated.totalViewedHours))}</td>
             <td>${fmtNum(aggregated.avgCCV)}</td>
             <td>${fmtNum(aggregated.peakCCV)}</td>
           </tr>
@@ -712,7 +712,7 @@ ${tierTableRows.map((r) => `          <tr>
           </tr>`).join('\n')}
           <tr class="total-row">
             <td>Total</td>
-            <td>${fmtDecimal(aggregated.totalViewedHours)}</td>
+            <td>${fmtNum(Math.round(aggregated.totalViewedHours))}</td>
             <td>${fmtNum(aggregated.avgCCV)}</td>
             <td>${fmtNum(aggregated.peakCCV)}</td>
           </tr>
