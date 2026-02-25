@@ -38,7 +38,7 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
     // Set httpOnly cookie
     res.cookie(config.auth.cookieName, token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: config.auth.cookieSecure,
       sameSite: 'lax',
       maxAge: config.auth.cookieMaxAgeMs,
       path: '/',

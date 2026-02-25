@@ -30,6 +30,7 @@ export const config = {
     jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
     bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS || '12', 10),
     cookieName: 'cvt_token',
+    cookieSecure: process.env.COOKIE_SECURE === 'true',
     cookieMaxAgeMs: parseInt(
       process.env.COOKIE_MAX_AGE_MS || String(7 * 24 * 60 * 60 * 1000),
       10,
