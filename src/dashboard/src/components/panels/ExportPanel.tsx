@@ -146,7 +146,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
           skipNarratives: false,
         });
         const reportUrl = api.getReportUrl(result.filePath);
-        window.open(reportUrl, '_blank');
+        window.open(reportUrl, '_blank', 'noopener,noreferrer');
         addExportRecord('HTML', reportUrl);
       } catch (err) {
         setHtmlError(err instanceof api.ApiError ? err.message : (err as Error).message);

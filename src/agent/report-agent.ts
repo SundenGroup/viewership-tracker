@@ -530,6 +530,7 @@ export class ReportAgent {
             platform: e.platform,
             peakCCV: parseInt(e.peak_ccv, 10),
             avgCCV: parseFloat(e.avg_ccv),
+            totalViewedMinutes: parseInt(e.total_viewed_minutes, 10),
           })),
         };
       }),

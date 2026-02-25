@@ -283,6 +283,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { overflow-x: hidden; }
 
   body {
     font-family: 'DM Sans', sans-serif;
@@ -290,6 +291,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
     color: var(--text);
     min-height: 100vh;
     padding: 32px 24px 64px;
+    overflow-x: hidden;
   }
 
   .container { max-width: 1120px; margin: 0 auto; }
@@ -607,9 +609,9 @@ export function buildHTMLReport(data: HTMLReportData): string {
 <div class="container">
 
   <header>
+    <img src="/assets/clutch-logo-white.png" alt="Clutch" style="height:40px;margin-bottom:16px;opacity:0.9;">
     <h1>${seriesName} \u2014 ${esc(scopeTitle)}</h1>
     <p>${subtitle}</p>
-    <div class="powered-by">Powered by Clutch Viewership Tracker</div>
   </header>
 
   <!-- KPIs -->
