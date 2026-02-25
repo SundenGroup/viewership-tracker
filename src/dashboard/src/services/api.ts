@@ -320,6 +320,42 @@ export function getExportJsonUrl(scope: ScopeLevel, id: string) {
   return `${BASE_URL}/api/export/json?scope=${scope}&id=${id}`;
 }
 
+// ── Report Generation ─────────────────────────────────────────────────────
+
+export interface GenerateReportParams {
+  scope: ScopeLevel;
+  id: string;
+  format: 'pdf' | 'docx' | 'html';
+  template?: string;
+  skipNarratives?: boolean;
+}
+
+export interface GenerateReportResult {
+  status: string;
+  filePath: string;
+  scope: string;
+  format: string;
+  seriesName: string;
+  generatedAt: string;
+  duration: number;
+}
+
+export function generateReport(params: GenerateReportParams) {
+  return request<GenerateReportResult>('/api/reports/generate', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+export function getReportUrl(filePath: string) {
+  // filePath from the API is like "reports/series_name/day_2026-02-24.html"
+  // The API serves it at /api/reports/:folder/:filename
+  const parts = filePath.split('/');
+  const folder = parts[parts.length - 2];
+  const filename = parts[parts.length - 1];
+  return `${BASE_URL}/api/reports/${folder}/${filename}`;
+}
+
 // ── Report Payload ─────────────────────────────────────────────────────────
 
 export interface ReportPayloadQuery {

@@ -56,7 +56,7 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
     }
 
     // Validate format
-    const validFormats = ['pdf', 'docx', 'csv', 'xlsx'];
+    const validFormats = ['pdf', 'docx', 'csv', 'xlsx', 'html'];
     if (format && !validFormats.includes(format)) {
       res.status(400).json({ error: `format must be one of: ${validFormats.join(', ')}` });
       return;
@@ -82,7 +82,7 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       id: id as string,
       ids: ids as string[] | undefined,
       template: (template ?? 'standard') as ReportTemplate,
-      format: (format ?? 'pdf') as 'pdf' | 'docx',
+      format: (format ?? 'pdf') as 'pdf' | 'docx' | 'html',
       deliveryMethod: (deliveryMethod ?? 'local') as DeliveryMethod,
       skipNarratives: skipNarratives ?? false,
     });
@@ -193,11 +193,18 @@ router.get('/:folder/:filename', async (req: Request, res: Response, next: NextF
       '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       '.csv': 'text/csv',
+      '.html': 'text/html',
     };
 
     const contentType = contentTypes[ext] ?? 'application/octet-stream';
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    // Serve HTML inline (opens in browser), others as attachment downloads
+    if (ext === '.html') {
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    } else {
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    }
     res.sendFile(filePath);
   } catch (err) {
     next(err);

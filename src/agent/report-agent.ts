@@ -51,6 +51,7 @@ import {
   type TimeSeriesDataPoint,
   type SnapshotRow,
 } from './report-builder';
+import { buildHTMLReport, type HTMLReportData } from './report-builder-html';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -71,7 +72,7 @@ export interface ReportRequest {
   /** For multi_stage: array of stage UUIDs. */
   ids?: string[];
   template?: ReportTemplate;
-  format?: 'pdf' | 'docx';
+  format?: 'pdf' | 'docx' | 'html';
   deliveryMethod?: DeliveryMethod;
   branding?: BrandingConfig;
   /** If true, skip narrative generation (faster). */
@@ -100,7 +101,7 @@ export interface AutoReportConfig {
   dailyRecap?: boolean;
   stageReport?: boolean;
   seriesReport?: boolean;
-  format?: 'pdf' | 'docx';
+  format?: 'pdf' | 'docx' | 'html';
 }
 
 /** Callback for auto-triggered report generation. */
@@ -162,50 +163,85 @@ export class ReportAgent {
     // 2. Validate minimum data quality
     this.validatePayload(payload);
 
-    // 3. Generate charts
-    const chartGenerator = new ChartGenerator();
-    let charts: ChartPaths = {};
-    try {
-      charts = await this.generateCharts(chartGenerator, payload, scope);
-    } catch (err) {
-      logger.error('[ReportAgent] Chart generation failed — continuing without charts', {
-        error: (err as Error).message,
-      });
-    }
+    let finalPath: string;
+    const deliveryMethod = request.deliveryMethod ?? 'local';
 
-    // 4. Generate narrative sections via Claude API
-    let narratives: Narratives = {};
-    if (!request.skipNarratives && this.anthropic) {
+    if (format === 'html') {
+      // ── HTML Report: Chart.js client-side, no Python ─────────────────
+      // 3. Fetch time series data (total + per-platform)
+      const totalTimeSeries = await this.fetchAllTimeSeries(payload.broadcastDays);
+      const platformTimeSeries = await this.fetchGroupedTimeSeries(payload.broadcastDays, 'platform');
+
+      // 4. Generate narratives
+      let narratives: Narratives = {};
+      if (!request.skipNarratives && this.anthropic) {
+        try {
+          narratives = await this.generateNarratives(payload, scope, template);
+        } catch (err) {
+          logger.error('[ReportAgent] Narrative generation failed — continuing without narratives', {
+            error: (err as Error).message,
+          });
+        }
+      }
+
+      // 5. Aggregate metrics and build HTML
+      const aggregated = this.aggregateMetrics(payload.metrics);
+      const builder = new ReportBuilder(request.branding ?? this.branding);
+      const htmlData: HTMLReportData = {
+        payload,
+        totalTimeSeries,
+        platformTimeSeries: platformTimeSeries.map((p) => ({
+          timestamp: p.timestamp,
+          groupKey: p.groupKey,
+          totalCCV: p.totalCCV,
+          channelCount: p.channelCount,
+        })),
+        aggregated,
+        narratives,
+      };
+      const tmpPath = await builder.buildHTML(htmlData);
+
+      // 6. Handle delivery
+      finalPath = await this.handleDelivery(tmpPath, payload, scope, format, deliveryMethod);
+    } else {
+      // ── PDF / DOCX: Python subprocess with matplotlib charts ──────────
+      // 3. Generate charts
+      const chartGenerator = new ChartGenerator();
+      let charts: ChartPaths = {};
       try {
-        narratives = await this.generateNarratives(payload, scope, template);
+        charts = await this.generateCharts(chartGenerator, payload, scope);
       } catch (err) {
-        logger.error('[ReportAgent] Narrative generation failed — continuing without narratives', {
+        logger.error('[ReportAgent] Chart generation failed — continuing without charts', {
           error: (err as Error).message,
         });
       }
+
+      // 4. Generate narrative sections via Claude API
+      let narratives: Narratives = {};
+      if (!request.skipNarratives && this.anthropic) {
+        try {
+          narratives = await this.generateNarratives(payload, scope, template);
+        } catch (err) {
+          logger.error('[ReportAgent] Narrative generation failed — continuing without narratives', {
+            error: (err as Error).message,
+          });
+        }
+      }
+
+      // 5. Assemble the final document
+      const builder = new ReportBuilder(request.branding ?? this.branding);
+      const tmpPath = await builder.buildReport(payload, charts, narratives, {
+        format,
+        template,
+        scope,
+      });
+
+      // 6. Handle delivery
+      finalPath = await this.handleDelivery(tmpPath, payload, scope, format, deliveryMethod);
+
+      // 7. Cleanup temp files
+      await chartGenerator.cleanup();
     }
-
-    // 5. Assemble the final document
-    const builder = new ReportBuilder(request.branding ?? this.branding);
-    const tmpPath = await builder.buildReport(payload, charts, narratives, {
-      format,
-      template,
-      scope,
-    });
-
-    // 6. Handle delivery
-    const deliveryMethod = request.deliveryMethod ?? 'local';
-    const finalPath = await this.handleDelivery(
-      tmpPath,
-      payload,
-      scope,
-      format,
-      deliveryMethod,
-    );
-
-    // 7. Cleanup temp files
-    await chartGenerator.cleanup();
-    // Note: Don't clean builder — the file was moved to final path
 
     const duration = Date.now() - startTime;
     const result: ReportResult = {
@@ -739,6 +775,39 @@ export class ReportAgent {
         for (const b of buckets) {
           allPoints.push({
             timestamp: new Date(b.bucket).toISOString(),
+            totalCCV: parseInt(b.total_ccv, 10),
+            channelCount: parseInt(b.channel_count, 10),
+          });
+        }
+      } catch {
+        // Skip days with no data
+      }
+    }
+
+    return allPoints.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  }
+
+  /**
+   * Fetch grouped time series data for all broadcast days and merge into one array.
+   * Used by the HTML report builder for per-platform line chart overlays.
+   */
+  private async fetchGroupedTimeSeries(
+    broadcastDays: ReportPayload['broadcastDays'],
+    groupBy: 'platform' | 'language',
+  ): Promise<GroupedTimeSeriesPoint[]> {
+    const allPoints: GroupedTimeSeriesPoint[] = [];
+
+    for (const day of broadcastDays) {
+      try {
+        const buckets = await ViewershipSnapshotModel.getGroupedTimeSeriesData(
+          { level: 'day', id: day.id },
+          groupBy,
+          300, // 5-min buckets
+        );
+        for (const b of buckets) {
+          allPoints.push({
+            timestamp: new Date(b.bucket).toISOString(),
+            groupKey: b.group_key ?? 'unknown',
             totalCCV: parseInt(b.total_ccv, 10),
             channelCount: parseInt(b.channel_count, 10),
           });

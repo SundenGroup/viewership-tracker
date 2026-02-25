@@ -30,13 +30,16 @@ const SCOPE_OPTIONS = [
 const FORMAT_OPTIONS = [
   { value: 'csv', label: 'CSV' },
   { value: 'json', label: 'JSON' },
+  { value: 'html', label: 'HTML Report' },
   { value: 'report', label: 'Report (PDF-ready)' },
 ];
 
 export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
   const [scope, setScope] = useState<ScopeLevel>('series');
   const [entityId, setEntityId] = useState<string>(seriesId);
-  const [format, setFormat] = useState<'csv' | 'json' | 'report'>('csv');
+  const [format, setFormat] = useState<'csv' | 'json' | 'html' | 'report'>('csv');
+  const [htmlLoading, setHtmlLoading] = useState(false);
+  const [htmlError, setHtmlError] = useState<string | null>(null);
   const [recentExports, setRecentExports] = useState<ExportRecord[]>([]);
   const [reportData, setReportData] = useState<ReportPayload | null>(null);
 
@@ -131,8 +134,27 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
       document.body.removeChild(a);
 
       addExportRecord(format.toUpperCase(), url);
+    } else if (format === 'html') {
+      // HTML Report — generate and open in new tab
+      setHtmlLoading(true);
+      setHtmlError(null);
+      try {
+        const result = await api.generateReport({
+          scope,
+          id: entityId,
+          format: 'html',
+          skipNarratives: false,
+        });
+        const reportUrl = api.getReportUrl(result.filePath);
+        window.open(reportUrl, '_blank');
+        addExportRecord('HTML', reportUrl);
+      } catch (err) {
+        setHtmlError(err instanceof api.ApiError ? err.message : (err as Error).message);
+      } finally {
+        setHtmlLoading(false);
+      }
     } else {
-      // Report
+      // Report (PDF-ready payload)
       const result = await generateReport({ scope, id: entityId });
       if (result) {
         setReportData(result);
@@ -172,8 +194,9 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
               options={FORMAT_OPTIONS}
               value={format}
               onChange={(e) => {
-                setFormat(e.target.value as 'csv' | 'json' | 'report');
+                setFormat(e.target.value as 'csv' | 'json' | 'html' | 'report');
                 setReportData(null);
+                setHtmlError(null);
               }}
             />
           </FormField>
@@ -184,14 +207,18 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
           <Button
             variant="primary"
             onClick={handleExport}
-            loading={reportLoading}
+            loading={reportLoading || htmlLoading}
             disabled={!entityId}
           >
-            {format === 'report' ? 'Generate Report' : `Export ${format.toUpperCase()}`}
+            {format === 'html'
+              ? 'Generate HTML Report'
+              : format === 'report'
+                ? 'Generate Report'
+                : `Export ${format.toUpperCase()}`}
           </Button>
 
-          {reportError && (
-            <span className="text-xs text-accent-red">{reportError}</span>
+          {(reportError || htmlError) && (
+            <span className="text-xs text-accent-red">{reportError || htmlError}</span>
           )}
         </div>
 

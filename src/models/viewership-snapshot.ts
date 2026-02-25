@@ -238,3 +238,36 @@ export async function getTimeSeriesData(scope: Scope, intervalSeconds = 60): Pro
     { interval: intervalSeconds, id: scope.id },
   ).then((r: { rows: TimeSeriesBucket[] }) => r.rows);
 }
+
+export interface GroupedTimeSeriesBucket {
+  bucket: Date;
+  group_key: string;
+  total_ccv: string;
+  channel_count: string;
+}
+
+/**
+ * Fetch time-series data grouped by a dimension (platform or language).
+ * Returns bucketed CCV per group, ordered by timestamp then CCV descending.
+ */
+export async function getGroupedTimeSeriesData(
+  scope: Scope,
+  groupBy: 'platform' | 'language',
+  intervalSeconds = 60,
+): Promise<GroupedTimeSeriesBucket[]> {
+  const col = scopeColumnBare(scope);
+  return db.raw(
+    `SELECT
+       date_trunc('minute', "timestamp")
+         + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
+         * interval '1 second' AS bucket,
+       "${groupBy}" AS group_key,
+       SUM(concurrent_viewers)::text AS total_ccv,
+       COUNT(DISTINCT channel_id)::text AS channel_count
+     FROM viewership_snapshots
+     WHERE "${col}" = :id
+     GROUP BY bucket, group_key
+     ORDER BY bucket ASC, total_ccv DESC`,
+    { interval: intervalSeconds, id: scope.id },
+  ).then((r: { rows: GroupedTimeSeriesBucket[] }) => r.rows);
+}

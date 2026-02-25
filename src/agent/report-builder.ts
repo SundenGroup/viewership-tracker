@@ -24,6 +24,7 @@ import path from 'path';
 import os from 'os';
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../utils/logger';
+import { buildHTMLReport, type HTMLReportData } from './report-builder-html';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -268,6 +269,26 @@ export class ReportBuilder {
     };
 
     return this.runPython('build_xlsx.py', pythonPayload);
+  }
+
+  /**
+   * Build an interactive HTML report.
+   * Pure TypeScript — no Python subprocess needed. Uses Chart.js client-side.
+   */
+  async buildHTML(data: HTMLReportData): Promise<string> {
+    await this.ensureOutputDir();
+    const outputPath = path.join(this.outputDir, 'report.html');
+
+    const html = buildHTMLReport(data);
+    await writeFile(outputPath, html, 'utf-8');
+
+    logger.info('HTML report generated', {
+      outputPath,
+      reportId: this.reportId,
+      size: html.length,
+    });
+
+    return outputPath;
   }
 
   /**
