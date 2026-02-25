@@ -3,6 +3,7 @@ import axios from 'axios';
 import * as ChannelModel from '../../models/channel';
 import * as TournamentSeriesModel from '../../models/tournament-series';
 import logger from '../../utils/logger';
+import { requireRole } from '../middleware/auth';
 
 const router = Router();
 
@@ -117,8 +118,8 @@ router.get('/:seriesId/channels', async (req: Request, res: Response, next: Next
   }
 });
 
-// POST /api/series/:seriesId/channels — Add a channel
-router.post('/:seriesId/channels', async (req: Request, res: Response, next: NextFunction) => {
+// POST /api/series/:seriesId/channels — Add a channel (editor+)
+router.post('/:seriesId/channels', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { platform, channel_identifier, display_name } = req.body;
     if (!platform || !['twitch', 'youtube', 'kick', 'tiktok'].includes(platform)) {
@@ -159,8 +160,8 @@ router.post('/:seriesId/channels', async (req: Request, res: Response, next: Nex
   }
 });
 
-// POST /api/series/:seriesId/channels/bulk — Add multiple channels
-router.post('/:seriesId/channels/bulk', async (req: Request, res: Response, next: NextFunction) => {
+// POST /api/series/:seriesId/channels/bulk — Add multiple channels (editor+)
+router.post('/:seriesId/channels/bulk', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { channels } = req.body;
     if (!Array.isArray(channels) || channels.length === 0) {
@@ -202,8 +203,8 @@ router.post('/:seriesId/channels/bulk', async (req: Request, res: Response, next
   }
 });
 
-// PUT /api/channels/:id — Update a channel
-router.put('/channels/:id', async (req: Request, res: Response, next: NextFunction) => {
+// PUT /api/channels/:id — Update a channel (editor+)
+router.put('/channels/:id', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const existing = await ChannelModel.findById(req.params.id as string);
     if (!existing) {
@@ -217,8 +218,8 @@ router.put('/channels/:id', async (req: Request, res: Response, next: NextFuncti
   }
 });
 
-// DELETE /api/channels/:id — Remove a channel
-router.delete('/channels/:id', async (req: Request, res: Response, next: NextFunction) => {
+// DELETE /api/channels/:id — Remove a channel (editor+)
+router.delete('/channels/:id', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const deleted = await ChannelModel.remove(req.params.id as string);
     if (!deleted) {

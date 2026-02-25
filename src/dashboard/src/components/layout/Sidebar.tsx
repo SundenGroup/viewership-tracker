@@ -3,6 +3,7 @@ import { Button, StatusBadge } from '@/components/common';
 import { EventTreeView } from '@/components/sidebar/EventTreeView';
 import { AddChannelForm } from '@/components/sidebar/AddChannelForm';
 import { BulkAddChannelModal } from '@/components/sidebar/BulkAddChannelModal';
+import { useAuth } from '@/hooks/useAuth';
 import type { OrchestratorStatus, DiscoveryStatus, SeriesWithStages, BroadcastStatus } from '@/types/api';
 import { formatTimeAgo, formatDuration } from '@/utils/formatters';
 
@@ -43,6 +44,8 @@ export function Sidebar({
   discoveryLoading = false,
   broadcastDayStatusLoading,
 }: SidebarProps) {
+  const { isAdmin, hasRole } = useAuth();
+  const isEditor = hasRole('editor');
   const [collapsed, setCollapsed] = useState(false);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
 
@@ -103,178 +106,184 @@ export function Sidebar({
         />
       </div>
 
-      {/* Polling Section */}
-      <div className="border-b border-navy-700/50 p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <span className="text-sm font-medium text-gray-300">Polling</span>
-          <StatusBadge status={pollingStatus?.state ?? 'stopped'} />
-        </div>
-
-        {seriesId && !hasLiveDays && (
-          <p className="mb-2 rounded bg-accent-orange/10 px-2 py-1.5 text-[10px] text-accent-orange leading-tight">
-            No live broadcast days. Set a day to &quot;Live&quot; in the Schedule above, then start polling to collect viewership data.
-          </p>
-        )}
-
-        {seriesId && hasLiveDays && !isPollingRunning && (
-          <p className="mb-2 rounded bg-clutch-red/10 px-2 py-1.5 text-[10px] text-clutch-red leading-tight">
-            Broadcast day is live! Start polling to begin collecting viewer counts from all active channels.
-          </p>
-        )}
-
-        {pollingStatus?.lastPollResult && (
-          <div className="mb-3 space-y-1.5 text-xs text-gray-500">
-            <div className="flex justify-between">
-              <span>Last poll</span>
-              <span className="text-gray-400">
-                {formatTimeAgo(pollingStatus.lastPollTime)}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span>Duration</span>
-              <span className="text-gray-400">
-                {formatDuration(pollingStatus.lastPollResult.duration)}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span>Active days</span>
-              <span className="text-gray-400">
-                {pollingStatus.activeBroadcastDays}
-              </span>
-            </div>
+      {/* Polling Section — Admin only */}
+      {isAdmin && (
+        <div className="border-b border-navy-700/50 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-sm font-medium text-gray-300">Polling</span>
+            <StatusBadge status={pollingStatus?.state ?? 'stopped'} />
           </div>
-        )}
 
-        <div className="flex gap-2">
-          {isPollingRunning ? (
-            <Button variant="danger" size="sm" onClick={onStopPolling} className="flex-1">
-              Stop
-            </Button>
-          ) : (
-            <Button variant="primary" size="sm" onClick={onStartPolling} className="flex-1">
-              Start
-            </Button>
+          {seriesId && !hasLiveDays && (
+            <p className="mb-2 rounded bg-accent-orange/10 px-2 py-1.5 text-[10px] text-accent-orange leading-tight">
+              No live broadcast days. Set a day to &quot;Live&quot; in the Schedule above, then start polling to collect viewership data.
+            </p>
           )}
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onTriggerPoll}
-            loading={pollLoading}
-          >
-            Trigger
-          </Button>
-        </div>
-      </div>
 
-      {/* Discovery Section */}
-      <div className="border-b border-navy-700/50 p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <span className="text-sm font-medium text-gray-300">Discovery</span>
-          <StatusBadge status={isDiscoveryActive ? 'running' : 'stopped'} />
-        </div>
+          {seriesId && hasLiveDays && !isPollingRunning && (
+            <p className="mb-2 rounded bg-clutch-red/10 px-2 py-1.5 text-[10px] text-clutch-red leading-tight">
+              Broadcast day is live! Start polling to begin collecting viewer counts from all active channels.
+            </p>
+          )}
 
-        {!seriesId && (
-          <p className="text-xs text-gray-500">
-            Select a series to control discovery.
-          </p>
-        )}
-
-        {seriesId && !hasLiveDays && (
-          <p className="mb-2 rounded bg-navy-800 px-2 py-1.5 text-[10px] text-gray-500 leading-tight">
-            Discovery runs alongside polling. Set a broadcast day to &quot;Live&quot; first, then use Trigger to search for streams matching your series keywords.
-          </p>
-        )}
-
-        {seriesId && hasLiveDays && !isDiscoveryActive && !discoveryStatus?.lastResults[seriesId] && (
-          <p className="mb-2 rounded bg-clutch-red/10 px-2 py-1.5 text-[10px] text-clutch-red leading-tight">
-            Click Trigger to search for live streams matching your series keywords. New channels appear in the Discovery Feed on the dashboard.
-          </p>
-        )}
-
-        {seriesId && discoveryStatus?.lastResults[seriesId] && (
-          <div className="mb-3 space-y-1.5 text-xs text-gray-500">
-            <div className="flex justify-between">
-              <span>Last run</span>
-              <span className="text-gray-400">
-                {formatTimeAgo(discoveryStatus.lastResults[seriesId]?.timestamp)}
-              </span>
+          {pollingStatus?.lastPollResult && (
+            <div className="mb-3 space-y-1.5 text-xs text-gray-500">
+              <div className="flex justify-between">
+                <span>Last poll</span>
+                <span className="text-gray-400">
+                  {formatTimeAgo(pollingStatus.lastPollTime)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Duration</span>
+                <span className="text-gray-400">
+                  {formatDuration(pollingStatus.lastPollResult.duration)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Active days</span>
+                <span className="text-gray-400">
+                  {pollingStatus.activeBroadcastDays}
+                </span>
+              </div>
             </div>
-            <div className="flex justify-between">
-              <span>Discovered</span>
-              <span className="text-gray-400">
-                {discoveryStatus.lastResults[seriesId]?.discovered ?? 0}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span>Added</span>
-              <span className="text-accent-green">
-                {discoveryStatus.lastResults[seriesId]?.added ?? 0}
-              </span>
-            </div>
-          </div>
-        )}
+          )}
 
-        {seriesId && (
           <div className="flex gap-2">
-            {isDiscoveryActive ? (
-              <Button variant="danger" size="sm" onClick={onStopDiscovery} className="flex-1">
+            {isPollingRunning ? (
+              <Button variant="danger" size="sm" onClick={onStopPolling} className="flex-1">
                 Stop
               </Button>
             ) : (
-              <Button variant="primary" size="sm" onClick={onStartDiscovery} className="flex-1">
+              <Button variant="primary" size="sm" onClick={onStartPolling} className="flex-1">
                 Start
               </Button>
             )}
             <Button
               variant="secondary"
               size="sm"
-              onClick={onTriggerDiscovery}
-              loading={discoveryLoading}
+              onClick={onTriggerPoll}
+              loading={pollLoading}
             >
               Trigger
             </Button>
           </div>
-        )}
-      </div>
-
-      {/* Channels Section */}
-      <div className="p-4">
-        <div className="mb-2">
-          <span className="text-sm font-medium text-gray-300">Channels</span>
         </div>
+      )}
 
-        {!seriesId ? (
-          <p className="text-xs text-gray-500">
-            Select a series to manage channels.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-[10px] text-gray-600 leading-tight px-4">
-              Added channels appear in the Channels panel on the dashboard. Start polling with a live broadcast day to collect viewer data.
+      {/* Discovery Section — Admin only */}
+      {isAdmin && (
+        <div className="border-b border-navy-700/50 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-sm font-medium text-gray-300">Discovery</span>
+            <StatusBadge status={isDiscoveryActive ? 'running' : 'stopped'} />
+          </div>
+
+          {!seriesId && (
+            <p className="text-xs text-gray-500">
+              Select a series to control discovery.
             </p>
+          )}
 
-            <AddChannelForm seriesId={seriesId} onSuccess={onChannelAdded} />
+          {seriesId && !hasLiveDays && (
+            <p className="mb-2 rounded bg-navy-800 px-2 py-1.5 text-[10px] text-gray-500 leading-tight">
+              Discovery runs alongside polling. Set a broadcast day to &quot;Live&quot; first, then use Trigger to search for streams matching your series keywords.
+            </p>
+          )}
 
-            <div className="px-4">
+          {seriesId && hasLiveDays && !isDiscoveryActive && !discoveryStatus?.lastResults[seriesId] && (
+            <p className="mb-2 rounded bg-clutch-red/10 px-2 py-1.5 text-[10px] text-clutch-red leading-tight">
+              Click Trigger to search for live streams matching your series keywords. New channels appear in the Discovery Feed on the dashboard.
+            </p>
+          )}
+
+          {seriesId && discoveryStatus?.lastResults[seriesId] && (
+            <div className="mb-3 space-y-1.5 text-xs text-gray-500">
+              <div className="flex justify-between">
+                <span>Last run</span>
+                <span className="text-gray-400">
+                  {formatTimeAgo(discoveryStatus.lastResults[seriesId]?.timestamp)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Discovered</span>
+                <span className="text-gray-400">
+                  {discoveryStatus.lastResults[seriesId]?.discovered ?? 0}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Added</span>
+                <span className="text-accent-green">
+                  {discoveryStatus.lastResults[seriesId]?.added ?? 0}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {seriesId && (
+            <div className="flex gap-2">
+              {isDiscoveryActive ? (
+                <Button variant="danger" size="sm" onClick={onStopDiscovery} className="flex-1">
+                  Stop
+                </Button>
+              ) : (
+                <Button variant="primary" size="sm" onClick={onStartDiscovery} className="flex-1">
+                  Start
+                </Button>
+              )}
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => setBulkModalOpen(true)}
-                className="w-full"
+                onClick={onTriggerDiscovery}
+                loading={discoveryLoading}
               >
-                Bulk Add
+                Trigger
               </Button>
             </div>
+          )}
+        </div>
+      )}
 
-            <BulkAddChannelModal
-              open={bulkModalOpen}
-              onClose={() => setBulkModalOpen(false)}
-              seriesId={seriesId}
-              onSuccess={onChannelAdded}
-            />
+      {/* Channels Section — Editor+ can add channels; viewers see nothing */}
+      {isEditor && (
+        <div className="p-4">
+          <div className="mb-2">
+            <span className="text-sm font-medium text-gray-300">Channels</span>
           </div>
-        )}
-      </div>
+
+          {!seriesId ? (
+            <p className="text-xs text-gray-500">
+              Select a series to manage channels.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-[10px] text-gray-600 leading-tight px-4">
+                Added channels appear in the Channels panel on the dashboard. Start polling with a live broadcast day to collect viewer data.
+              </p>
+
+              <AddChannelForm seriesId={seriesId} onSuccess={onChannelAdded} />
+
+              <div className="px-4">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setBulkModalOpen(true)}
+                  className="w-full"
+                >
+                  Bulk Add
+                </Button>
+              </div>
+
+              <BulkAddChannelModal
+                open={bulkModalOpen}
+                onClose={() => setBulkModalOpen(false)}
+                seriesId={seriesId}
+                onSuccess={onChannelAdded}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </aside>
   );
 }

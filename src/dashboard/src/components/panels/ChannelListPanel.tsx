@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Card, Button, PlatformBadge, StatusBadge, LoadingOverlay } from '@/components/common';
 import { useApi } from '@/hooks/useApi';
+import { useAuth } from '@/hooks/useAuth';
 import * as api from '@/services/api';
 import { formatDate, tierLabel, getStreamUrl } from '@/utils/formatters';
 import type { Channel } from '@/types/api';
@@ -11,6 +12,8 @@ interface ChannelListPanelProps {
 }
 
 export function ChannelListPanel({ seriesId, refreshKey = 0 }: ChannelListPanelProps) {
+  const { hasRole } = useAuth();
+  const canEdit = hasRole('editor');
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
 
   const { data: channels, loading, error, refetch } = useApi(
@@ -71,7 +74,7 @@ export function ChannelListPanel({ seriesId, refreshKey = 0 }: ChannelListPanelP
                 <th className="pb-2 text-left font-medium">Source</th>
                 <th className="pb-2 text-left font-medium">Status</th>
                 <th className="pb-2 text-left font-medium">Added</th>
-                <th className="pb-2 text-right font-medium">Actions</th>
+                {canEdit && <th className="pb-2 text-right font-medium">Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -81,6 +84,7 @@ export function ChannelListPanel({ seriesId, refreshKey = 0 }: ChannelListPanelP
                   channel={ch}
                   seriesId={seriesId}
                   onRefresh={refetch}
+                  canEdit={canEdit}
                 />
               ))}
             </tbody>
@@ -95,10 +99,12 @@ function ChannelRow({
   channel,
   seriesId,
   onRefresh,
+  canEdit,
 }: {
   channel: Channel;
   seriesId: string;
   onRefresh: () => void;
+  canEdit: boolean;
 }) {
   const [acting, setActing] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -171,7 +177,7 @@ function ChannelRow({
     setEditing(false);
   };
 
-  if (editing) {
+  if (canEdit && editing) {
     return (
       <tr className="border-b border-navy-700/30 last:border-0 bg-navy-800/50">
         <td colSpan={7} className="py-3 px-2">
@@ -275,70 +281,72 @@ function ChannelRow({
         <StatusBadge status={channel.is_active ? 'active' : 'stopped'} />
       </td>
       <td className="py-2 text-xs text-gray-500">{formatDate(channel.added_at)}</td>
-      <td className="py-2 text-right">
-        <div className="flex justify-end gap-1">
-          <button
-            onClick={() => setEditing(true)}
-            className="text-gray-600 transition-colors hover:text-gray-300"
-            title="Edit channel"
-          >
-            <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
-            </svg>
-          </button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleToggle}
-            loading={acting}
-          >
-            {channel.is_active ? 'Disable' : 'Enable'}
-          </Button>
-          {channel.source === 'auto_discovered' && channel.is_active && (
+      {canEdit && (
+        <td className="py-2 text-right">
+          <div className="flex justify-end gap-1">
+            <button
+              onClick={() => setEditing(true)}
+              className="text-gray-600 transition-colors hover:text-gray-300"
+              title="Edit channel"
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+              </svg>
+            </button>
             <Button
-              variant="danger"
+              variant="ghost"
               size="sm"
-              onClick={handleBlock}
+              onClick={handleToggle}
               loading={acting}
             >
-              Block
+              {channel.is_active ? 'Disable' : 'Enable'}
             </Button>
-          )}
-          {confirmRemove ? (
-            <div className="flex gap-1">
+            {channel.source === 'auto_discovered' && channel.is_active && (
               <Button
                 variant="danger"
                 size="sm"
-                onClick={handleRemove}
+                onClick={handleBlock}
                 loading={acting}
               >
-                Confirm
+                Block
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setConfirmRemove(false)}
+            )}
+            {confirmRemove ? (
+              <div className="flex gap-1">
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={handleRemove}
+                  loading={acting}
+                >
+                  Confirm
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setConfirmRemove(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmRemove(true)}
+                className="text-gray-600 transition-colors hover:text-accent-red"
+                title="Remove channel"
               >
-                Cancel
-              </Button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setConfirmRemove(true)}
-              className="text-gray-600 transition-colors hover:text-accent-red"
-              title="Remove channel"
-            >
-              <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-                <path
-                  fillRule="evenodd"
-                  d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            </button>
-          )}
-        </div>
-      </td>
+                <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path
+                    fillRule="evenodd"
+                    d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </button>
+            )}
+          </div>
+        </td>
+      )}
     </tr>
   );
 }

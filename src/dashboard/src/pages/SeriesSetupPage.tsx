@@ -3,7 +3,9 @@ import { Card, Button, FormField } from '@/components/common';
 import { Select } from '@/components/common/Select';
 import { TextInput } from '@/components/common/TextInput';
 import { TextArea } from '@/components/common/TextArea';
+import { useAuth } from '@/hooks/useAuth';
 import * as api from '@/services/api';
+import type { UserRole } from '@/types/api';
 
 // ── Form state types ─────────────────────────────────────────────────────
 
@@ -33,6 +35,7 @@ interface SeriesForm {
   end_date: string;
   discovery_keywords: string;
   status: 'draft' | 'active' | 'completed';
+  min_role: UserRole;
   stages: StageForm[];
 }
 
@@ -75,6 +78,12 @@ const STATUS_OPTIONS = [
   { value: 'completed', label: 'Completed' },
 ];
 
+const VISIBILITY_OPTIONS = [
+  { value: 'viewer', label: 'Everyone' },
+  { value: 'editor', label: 'Editors & Admins' },
+  { value: 'admin', label: 'Admins Only' },
+];
+
 const INITIAL_FORM: SeriesForm = {
   name: '',
   short_name: '',
@@ -84,12 +93,14 @@ const INITIAL_FORM: SeriesForm = {
   end_date: '',
   discovery_keywords: '',
   status: 'draft',
+  min_role: 'viewer',
   stages: [],
 };
 
 // ── Component ────────────────────────────────────────────────────────────
 
 export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
+  const { isAdmin } = useAuth();
   const [form, setForm] = useState<SeriesForm>(INITIAL_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState('');
@@ -195,6 +206,7 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
         game: form.game.trim() || undefined,
         partner: form.partner.trim() || undefined,
         status: form.status,
+        min_role: isAdmin ? form.min_role : undefined,
         start_date: form.start_date || undefined,
         end_date: form.end_date || undefined,
         discovery_keywords: keywords.length > 0 ? keywords : undefined,
@@ -336,6 +348,16 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
                 onChange={(e) => updateField('status', e.target.value as SeriesForm['status'])}
               />
             </FormField>
+
+            {isAdmin && (
+              <FormField label="Visibility">
+                <Select
+                  options={VISIBILITY_OPTIONS}
+                  value={form.min_role}
+                  onChange={(e) => updateField('min_role', e.target.value as UserRole)}
+                />
+              </FormField>
+            )}
           </div>
 
           <FormField label="Discovery Keywords" className="max-w-lg">

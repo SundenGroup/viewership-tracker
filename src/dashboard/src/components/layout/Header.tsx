@@ -1,7 +1,8 @@
 import type { TournamentSeries } from '@/types/api';
 import type { ConnectionStatus } from '@/hooks/useWebSocket';
+import { useAuth } from '@/hooks/useAuth';
 
-export type AppView = 'dashboard' | 'series-setup' | 'series-edit';
+export type AppView = 'dashboard' | 'series-setup' | 'series-edit' | 'user-management';
 
 interface HeaderProps {
   seriesList: TournamentSeries[];
@@ -19,11 +20,11 @@ const statusConfig: Record<ConnectionStatus, { color: string; label: string }> =
   disconnected: { color: 'bg-accent-red', label: 'Offline' },
 };
 
-const NAV_ITEMS: { view: AppView; label: string; needsSeriesId?: boolean }[] = [
-  { view: 'dashboard', label: 'Dashboard' },
-  { view: 'series-edit', label: 'Edit Series', needsSeriesId: true },
-  { view: 'series-setup', label: 'New Series' },
-];
+const ROLE_COLORS: Record<string, string> = {
+  admin: 'bg-clutch-red/20 text-clutch-red',
+  editor: 'bg-amber-500/20 text-amber-400',
+  viewer: 'bg-sky-500/20 text-sky-400',
+};
 
 export function Header({
   seriesList,
@@ -34,6 +35,15 @@ export function Header({
   onNavigate,
 }: HeaderProps) {
   const statusCfg = statusConfig[wsStatus];
+  const { user, logout, hasRole, isAdmin } = useAuth();
+
+  // Build nav items based on role
+  const navItems: { view: AppView; label: string; show: boolean }[] = [
+    { view: 'dashboard', label: 'Dashboard', show: true },
+    { view: 'series-edit', label: 'Edit Series', show: hasRole('editor') && !!selectedSeriesId },
+    { view: 'series-setup', label: 'New Series', show: isAdmin },
+    { view: 'user-management', label: 'Users', show: isAdmin },
+  ];
 
   return (
     <header className="sticky top-0 z-40 bg-navy-900/95 backdrop-blur-sm">
@@ -54,9 +64,8 @@ export function Header({
 
           {/* Navigation */}
           <nav className="flex items-center gap-1">
-            {NAV_ITEMS.map((item) => {
-              // Hide "Edit Series" when no series is selected
-              if (item.needsSeriesId && !selectedSeriesId) return null;
+            {navItems.map((item) => {
+              if (!item.show) return null;
               return (
                 <button
                   key={item.view}
@@ -74,7 +83,7 @@ export function Header({
           </nav>
         </div>
 
-        {/* Series Selector + Status */}
+        {/* Series Selector + Status + User */}
         <div className="flex items-center gap-4">
           <select
             value={selectedSeriesId ?? ''}
@@ -95,6 +104,27 @@ export function Header({
             <span className={`h-2 w-2 rounded-full ${statusCfg.color}`} />
             <span className="text-xs text-gray-500">{statusCfg.label}</span>
           </div>
+
+          {/* User menu */}
+          {user && (
+            <div className="flex items-center gap-2 border-l border-navy-700 pl-4">
+              <span className="text-xs text-gray-400">{user.display_name}</span>
+              <span
+                className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                  ROLE_COLORS[user.role] ?? 'bg-gray-500/20 text-gray-400'
+                }`}
+              >
+                {user.role}
+              </span>
+              <button
+                onClick={logout}
+                className="ml-1 rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-navy-800 hover:text-gray-300"
+                title="Sign out"
+              >
+                Sign Out
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

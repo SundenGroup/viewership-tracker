@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import * as BroadcastDayModel from '../../models/broadcast-day';
 import * as StageModel from '../../models/stage';
+import { requireRole } from '../middleware/auth';
 
 const router = Router();
 
@@ -19,8 +20,8 @@ router.get('/:stageId/days', async (req: Request, res: Response, next: NextFunct
   }
 });
 
-// POST /api/stages/:stageId/days — Create a broadcast day
-router.post('/:stageId/days', async (req: Request, res: Response, next: NextFunction) => {
+// POST /api/stages/:stageId/days — Create a broadcast day (editor+)
+router.post('/:stageId/days', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { label, date } = req.body;
     if (!label || typeof label !== 'string') {
@@ -47,8 +48,8 @@ router.post('/:stageId/days', async (req: Request, res: Response, next: NextFunc
   }
 });
 
-// PUT /api/days/:id — Update a broadcast day
-router.put('/days/:id', async (req: Request, res: Response, next: NextFunction) => {
+// PUT /api/days/:id — Update a broadcast day (editor+)
+router.put('/days/:id', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const existing = await BroadcastDayModel.findById(req.params.id as string);
     if (!existing) {
@@ -62,8 +63,8 @@ router.put('/days/:id', async (req: Request, res: Response, next: NextFunction) 
   }
 });
 
-// DELETE /api/days/:id — Delete a broadcast day
-router.delete('/days/:id', async (req: Request, res: Response, next: NextFunction) => {
+// DELETE /api/days/:id — Delete a broadcast day (editor+)
+router.delete('/days/:id', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const deleted = await BroadcastDayModel.remove(req.params.id as string);
     if (!deleted) {
@@ -76,8 +77,8 @@ router.delete('/days/:id', async (req: Request, res: Response, next: NextFunctio
   }
 });
 
-// PUT /api/days/:id/status — Update broadcast day status
-router.put('/days/:id/status', async (req: Request, res: Response, next: NextFunction) => {
+// PUT /api/days/:id/status — Update broadcast day status (admin only)
+router.put('/days/:id/status', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { status } = req.body;
     if (!status || !['scheduled', 'live', 'completed'].includes(status)) {

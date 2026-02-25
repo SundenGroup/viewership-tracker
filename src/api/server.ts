@@ -1,5 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import logger from '../utils/logger';
 
 import seriesRouter from './routes/series';
@@ -11,14 +12,17 @@ import exportRouter from './routes/export';
 import reportPayloadRouter from './routes/report-payload';
 import pollingRouter from './routes/polling';
 import reportsRouter from './routes/reports';
+import authRouter from './routes/auth';
+import { authenticate, requireRole } from './middleware/auth';
 
 export function createApp() {
   const app = express();
 
   // ── Middleware ─────────────────────────────────────────────────────────
 
-  app.use(cors());
+  app.use(cors({ origin: true, credentials: true }));
   app.use(express.json());
+  app.use(cookieParser());
 
   // Request logging
   app.use((req: Request, _res: Response, next: NextFunction) => {
@@ -34,6 +38,13 @@ export function createApp() {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+  // Auth routes (login/logout are public, /me and /users are protected internally)
+  app.use('/api/auth', authRouter);
+
+  // All other /api routes require authentication
+  app.use('/api', authenticate);
+
+  // Viewer+ routes (all authenticated users can access)
   app.use('/api/series', seriesRouter);
   app.use('/api/series', stagesRouter);
   app.use('/api', stagesRouter);
@@ -42,10 +53,14 @@ export function createApp() {
   app.use('/api/series', channelsRouter);
   app.use('/api', channelsRouter);
   app.use('/api/viewership', viewershipRouter);
-  app.use('/api/export', exportRouter);
   app.use('/api/report-payload', reportPayloadRouter);
-  app.use('/api/polling', pollingRouter);
-  app.use('/api/reports', reportsRouter);
+
+  // Editor+ routes
+  app.use('/api/export', requireRole('admin', 'editor'), exportRouter);
+  app.use('/api/reports', requireRole('admin', 'editor'), reportsRouter);
+
+  // Admin-only routes
+  app.use('/api/polling', requireRole('admin'), pollingRouter);
 
   // ── 404 handler ───────────────────────────────────────────────────────
 

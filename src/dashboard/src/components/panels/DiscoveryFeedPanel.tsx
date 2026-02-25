@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Card, Button, PlatformBadge, LoadingOverlay } from '@/components/common';
 import { useApi } from '@/hooks/useApi';
+import { useAuth } from '@/hooks/useAuth';
 import * as api from '@/services/api';
 import { formatTimeAgo, getStreamUrl } from '@/utils/formatters';
 import type { Channel, DiscoveryResult } from '@/types/api';
@@ -28,6 +29,8 @@ export function DiscoveryFeedPanel({
   seriesId,
   lastDiscoveryResult,
 }: DiscoveryFeedPanelProps) {
+  const { hasRole } = useAuth();
+  const canEdit = hasRole('editor');
   const { data: channels, loading, refetch } = useApi(
     () =>
       seriesId
@@ -84,6 +87,7 @@ export function DiscoveryFeedPanel({
               channel={ch}
               seriesId={seriesId}
               onRefresh={refetch}
+              canEdit={canEdit}
             />
           ))}
         </div>
@@ -98,10 +102,12 @@ function DiscoveryRow({
   channel,
   seriesId,
   onRefresh,
+  canEdit,
 }: {
   channel: Channel;
   seriesId: string;
   onRefresh: () => void;
+  canEdit: boolean;
 }) {
   const [acting, setActing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -195,7 +201,7 @@ function DiscoveryRow({
               Blocked
             </span>
           )}
-          {isPending && (
+          {canEdit && isPending && (
             <>
               <Button
                 variant="primary"

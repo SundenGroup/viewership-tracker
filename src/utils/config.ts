@@ -25,6 +25,16 @@ export const config = {
     intervalMs: parseInt(process.env.POLLING_INTERVAL_MS || '60000', 10),
     discoveryIntervalMs: parseInt(process.env.DISCOVERY_INTERVAL_MS || '120000', 10),
   },
+  auth: {
+    jwtSecret: process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION',
+    jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
+    bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS || '12', 10),
+    cookieName: 'cvt_token',
+    cookieMaxAgeMs: parseInt(
+      process.env.COOKIE_MAX_AGE_MS || String(7 * 24 * 60 * 60 * 1000),
+      10,
+    ),
+  },
   logging: {
     level: process.env.LOG_LEVEL || 'info',
   },

@@ -5,10 +5,12 @@ import { Select } from '@/components/common/Select';
 import { TextInput } from '@/components/common/TextInput';
 import { TextArea } from '@/components/common/TextArea';
 import { Spinner } from '@/components/common/Loader';
+import { useAuth } from '@/hooks/useAuth';
 import * as api from '@/services/api';
 import type {
   SeriesWithStages,
   TournamentStatus,
+  UserRole,
   CreateStage,
   CreateBroadcastDay,
 } from '@/types/api';
@@ -49,6 +51,7 @@ interface SeriesForm {
   discovery_game_ids_youtube: string;
   discovery_game_ids_kick: string;
   status: TournamentStatus;
+  min_role: UserRole;
   stages: StageForm[];
 }
 
@@ -94,6 +97,12 @@ const STATUS_OPTIONS = [
   { value: 'completed', label: 'Completed' },
 ];
 
+const VISIBILITY_OPTIONS = [
+  { value: 'viewer', label: 'Everyone' },
+  { value: 'editor', label: 'Editors & Admins' },
+  { value: 'admin', label: 'Admins Only' },
+];
+
 function toLocalDatetimeStr(isoStr: string | null | undefined): string {
   if (!isoStr) return '';
   try {
@@ -129,6 +138,7 @@ function seriesDetailToForm(detail: SeriesWithStages): SeriesForm {
     discovery_game_ids_youtube: gameIds.youtube ?? '',
     discovery_game_ids_kick: gameIds.kick ?? '',
     status: detail.status,
+    min_role: detail.min_role ?? 'viewer',
     stages: detail.stages.map((stage) => ({
       id: stage.id,
       tempId: tempId(),
@@ -157,6 +167,7 @@ export function SeriesEditPage({
   onCancel,
   onDeleted,
 }: SeriesEditPageProps) {
+  const { isAdmin } = useAuth();
   const [form, setForm] = useState<SeriesForm>(() => seriesDetailToForm(seriesDetail));
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState('');
@@ -300,6 +311,7 @@ export function SeriesEditPage({
         game: form.game.trim() || undefined,
         partner: form.partner.trim() || undefined,
         status: form.status,
+        min_role: isAdmin ? form.min_role : undefined,
         start_date: form.start_date || undefined,
         end_date: form.end_date || undefined,
         discovery_keywords: keywords.length > 0 ? keywords : [],
@@ -504,6 +516,16 @@ export function SeriesEditPage({
                 onChange={(e) => updateField('status', e.target.value as TournamentStatus)}
               />
             </FormField>
+
+            {isAdmin && (
+              <FormField label="Visibility">
+                <Select
+                  options={VISIBILITY_OPTIONS}
+                  value={form.min_role}
+                  onChange={(e) => updateField('min_role', e.target.value as UserRole)}
+                />
+              </FormField>
+            )}
           </div>
 
           <FormField label="Discovery Keywords" className="max-w-lg">

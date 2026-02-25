@@ -4,8 +4,12 @@ import type { AppView } from '@/components/layout/Header';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { SeriesSetupPage } from '@/pages/SeriesSetupPage';
 import { SeriesEditPage } from '@/pages/SeriesEditPage';
+import { LoginPage } from '@/pages/LoginPage';
+import { UserManagementPage } from '@/pages/UserManagementPage';
+import { Spinner } from '@/components/common/Loader';
 import { useApi, usePollingApi } from '@/hooks/useApi';
 import { usePollingData } from '@/hooks/usePollingData';
+import { AuthContext, useAuthProvider } from '@/hooks/useAuth';
 import type { ConnectionStatus } from '@/hooks/useWebSocket';
 import * as api from '@/services/api';
 import type {
@@ -17,6 +21,37 @@ import type {
 } from '@/types/api';
 
 export default function App() {
+  const auth = useAuthProvider();
+
+  // Show loading spinner during initial session check
+  if (auth.loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-navy-950">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  // Not logged in — show login page
+  if (!auth.user) {
+    return (
+      <AuthContext.Provider value={auth}>
+        <LoginPage />
+      </AuthContext.Provider>
+    );
+  }
+
+  // Logged in — render the app
+  return (
+    <AuthContext.Provider value={auth}>
+      <AppContent />
+    </AuthContext.Provider>
+  );
+}
+
+// ── App Content (only renders when authenticated) ─────────────────────────
+
+function AppContent() {
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | undefined>();
   const [currentView, setCurrentView] = useState<AppView>('dashboard');
 
@@ -192,7 +227,9 @@ export default function App() {
         />
       }
     >
-      {currentView === 'dashboard' ? (
+      {currentView === 'user-management' ? (
+        <UserManagementPage />
+      ) : currentView === 'dashboard' ? (
         <DashboardPage
           seriesId={selectedSeriesId}
           seriesDetail={seriesDetail}

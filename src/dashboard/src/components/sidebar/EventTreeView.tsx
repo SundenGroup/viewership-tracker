@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button, StatusBadge, Spinner } from '@/components/common';
+import { useAuth } from '@/hooks/useAuth';
 import { formatDate } from '@/utils/formatters';
 import type { SeriesWithStages, BroadcastStatus } from '@/types/api';
 
@@ -16,6 +17,7 @@ export function EventTreeView({
   onStatusChange,
   statusLoading,
 }: EventTreeViewProps) {
+  const { isAdmin } = useAuth();
   const [expandedStages, setExpandedStages] = useState<Record<string, boolean>>({});
 
   if (loading && !seriesDetail) {
@@ -109,9 +111,9 @@ export function EventTreeView({
                     </span>
                   </div>
 
-                  {/* Action buttons */}
+                  {/* Action buttons — status changes are admin only */}
                   <div className="flex-shrink-0">
-                    {day.status === 'scheduled' && (
+                    {isAdmin && day.status === 'scheduled' && (
                       <Button
                         variant="primary"
                         size="sm"
@@ -122,7 +124,7 @@ export function EventTreeView({
                         Go Live
                       </Button>
                     )}
-                    {day.status === 'live' && (
+                    {isAdmin && day.status === 'live' && (
                       <Button
                         variant="secondary"
                         size="sm"

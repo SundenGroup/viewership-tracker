@@ -31,10 +31,17 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? '';
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     ...init,
   });
 
   if (res.status === 204) return undefined as unknown as T;
+
+  // Session expired — reload to show login page
+  if (res.status === 401 && !path.startsWith('/api/auth/')) {
+    window.location.reload();
+    throw new ApiError(401, 'Session expired');
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -373,4 +380,61 @@ export function getReportPayload(query: ReportPayloadQuery) {
   if (query.startDate) params.set('startDate', query.startDate);
   if (query.endDate) params.set('endDate', query.endDate);
   return request<ReportPayload>(`/api/report-payload?${params}`);
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────
+
+import type { AuthUser } from '@/types/api';
+
+export function login(data: { email: string; password: string }) {
+  return request<{ user: AuthUser }>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function logout() {
+  return request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' });
+}
+
+export function getMe() {
+  return request<{ user: AuthUser }>('/api/auth/me');
+}
+
+// ── Admin: User Management ────────────────────────────────────────────────
+
+export function listUsers() {
+  return request<AuthUser[]>('/api/auth/users');
+}
+
+export function createUser(data: {
+  email: string;
+  password: string;
+  display_name: string;
+  role?: string;
+}) {
+  return request<AuthUser>('/api/auth/users', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateUser(
+  id: string,
+  data: Partial<{
+    email: string;
+    display_name: string;
+    role: string;
+    is_active: boolean;
+    password: string;
+  }>,
+) {
+  return request<AuthUser>(`/api/auth/users/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteUser(id: string) {
+  return request<void>(`/api/auth/users/${id}`, { method: 'DELETE' });
 }

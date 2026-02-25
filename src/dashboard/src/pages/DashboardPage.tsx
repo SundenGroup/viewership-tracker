@@ -10,6 +10,7 @@ import {
   ExportPanel,
   ChannelListPanel,
 } from '@/components/panels';
+import { useAuth } from '@/hooks/useAuth';
 import type { SeriesWithStages } from '@/types/api';
 import type { PollingDataState } from '@/hooks/usePollingData';
 
@@ -28,6 +29,9 @@ export function DashboardPage({
   broadcastStart,
   channelRefreshKey = 0,
 }: DashboardPageProps) {
+  const { hasRole } = useAuth();
+  const canExport = hasRole('editor');
+
   if (!seriesId) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -101,11 +105,13 @@ export function DashboardPage({
         lastDiscoveryResult={pollingData.lastDiscoveryResult}
       />
 
-      {/* Row 6: Export — full width */}
-      <ExportPanel
-        seriesId={seriesId}
-        seriesDetail={seriesDetail}
-      />
+      {/* Row 6: Export — editor+ only */}
+      {canExport && (
+        <ExportPanel
+          seriesId={seriesId}
+          seriesDetail={seriesDetail}
+        />
+      )}
     </div>
   );
 }

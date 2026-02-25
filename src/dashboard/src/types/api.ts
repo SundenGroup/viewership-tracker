@@ -1,3 +1,17 @@
+// ── Auth ──────────────────────────────────────────────────────────────────
+
+export type UserRole = 'admin' | 'editor' | 'viewer';
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  display_name: string;
+  role: UserRole;
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+}
+
 // ── Enums / Literals ──────────────────────────────────────────────────────
 
 export type TournamentStatus = 'draft' | 'active' | 'completed';
@@ -17,6 +31,7 @@ export interface TournamentSeries {
   game: string | null;
   partner: string | null;
   status: TournamentStatus;
+  min_role: UserRole;
   start_date: string | null;
   end_date: string | null;
   discovery_keywords: string[];
@@ -32,6 +47,7 @@ export interface CreateTournamentSeries {
   game?: string;
   partner?: string;
   status?: TournamentStatus;
+  min_role?: UserRole;
   start_date?: string;
   end_date?: string;
   discovery_keywords?: string[];

@@ -1,8 +1,11 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { IncomingMessage } from 'http';
+import jwt from 'jsonwebtoken';
+import cookie from 'cookie';
 import logger from '../utils/logger';
 import { config } from '../utils/config';
 import db from '../utils/db';
+import * as UserModel from '../models/user';
 import type { PollCycleResult } from '../services/polling-orchestrator';
 import type { DiscoveryResult } from '../services/discovery-service';
 import * as TournamentSeriesModel from '../models/tournament-series';
@@ -95,6 +98,8 @@ interface TrackedClient {
   isAlive: boolean;
   connectedAt: Date;
   remoteAddress: string;
+  userId: string;
+  userRole: string;
 }
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -113,7 +118,40 @@ export class ViewershipWebSocketServer {
   start(): void {
     const port = config.server.wsPort;
 
-    this.wss = new WebSocketServer({ port });
+    this.wss = new WebSocketServer({
+      port,
+      verifyClient: async (info, callback) => {
+        try {
+          const cookies = cookie.parse(info.req.headers.cookie ?? '');
+          const token = cookies[config.auth.cookieName];
+          if (!token) {
+            logger.warn('[WS] Connection rejected — no auth cookie');
+            callback(false, 401, 'Unauthorized');
+            return;
+          }
+
+          const payload = jwt.verify(token, config.auth.jwtSecret) as { sub: string };
+          const user = await UserModel.findById(payload.sub);
+          if (!user || !user.is_active) {
+            logger.warn('[WS] Connection rejected — invalid or inactive user');
+            callback(false, 401, 'Unauthorized');
+            return;
+          }
+
+          // Stash user info on the request so onConnection can read it
+          (info.req as IncomingMessage & { _wsUser?: { id: string; role: string } })._wsUser = {
+            id: user.id,
+            role: user.role,
+          };
+          callback(true);
+        } catch (err) {
+          logger.warn('[WS] Connection rejected — JWT verification failed', {
+            error: (err as Error).message,
+          });
+          callback(false, 401, 'Unauthorized');
+        }
+      },
+    });
 
     this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
       this.onConnection(ws, req);
@@ -159,6 +197,7 @@ export class ViewershipWebSocketServer {
 
   private async onConnection(ws: WebSocket, req: IncomingMessage): Promise<void> {
     const remoteAddress = req.socket.remoteAddress ?? 'unknown';
+    const wsUser = (req as IncomingMessage & { _wsUser?: { id: string; role: string } })._wsUser;
 
     const client: TrackedClient = {
       ws,
@@ -166,6 +205,8 @@ export class ViewershipWebSocketServer {
       isAlive: true,
       connectedAt: new Date(),
       remoteAddress,
+      userId: wsUser?.id ?? 'unknown',
+      userRole: wsUser?.role ?? 'viewer',
     };
 
     this.clients.set(ws, client);

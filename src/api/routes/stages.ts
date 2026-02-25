@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import * as StageModel from '../../models/stage';
 import * as TournamentSeriesModel from '../../models/tournament-series';
+import { requireRole } from '../middleware/auth';
 
 const router = Router();
 
@@ -19,8 +20,8 @@ router.get('/:seriesId/stages', async (req: Request, res: Response, next: NextFu
   }
 });
 
-// POST /api/series/:seriesId/stages — Create a stage
-router.post('/:seriesId/stages', async (req: Request, res: Response, next: NextFunction) => {
+// POST /api/series/:seriesId/stages — Create a stage (editor+)
+router.post('/:seriesId/stages', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { name, order } = req.body;
     if (!name || typeof name !== 'string') {
@@ -46,8 +47,8 @@ router.post('/:seriesId/stages', async (req: Request, res: Response, next: NextF
   }
 });
 
-// PUT /api/stages/:id — Update a stage
-router.put('/stages/:id', async (req: Request, res: Response, next: NextFunction) => {
+// PUT /api/stages/:id — Update a stage (editor+)
+router.put('/stages/:id', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const existing = await StageModel.findById(req.params.id as string);
     if (!existing) {
@@ -61,8 +62,8 @@ router.put('/stages/:id', async (req: Request, res: Response, next: NextFunction
   }
 });
 
-// DELETE /api/stages/:id — Delete a stage (cascades)
-router.delete('/stages/:id', async (req: Request, res: Response, next: NextFunction) => {
+// DELETE /api/stages/:id — Delete a stage (editor+)
+router.delete('/stages/:id', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const deleted = await StageModel.remove(req.params.id as string);
     if (!deleted) {

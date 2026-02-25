@@ -1,9 +1,11 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import * as TournamentSeriesModel from '../../models/tournament-series';
+import { requireRole, hasMinRole, type UserRole } from '../middleware/auth';
 
 const router = Router();
 
 // GET /api/series — List all series (optional ?status=active)
+// Viewers+ can access, but results are filtered by min_role
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { status } = req.query;
@@ -11,15 +13,20 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     if (status && ['draft', 'active', 'completed'].includes(status as string)) {
       filters.status = status as TournamentSeriesModel.TournamentStatus;
     }
-    const series = await TournamentSeriesModel.findAll(filters);
+    const allSeries = await TournamentSeriesModel.findAll(filters);
+    // Filter by min_role visibility
+    const userRole = (req.user?.role ?? 'viewer') as UserRole;
+    const series = userRole === 'admin'
+      ? allSeries
+      : allSeries.filter((s) => hasMinRole(userRole, ((s as unknown as Record<string, unknown>).min_role as UserRole) ?? 'viewer'));
     res.json(series);
   } catch (err) {
     next(err);
   }
 });
 
-// POST /api/series — Create a new series
-router.post('/', async (req: Request, res: Response, next: NextFunction) => {
+// POST /api/series — Create a new series (admin only)
+router.post('/', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { name } = req.body;
     if (!name || typeof name !== 'string') {
@@ -47,8 +54,8 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
-// PUT /api/series/:id — Update a series
-router.put('/:id', async (req: Request, res: Response, next: NextFunction) => {
+// PUT /api/series/:id — Update a series (editor+)
+router.put('/:id', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const existing = await TournamentSeriesModel.findById(req.params.id as string);
     if (!existing) {
@@ -62,8 +69,8 @@ router.put('/:id', async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
-// DELETE /api/series/:id — Delete a series (cascades)
-router.delete('/:id', async (req: Request, res: Response, next: NextFunction) => {
+// DELETE /api/series/:id — Delete a series (admin only)
+router.delete('/:id', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const deleted = await TournamentSeriesModel.remove(req.params.id as string);
     if (!deleted) {
@@ -76,8 +83,8 @@ router.delete('/:id', async (req: Request, res: Response, next: NextFunction) =>
   }
 });
 
-// PUT /api/series/:id/status — Update series status
-router.put('/:id/status', async (req: Request, res: Response, next: NextFunction) => {
+// PUT /api/series/:id/status — Update series status (admin only)
+router.put('/:id/status', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { status } = req.body;
     if (!status || !['draft', 'active', 'completed'].includes(status)) {
