@@ -223,10 +223,10 @@ function ChannelRow({
                   onChange={(e) => setEditTier(e.target.value as Channel['tier'])}
                   className="w-full rounded bg-navy-800 border border-navy-700 px-2 py-1 text-xs text-gray-200 focus:border-clutch-red/50 focus:outline-none"
                 >
-                  <option value="official">Official</option>
-                  <option value="partner">Partner</option>
+                  <option value="primary">Official</option>
+                  <option value="secondary">Partner</option>
                   <option value="community">Community</option>
-                  <option value="watchparty">Watch Party</option>
+                  <option value="watch_party">Watch Party</option>
                 </select>
               </div>
             </div>
