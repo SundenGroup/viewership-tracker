@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
+import { BrowserRouter, Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Header, Sidebar, MainLayout } from '@/components/layout';
-import type { AppView } from '@/components/layout/Header';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { SeriesSetupPage } from '@/pages/SeriesSetupPage';
 import { SeriesEditPage } from '@/pages/SeriesEditPage';
@@ -41,10 +41,18 @@ export default function App() {
     );
   }
 
-  // Logged in — render the app
+  // Logged in — render the app with router
   return (
     <AuthContext.Provider value={auth}>
-      <AppContent />
+      <BrowserRouter>
+        <Routes>
+          <Route path="/new" element={<AppContent />} />
+          <Route path="/users" element={<AppContent />} />
+          <Route path="/:seriesId/edit" element={<AppContent />} />
+          <Route path="/:seriesId" element={<AppContent />} />
+          <Route path="/" element={<AppContent />} />
+        </Routes>
+      </BrowserRouter>
     </AuthContext.Provider>
   );
 }
@@ -52,8 +60,16 @@ export default function App() {
 // ── App Content (only renders when authenticated) ─────────────────────────
 
 function AppContent() {
-  const [selectedSeriesId, setSelectedSeriesId] = useState<string | undefined>();
-  const [currentView, setCurrentView] = useState<AppView>('dashboard');
+  const { seriesId: urlSeriesId } = useParams<{ seriesId: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Derive selected series and current view from URL
+  const selectedSeriesId = urlSeriesId;
+  const pathname = location.pathname;
+  const isEditPage = pathname.endsWith('/edit');
+  const isNewPage = pathname === '/new';
+  const isUsersPage = pathname === '/users';
 
   // ── Data fetching ─────────────────────────────────────────────────────
 
@@ -165,32 +181,33 @@ function AppContent() {
     setChannelRefreshKey((k) => k + 1);
   }, [refetchSeriesDetail]);
 
-  // ── Navigation ────────────────────────────────────────────────────────
+  // ── Navigation helpers ──────────────────────────────────────────────────
 
-  const handleNavigate = useCallback((view: AppView) => {
-    setCurrentView(view);
-  }, []);
+  const handleSeriesChange = useCallback(
+    (id: string) => {
+      navigate(id ? `/${id}` : '/');
+    },
+    [navigate],
+  );
 
   const handleSeriesCreated = useCallback(
     (newSeriesId: string) => {
-      setSelectedSeriesId(newSeriesId);
-      setCurrentView('dashboard');
       refetchSeriesList();
+      navigate(`/${newSeriesId}`);
     },
-    [refetchSeriesList],
+    [navigate, refetchSeriesList],
   );
 
   const handleSeriesSaved = useCallback(() => {
     refetchSeriesDetail();
     refetchSeriesList();
-    setCurrentView('dashboard');
-  }, [refetchSeriesDetail, refetchSeriesList]);
+    navigate(selectedSeriesId ? `/${selectedSeriesId}` : '/');
+  }, [navigate, selectedSeriesId, refetchSeriesDetail, refetchSeriesList]);
 
   const handleSeriesDeleted = useCallback(() => {
-    setSelectedSeriesId(undefined);
-    setCurrentView('dashboard');
     refetchSeriesList();
-  }, [refetchSeriesList]);
+    navigate('/');
+  }, [navigate, refetchSeriesList]);
 
   // ── Render ─────────────────────────────────────────────────────────────
 
@@ -200,10 +217,8 @@ function AppContent() {
         <Header
           seriesList={seriesList ?? []}
           selectedSeriesId={selectedSeriesId}
-          onSeriesChange={setSelectedSeriesId}
+          onSeriesChange={handleSeriesChange}
           wsStatus={pollingData.wsStatus as ConnectionStatus}
-          currentView={currentView}
-          onNavigate={handleNavigate}
         />
       }
       sidebar={
@@ -227,28 +242,28 @@ function AppContent() {
         />
       }
     >
-      {currentView === 'user-management' ? (
+      {isUsersPage ? (
         <UserManagementPage />
-      ) : currentView === 'dashboard' ? (
+      ) : isNewPage ? (
+        <SeriesSetupPage
+          onCreated={handleSeriesCreated}
+          onCancel={() => navigate(selectedSeriesId ? `/${selectedSeriesId}` : '/')}
+        />
+      ) : isEditPage && selectedSeriesId && seriesDetail ? (
+        <SeriesEditPage
+          seriesId={selectedSeriesId}
+          seriesDetail={seriesDetail}
+          onSaved={handleSeriesSaved}
+          onCancel={() => navigate(`/${selectedSeriesId}`)}
+          onDeleted={handleSeriesDeleted}
+        />
+      ) : (
         <DashboardPage
           seriesId={selectedSeriesId}
           seriesDetail={seriesDetail}
           pollingData={pollingData}
           broadcastStart={broadcastStart}
           channelRefreshKey={channelRefreshKey}
-        />
-      ) : currentView === 'series-edit' && selectedSeriesId && seriesDetail ? (
-        <SeriesEditPage
-          seriesId={selectedSeriesId}
-          seriesDetail={seriesDetail}
-          onSaved={handleSeriesSaved}
-          onCancel={() => setCurrentView('dashboard')}
-          onDeleted={handleSeriesDeleted}
-        />
-      ) : (
-        <SeriesSetupPage
-          onCreated={handleSeriesCreated}
-          onCancel={() => setCurrentView('dashboard')}
         />
       )}
     </MainLayout>

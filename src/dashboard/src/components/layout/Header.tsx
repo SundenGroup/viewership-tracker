@@ -1,16 +1,13 @@
+import { useNavigate, useLocation } from 'react-router-dom';
 import type { TournamentSeries } from '@/types/api';
 import type { ConnectionStatus } from '@/hooks/useWebSocket';
 import { useAuth } from '@/hooks/useAuth';
-
-export type AppView = 'dashboard' | 'series-setup' | 'series-edit' | 'user-management';
 
 interface HeaderProps {
   seriesList: TournamentSeries[];
   selectedSeriesId: string | undefined;
   onSeriesChange: (id: string) => void;
   wsStatus: ConnectionStatus;
-  currentView: AppView;
-  onNavigate: (view: AppView) => void;
 }
 
 const statusConfig: Record<ConnectionStatus, { color: string; label: string }> = {
@@ -31,18 +28,31 @@ export function Header({
   selectedSeriesId,
   onSeriesChange,
   wsStatus,
-  currentView,
-  onNavigate,
 }: HeaderProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
   const statusCfg = statusConfig[wsStatus];
   const { user, logout, hasRole, isAdmin } = useAuth();
 
+  // Derive active nav from current URL path
+  const pathname = location.pathname;
+  const isEditPage = pathname.endsWith('/edit');
+  const isNewPage = pathname === '/new';
+  const isUsersPage = pathname === '/users';
+  const activeNav = isUsersPage
+    ? 'users'
+    : isNewPage
+      ? 'new'
+      : isEditPage
+        ? 'edit'
+        : 'dashboard';
+
   // Build nav items based on role
-  const navItems: { view: AppView; label: string; show: boolean }[] = [
-    { view: 'dashboard', label: 'Dashboard', show: true },
-    { view: 'series-edit', label: 'Edit Series', show: hasRole('editor') && !!selectedSeriesId },
-    { view: 'series-setup', label: 'New Series', show: isAdmin },
-    { view: 'user-management', label: 'Users', show: isAdmin },
+  const navItems: { id: string; label: string; show: boolean; path: string }[] = [
+    { id: 'dashboard', label: 'Dashboard', show: true, path: selectedSeriesId ? `/${selectedSeriesId}` : '/' },
+    { id: 'edit', label: 'Edit Series', show: hasRole('editor') && !!selectedSeriesId, path: `/${selectedSeriesId}/edit` },
+    { id: 'new', label: 'New Series', show: isAdmin, path: '/new' },
+    { id: 'users', label: 'Users', show: isAdmin, path: '/users' },
   ];
 
   return (
@@ -68,10 +78,10 @@ export function Header({
               if (!item.show) return null;
               return (
                 <button
-                  key={item.view}
-                  onClick={() => onNavigate(item.view)}
+                  key={item.id}
+                  onClick={() => navigate(item.path)}
                   className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                    currentView === item.view
+                    activeNav === item.id
                       ? 'bg-navy-800 text-clutch-white'
                       : 'text-gray-500 hover:bg-navy-800/50 hover:text-gray-300'
                   }`}
