@@ -276,7 +276,7 @@ export function UserManagementPage() {
               onChange={(e) =>
                 setCreateForm((prev) => ({ ...prev, email: e.target.value }))
               }
-              placeholder="jane@clutch.gg"
+              placeholder="jane@clutch.game"
             />
           </FormField>
           <FormField label="Password" required>

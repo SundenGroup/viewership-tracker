@@ -5,7 +5,7 @@
  *   npx tsx src/scripts/seed-admin.ts <email> <password> [displayName]
  *
  * Example:
- *   npx tsx src/scripts/seed-admin.ts admin@clutch.gg mypassword "Admin User"
+ *   npx tsx src/scripts/seed-admin.ts admin@clutch.game mypassword "Admin User"
  */
 
 import db from '../utils/db';
