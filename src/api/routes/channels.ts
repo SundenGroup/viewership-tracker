@@ -7,6 +7,26 @@ import { requireRole } from '../middleware/auth';
 
 const router = Router();
 
+// ── Platform URL → username extraction ────────────────────────────────────
+
+const PLATFORM_URL_PATTERNS: Record<string, RegExp> = {
+  twitch: /(?:twitch\.tv)\/([a-zA-Z0-9_]+)\/?$/,
+  kick: /(?:kick\.com)\/([a-zA-Z0-9_]+)\/?$/,
+  tiktok: /(?:tiktok\.com\/@?)([a-zA-Z0-9_.]+)\/?$/,
+};
+
+/**
+ * Strips platform URLs to just the username/identifier.
+ * e.g. "https://www.twitch.tv/batulins" → "batulins"
+ */
+function extractIdentifierFromUrl(platform: string, identifier: string): string {
+  const trimmed = identifier.trim();
+  const pattern = PLATFORM_URL_PATTERNS[platform];
+  if (!pattern) return trimmed;
+  const match = trimmed.match(pattern);
+  return match ? match[1] : trimmed;
+}
+
 // ── YouTube identifier resolution ────────────────────────────────────────
 
 const YT_CHANNEL_ID_RE = /^UC[a-zA-Z0-9_-]{22}$/;
@@ -141,10 +161,10 @@ router.post('/:seriesId/channels', requireRole('admin', 'editor'), async (req: R
       return;
     }
 
-    // Auto-resolve YouTube handles/usernames to channel IDs
-    let resolvedIdentifier = channel_identifier;
-    if (platform === 'youtube' && !YT_CHANNEL_ID_RE.test(channel_identifier)) {
-      resolvedIdentifier = await resolveYouTubeIdentifier(channel_identifier);
+    // Strip platform URLs to just the username and resolve YouTube handles
+    let resolvedIdentifier = extractIdentifierFromUrl(platform, channel_identifier);
+    if (platform === 'youtube' && !YT_CHANNEL_ID_RE.test(resolvedIdentifier)) {
+      resolvedIdentifier = await resolveYouTubeIdentifier(resolvedIdentifier);
     }
 
     const channel = await ChannelModel.create({
@@ -185,8 +205,13 @@ router.post('/:seriesId/channels/bulk', requireRole('admin', 'editor'), async (r
         continue;
       }
       try {
+        let resolvedId = extractIdentifierFromUrl(ch.platform, ch.channel_identifier);
+        if (ch.platform === 'youtube' && !YT_CHANNEL_ID_RE.test(resolvedId)) {
+          resolvedId = await resolveYouTubeIdentifier(resolvedId);
+        }
         const created = await ChannelModel.create({
           ...ch,
+          channel_identifier: resolvedId,
           series_id: req.params.seriesId as string,
           source: ch.source || 'manual',
           is_active: ch.is_active !== undefined ? ch.is_active : true,
