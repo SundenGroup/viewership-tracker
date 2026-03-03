@@ -1,6 +1,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import * as TournamentSeriesModel from '../../models/tournament-series';
 import { requireRole, hasMinRole, type UserRole } from '../middleware/auth';
+import { AdapterRegistry } from '../../adapters';
+import { TwitchAdapter } from '../../adapters/twitch';
+import { KickAdapter } from '../../adapters/kick';
+import logger from '../../utils/logger';
 
 const router = Router();
 
@@ -35,6 +39,61 @@ router.post('/', requireRole('admin'), async (req: Request, res: Response, next:
     }
     const series = await TournamentSeriesModel.create(req.body);
     res.status(201).json(series);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/series/games/lookup?name=PUBG — Resolve game name to platform IDs
+// Must be before /:id to avoid "games" being captured as a series ID
+router.get('/games/lookup', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const gameName = req.query.name as string;
+    if (!gameName || typeof gameName !== 'string' || gameName.trim().length === 0) {
+      res.status(400).json({ error: 'name query parameter is required' });
+      return;
+    }
+
+    const name = gameName.trim();
+    const results: Record<string, { id: string; name: string } | null> = {
+      twitch: null,
+      kick: null,
+    };
+
+    // Look up Twitch and Kick in parallel
+    const [twitchResult, kickResult] = await Promise.allSettled([
+      (async () => {
+        try {
+          const registry = new AdapterRegistry();
+          const adapter = registry.getAdapter('twitch') as TwitchAdapter;
+          const id = await adapter.getGameId(name);
+          return id ? { id, name } : null;
+        } catch (err) {
+          logger.warn(`Game lookup: Twitch failed for "${name}"`, { error: (err as Error).message });
+          return null;
+        }
+      })(),
+      (async () => {
+        try {
+          const registry = new AdapterRegistry();
+          const adapter = registry.getAdapter('kick') as KickAdapter;
+          const cat = await adapter.getCategoryId(name);
+          return cat ? { id: String(cat.id), name: cat.name } : null;
+        } catch (err) {
+          logger.warn(`Game lookup: Kick failed for "${name}"`, { error: (err as Error).message });
+          return null;
+        }
+      })(),
+    ]);
+
+    if (twitchResult.status === 'fulfilled' && twitchResult.value) {
+      results.twitch = twitchResult.value;
+    }
+    if (kickResult.status === 'fulfilled' && kickResult.value) {
+      results.kick = kickResult.value;
+    }
+
+    res.json(results);
   } catch (err) {
     next(err);
   }

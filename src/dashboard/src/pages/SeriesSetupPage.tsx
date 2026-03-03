@@ -34,6 +34,9 @@ interface SeriesForm {
   start_date: string;
   end_date: string;
   discovery_keywords: string;
+  discovery_game_ids_twitch: string;
+  discovery_game_ids_youtube: string;
+  discovery_game_ids_kick: string;
   status: 'draft' | 'active' | 'completed';
   min_role: UserRole;
   stages: StageForm[];
@@ -92,6 +95,9 @@ const INITIAL_FORM: SeriesForm = {
   start_date: '',
   end_date: '',
   discovery_keywords: '',
+  discovery_game_ids_twitch: '',
+  discovery_game_ids_youtube: '',
+  discovery_game_ids_kick: '',
   status: 'draft',
   min_role: 'viewer',
   stages: [],
@@ -105,6 +111,8 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
+  const [lookupResult, setLookupResult] = useState<string | null>(null);
 
   // ── Field updaters ───────────────────────────────────────────────────
 
@@ -181,6 +189,41 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
     });
   };
 
+  // ── Game ID Lookup ─────────────────────────────────────────────────
+
+  const handleLookupGameIds = async () => {
+    const gameName = form.game.trim();
+    if (!gameName) return;
+
+    setLookingUp(true);
+    setLookupResult(null);
+
+    try {
+      const result = await api.lookupGameIds(gameName);
+      const msgs: string[] = [];
+
+      if (result.twitch) {
+        updateField('discovery_game_ids_twitch', result.twitch.id);
+        msgs.push(`Twitch: ${result.twitch.id}`);
+      } else {
+        msgs.push('Twitch: not found');
+      }
+
+      if (result.kick) {
+        updateField('discovery_game_ids_kick', result.kick.id);
+        msgs.push(`Kick: ${result.kick.id} (${result.kick.name})`);
+      } else {
+        msgs.push('Kick: not found');
+      }
+
+      setLookupResult(msgs.join(' · '));
+    } catch (err) {
+      setLookupResult('Lookup failed — ' + (err instanceof Error ? err.message : 'unknown error'));
+    } finally {
+      setLookingUp(false);
+    }
+  };
+
   // ── Submit ───────────────────────────────────────────────────────────
 
   const handleSubmit = async () => {
@@ -200,6 +243,11 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
         .map((k) => k.trim())
         .filter(Boolean);
 
+      const gameIds: Record<string, string> = {};
+      if (form.discovery_game_ids_twitch.trim()) gameIds.twitch = form.discovery_game_ids_twitch.trim();
+      if (form.discovery_game_ids_youtube.trim()) gameIds.youtube = form.discovery_game_ids_youtube.trim();
+      if (form.discovery_game_ids_kick.trim()) gameIds.kick = form.discovery_game_ids_kick.trim();
+
       const series = await api.createSeries({
         name: form.name.trim(),
         short_name: form.short_name.trim() || undefined,
@@ -210,6 +258,7 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
         start_date: form.start_date || undefined,
         end_date: form.end_date || undefined,
         discovery_keywords: keywords.length > 0 ? keywords : undefined,
+        discovery_game_ids: Object.keys(gameIds).length > 0 ? gameIds : undefined,
       });
 
       // 2. Create stages sequentially
@@ -368,6 +417,51 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
               rows={2}
             />
           </FormField>
+
+          {/* Discovery Game IDs */}
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Discovery Game IDs (Platform-specific)
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleLookupGameIds}
+                loading={lookingUp}
+                disabled={!form.game.trim()}
+                title={form.game.trim() ? `Look up IDs for "${form.game}"` : 'Enter a game name first'}
+              >
+                Lookup IDs
+              </Button>
+            </div>
+            {lookupResult && (
+              <p className="mt-1 text-[10px] text-gray-500">{lookupResult}</p>
+            )}
+            <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <FormField label="Twitch Game ID">
+                <TextInput
+                  value={form.discovery_game_ids_twitch}
+                  onChange={(e) => updateField('discovery_game_ids_twitch', e.target.value)}
+                  placeholder="e.g. 493057"
+                />
+              </FormField>
+              <FormField label="YouTube Game ID">
+                <TextInput
+                  value={form.discovery_game_ids_youtube}
+                  onChange={(e) => updateField('discovery_game_ids_youtube', e.target.value)}
+                  placeholder="e.g. PUBG"
+                />
+              </FormField>
+              <FormField label="Kick Category ID">
+                <TextInput
+                  value={form.discovery_game_ids_kick}
+                  onChange={(e) => updateField('discovery_game_ids_kick', e.target.value)}
+                  placeholder="e.g. 15 (numeric)"
+                />
+              </FormField>
+            </div>
+          </div>
         </div>
       </Card>
 

@@ -104,6 +104,17 @@ export function updateSeriesStatus(id: string, status: TournamentStatus) {
   });
 }
 
+// ── Game ID Lookup ────────────────────────────────────────────────────────
+
+export interface GameLookupResult {
+  twitch: { id: string; name: string } | null;
+  kick: { id: string; name: string } | null;
+}
+
+export function lookupGameIds(gameName: string) {
+  return request<GameLookupResult>(`/api/series/games/lookup?name=${encodeURIComponent(gameName)}`);
+}
+
 // ── Stages ────────────────────────────────────────────────────────────────
 
 export function listStages(seriesId: string) {

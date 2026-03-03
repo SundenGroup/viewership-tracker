@@ -342,6 +342,36 @@ export class KickAdapter implements PlatformAdapter {
     });
   }
 
+  /**
+   * Look up a category ID by name (e.g. "PUBG: BATTLEGROUNDS" → 15).
+   * Uses the v1 search endpoint with a fuzzy query, returns the best match.
+   */
+  async getCategoryId(gameName: string): Promise<{ id: number; name: string } | null> {
+    if (this.isCircuitOpen()) {
+      logger.warn('Kick circuit breaker open, skipping category lookup');
+      return null;
+    }
+
+    const result = await this.requestWithRetry(async () => {
+      const { data } = await this.client.get<{ data: Array<{ id: number; name: string }> }>(
+        '/public/v1/categories',
+        { params: { q: gameName } },
+      );
+      return data;
+    }, `getCategoryId("${gameName}")`);
+
+    if (!result || !Array.isArray(result.data) || result.data.length === 0) {
+      logger.warn(`Kick: category not found for "${gameName}"`);
+      return null;
+    }
+
+    // Try exact match first, then return first result
+    const exact = result.data.find((c) => c.name.toLowerCase() === gameName.toLowerCase());
+    const best = exact ?? result.data[0]!;
+    logger.info(`Kick: resolved category "${gameName}" → ${best.name} (ID: ${best.id})`);
+    return { id: best.id, name: best.name };
+  }
+
   async searchLiveStreams(
     gameId?: string,
     keywords?: string[],

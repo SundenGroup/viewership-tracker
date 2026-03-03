@@ -176,6 +176,8 @@ export function SeriesEditPage({
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
+  const [lookupResult, setLookupResult] = useState<string | null>(null);
 
   // Reset form when seriesDetail changes (e.g. user switches series)
   useEffect(() => {
@@ -279,6 +281,41 @@ export function SeriesEditPage({
       }
       return { ...prev, stages };
     });
+  };
+
+  // ── Game ID Lookup ─────────────────────────────────────────────────
+
+  const handleLookupGameIds = async () => {
+    const gameName = form.game.trim();
+    if (!gameName) return;
+
+    setLookingUp(true);
+    setLookupResult(null);
+
+    try {
+      const result = await api.lookupGameIds(gameName);
+      const msgs: string[] = [];
+
+      if (result.twitch) {
+        updateField('discovery_game_ids_twitch', result.twitch.id);
+        msgs.push(`Twitch: ${result.twitch.id}`);
+      } else {
+        msgs.push('Twitch: not found');
+      }
+
+      if (result.kick) {
+        updateField('discovery_game_ids_kick', result.kick.id);
+        msgs.push(`Kick: ${result.kick.id} (${result.kick.name})`);
+      } else {
+        msgs.push('Kick: not found');
+      }
+
+      setLookupResult(msgs.join(' · '));
+    } catch (err) {
+      setLookupResult('Lookup failed — ' + (err instanceof Error ? err.message : 'unknown error'));
+    } finally {
+      setLookingUp(false);
+    }
   };
 
   // ── Submit ───────────────────────────────────────────────────────────
@@ -539,9 +576,26 @@ export function SeriesEditPage({
 
           {/* Discovery Game IDs */}
           <div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Discovery Game IDs (Platform-specific)
-            </span>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Discovery Game IDs (Platform-specific)
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleLookupGameIds}
+                loading={lookingUp}
+                disabled={!form.game.trim()}
+                title={form.game.trim() ? `Look up IDs for "${form.game}"` : 'Enter a game name first'}
+              >
+                {lookupResult
+                  ? 'Lookup IDs'
+                  : 'Lookup IDs'}
+              </Button>
+            </div>
+            {lookupResult && (
+              <p className="mt-1 text-[10px] text-gray-500">{lookupResult}</p>
+            )}
             <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
               <FormField label="Twitch Game ID">
                 <TextInput
