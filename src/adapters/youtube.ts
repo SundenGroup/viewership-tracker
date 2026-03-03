@@ -916,17 +916,39 @@ export class YouTubeAdapter implements PlatformAdapter {
     for (const result of searchResults) {
       const video = videoMap.get(result.videoId);
       const viewers = video?.liveStreamingDetails?.concurrentViewers;
+      const title = video?.snippet.title ?? result.snippet.title;
+
+      // Secondary keyword validation: YouTube search is broad, so verify
+      // the stream title actually contains at least one keyword (case-insensitive).
+      // This mirrors how the Twitch adapter filters by title keywords.
+      if (keywords && keywords.length > 0) {
+        const titleLower = (title ?? '').toLowerCase();
+        const channelLower = result.snippet.channelTitle.toLowerCase();
+        const matches = keywords.some(
+          (kw) => {
+            const kwLower = kw.toLowerCase();
+            return titleLower.includes(kwLower) || channelLower.includes(kwLower);
+          },
+        );
+        if (!matches) {
+          logger.debug(
+            `YouTube searchLiveStreams: skipping "${result.snippet.channelTitle}" — ` +
+            `title "${title}" does not match any keywords`,
+          );
+          continue;
+        }
+      }
 
       streams.push({
         channelIdentifier: result.snippet.channelId,
         displayName: result.snippet.channelTitle,
         concurrentViewers: viewers ? parseInt(viewers, 10) : 0,
         language: video?.snippet.defaultAudioLanguage ?? null,
-        title: video?.snippet.title ?? result.snippet.title,
+        title,
       });
     }
 
-    logger.debug(`YouTube searchLiveStreams: found ${streams.length} streams`, {
+    logger.debug(`YouTube searchLiveStreams: found ${streams.length} streams (after keyword filter)`, {
       keywords,
       quotaUsed: this.quotaUsed,
     });

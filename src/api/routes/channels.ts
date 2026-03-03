@@ -130,6 +130,12 @@ router.get('/:seriesId/channels', async (req: Request, res: Response, next: Next
     // Filter by source in-memory (not in the typed filter interface)
     if (source && ['manual', 'auto_discovered'].includes(source as string)) {
       channels = channels.filter((ch) => ch.source === source);
+    } else {
+      // By default, exclude unapproved auto-discovered channels from the main list.
+      // These should only appear in the Discovery Feed (which explicitly requests source=auto_discovered).
+      channels = channels.filter(
+        (ch) => !(ch.source === 'auto_discovered' && !ch.is_active),
+      );
     }
 
     res.json(channels);
