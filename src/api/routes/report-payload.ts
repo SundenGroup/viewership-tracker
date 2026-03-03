@@ -210,6 +210,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
         game: series.game,
         partner: series.partner,
         status: series.status,
+        timezone: series.timezone ?? 'UTC',
         startDate: series.start_date,
         endDate: series.end_date,
       },

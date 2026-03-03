@@ -69,6 +69,7 @@ export interface ReportPayload {
     game: string | null;
     partner: string | null;
     status: string;
+    timezone: string;
     startDate: string | null;
     endDate: string | null;
   };

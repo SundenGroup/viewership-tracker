@@ -9,6 +9,7 @@ export interface TournamentSeries {
   game: string | null;
   partner: string | null;
   status: TournamentStatus;
+  timezone: string;
   start_date: string | null;
   end_date: string | null;
   discovery_keywords: string[];
@@ -24,6 +25,7 @@ export interface CreateTournamentSeries {
   game?: string;
   partner?: string;
   status?: TournamentStatus;
+  timezone?: string;
   start_date?: string;
   end_date?: string;
   discovery_keywords?: string[];

@@ -6,6 +6,8 @@ import { TextArea } from '@/components/common/TextArea';
 import { useAuth } from '@/hooks/useAuth';
 import * as api from '@/services/api';
 import type { UserRole } from '@/types/api';
+import { localTimeToUTC } from '@/utils/formatters';
+import { TIMEZONE_OPTIONS } from '@/utils/timezones';
 
 // ── Form state types ─────────────────────────────────────────────────────
 
@@ -13,8 +15,8 @@ interface DayForm {
   tempId: string;
   label: string;
   date: string;
-  broadcast_start: string;
-  broadcast_end: string;
+  broadcast_start_time: string;
+  broadcast_end_time: string;
 }
 
 interface StageForm {
@@ -31,6 +33,7 @@ interface SeriesForm {
   short_name: string;
   game: string;
   partner: string;
+  timezone: string;
   start_date: string;
   end_date: string;
   discovery_keywords: string;
@@ -70,8 +73,8 @@ function makeDay(): DayForm {
     tempId: tempId(),
     label: '',
     date: '',
-    broadcast_start: '',
-    broadcast_end: '',
+    broadcast_start_time: '',
+    broadcast_end_time: '',
   };
 }
 
@@ -92,6 +95,7 @@ const INITIAL_FORM: SeriesForm = {
   short_name: '',
   game: '',
   partner: '',
+  timezone: 'UTC',
   start_date: '',
   end_date: '',
   discovery_keywords: '',
@@ -254,6 +258,7 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
         game: form.game.trim() || undefined,
         partner: form.partner.trim() || undefined,
         status: form.status,
+        timezone: form.timezone,
         min_role: isAdmin ? form.min_role : undefined,
         start_date: form.start_date || undefined,
         end_date: form.end_date || undefined,
@@ -283,8 +288,12 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
           await api.createBroadcastDay(stage.id, {
             label: dayForm.label.trim() || `Day ${di + 1}`,
             date: dayForm.date,
-            broadcast_start: dayForm.broadcast_start || undefined,
-            broadcast_end: dayForm.broadcast_end || undefined,
+            broadcast_start: dayForm.broadcast_start_time && dayForm.date
+              ? localTimeToUTC(dayForm.date, dayForm.broadcast_start_time, form.timezone)
+              : undefined,
+            broadcast_end: dayForm.broadcast_end_time && dayForm.date
+              ? localTimeToUTC(dayForm.date, dayForm.broadcast_end_time, form.timezone)
+              : undefined,
           });
         }
       }
@@ -387,6 +396,14 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
                 type="date"
                 value={form.end_date}
                 onChange={(e) => updateField('end_date', e.target.value)}
+              />
+            </FormField>
+
+            <FormField label="Timezone">
+              <Select
+                options={TIMEZONE_OPTIONS}
+                value={form.timezone}
+                onChange={(e) => updateField('timezone', e.target.value)}
               />
             </FormField>
 
@@ -611,21 +628,21 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
                             onChange={(e) => updateDay(si, di, 'date', e.target.value)}
                           />
                         </FormField>
-                        <FormField label="Start Time">
+                        <FormField label={`Start Time${form.timezone !== 'UTC' ? ` (${form.timezone.split('/').pop()})` : ''}`}>
                           <TextInput
-                            type="datetime-local"
-                            value={day.broadcast_start}
+                            type="time"
+                            value={day.broadcast_start_time}
                             onChange={(e) =>
-                              updateDay(si, di, 'broadcast_start', e.target.value)
+                              updateDay(si, di, 'broadcast_start_time', e.target.value)
                             }
                           />
                         </FormField>
-                        <FormField label="End Time">
+                        <FormField label={`End Time${form.timezone !== 'UTC' ? ` (${form.timezone.split('/').pop()})` : ''}`}>
                           <TextInput
-                            type="datetime-local"
-                            value={day.broadcast_end}
+                            type="time"
+                            value={day.broadcast_end_time}
                             onChange={(e) =>
-                              updateDay(si, di, 'broadcast_end', e.target.value)
+                              updateDay(si, di, 'broadcast_end_time', e.target.value)
                             }
                           />
                         </FormField>

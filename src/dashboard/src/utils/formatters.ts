@@ -113,6 +113,148 @@ export function formatTimeAgo(iso: string | null | undefined): string {
   return `${days} day${days > 1 ? 's' : ''} ago`;
 }
 
+// ── Timezone-aware Formatting ─────────────────────────────────────────────
+
+/**
+ * Get the short timezone abbreviation (e.g. "MSK", "EST", "PDT") for a
+ * given date in a given IANA timezone.
+ */
+function getTimezoneAbbr(date: Date, timezone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'short',
+    }).formatToParts(date);
+    return parts.find((p) => p.type === 'timeZoneName')?.value ?? timezone;
+  } catch {
+    return timezone;
+  }
+}
+
+/**
+ * Format a UTC ISO timestamp as time in a specific IANA timezone.
+ * e.g. formatTimeInTz("2026-03-10T11:00:00Z", "Europe/Moscow") → "14:00 MSK"
+ */
+export function formatTimeInTz(
+  iso: string | null | undefined,
+  timezone: string,
+): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const timePart = d.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: timezone,
+  });
+  const tzAbbr = getTimezoneAbbr(d, timezone);
+  return `${timePart} ${tzAbbr}`;
+}
+
+/**
+ * Format a UTC ISO timestamp as date+time in a specific IANA timezone.
+ * e.g. "Mar 10, 14:00 MSK"
+ */
+export function formatDateTimeInTz(
+  iso: string | null | undefined,
+  timezone: string,
+): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const parts = d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: timezone,
+  });
+  const tzAbbr = getTimezoneAbbr(d, timezone);
+  return `${parts} ${tzAbbr}`;
+}
+
+/**
+ * Convert a local date + time in a specific IANA timezone to a UTC ISO string.
+ * e.g. localTimeToUTC("2026-03-10", "14:00", "Europe/Moscow") → "2026-03-10T11:00:00.000Z"
+ *
+ * Strategy: construct a Date assuming UTC, then use Intl to find what local time
+ * that UTC instant corresponds to in the target timezone. The difference tells us
+ * the timezone offset, which we apply to get the correct UTC.
+ */
+export function localTimeToUTC(
+  dateStr: string,
+  timeStr: string,
+  timezone: string,
+): string {
+  const dateParts = dateStr.split('-').map(Number);
+  const timeParts = timeStr.split(':').map(Number);
+  const year = dateParts[0] ?? 2000;
+  const month = dateParts[1] ?? 1;
+  const day = dateParts[2] ?? 1;
+  const hour = timeParts[0] ?? 0;
+  const minute = timeParts[1] ?? 0;
+
+  // Initial guess: interpret as UTC
+  const guess = new Date(Date.UTC(year, month - 1, day, hour, minute, 0, 0));
+
+  // Find what local time our guess corresponds to in the target timezone
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(guess);
+  const get = (type: string) => parseInt(parts.find((p) => p.type === type)?.value ?? '0', 10);
+  const localYear = get('year');
+  const localMonth = get('month');
+  const localDay = get('day');
+  const localHour = get('hour');
+  const localMinute = get('minute');
+
+  // Build what the formatter tells us the local time is, as a UTC Date (for diffing)
+  const localAsUtc = new Date(Date.UTC(localYear, localMonth - 1, localDay, localHour, localMinute, 0, 0));
+
+  // The offset is the difference between what we wanted and what we got
+  const offsetMs = localAsUtc.getTime() - guess.getTime();
+
+  // Adjust our guess backwards by the offset
+  const result = new Date(guess.getTime() - offsetMs);
+
+  return result.toISOString();
+}
+
+/**
+ * Convert a UTC ISO string back to date + time strings in a specific timezone,
+ * for populating form inputs.
+ * Returns { date: "2026-03-10", time: "14:00" }
+ */
+export function utcToLocalTimeParts(
+  iso: string | null | undefined,
+  timezone: string,
+): { date: string; time: string } {
+  if (!iso) return { date: '', time: '' };
+  const d = new Date(iso);
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  const date = `${get('year')}-${get('month')}-${get('day')}`;
+  const time = `${get('hour')}:${get('minute')}`;
+  return { date, time };
+}
+
 // ── Duration Formatting ──────────────────────────────────────────────────
 
 /**

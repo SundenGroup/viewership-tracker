@@ -15,6 +15,8 @@ import type {
   CreateBroadcastDay,
 } from '@/types/api';
 import { useMutation } from '@/hooks/useMutation';
+import { localTimeToUTC, utcToLocalTimeParts } from '@/utils/formatters';
+import { TIMEZONE_OPTIONS } from '@/utils/timezones';
 
 // ── Form state types ─────────────────────────────────────────────────────
 
@@ -23,8 +25,8 @@ interface DayForm {
   tempId: string;
   label: string;
   date: string;
-  broadcast_start: string;
-  broadcast_end: string;
+  broadcast_start_time: string;
+  broadcast_end_time: string;
   _deleted?: boolean;
 }
 
@@ -44,6 +46,7 @@ interface SeriesForm {
   short_name: string;
   game: string;
   partner: string;
+  timezone: string;
   start_date: string;
   end_date: string;
   discovery_keywords: string;
@@ -86,8 +89,8 @@ function makeDay(): DayForm {
     tempId: tempId(),
     label: '',
     date: '',
-    broadcast_start: '',
-    broadcast_end: '',
+    broadcast_start_time: '',
+    broadcast_end_time: '',
   };
 }
 
@@ -103,18 +106,6 @@ const VISIBILITY_OPTIONS = [
   { value: 'admin', label: 'Admins Only' },
 ];
 
-function toLocalDatetimeStr(isoStr: string | null | undefined): string {
-  if (!isoStr) return '';
-  try {
-    const d = new Date(isoStr);
-    // Format to YYYY-MM-DDTHH:mm for datetime-local input
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  } catch {
-    return '';
-  }
-}
-
 function toDateStr(isoStr: string | null | undefined): string {
   if (!isoStr) return '';
   try {
@@ -126,11 +117,13 @@ function toDateStr(isoStr: string | null | undefined): string {
 
 function seriesDetailToForm(detail: SeriesWithStages): SeriesForm {
   const gameIds = detail.discovery_game_ids ?? {};
+  const seriesTimezone = detail.timezone ?? 'UTC';
   return {
     name: detail.name,
     short_name: detail.short_name ?? '',
     game: detail.game ?? '',
     partner: detail.partner ?? '',
+    timezone: seriesTimezone,
     start_date: toDateStr(detail.start_date),
     end_date: toDateStr(detail.end_date),
     discovery_keywords: (detail.discovery_keywords ?? []).join(', '),
@@ -146,14 +139,18 @@ function seriesDetailToForm(detail: SeriesWithStages): SeriesForm {
       order: stage.order,
       start_date: toDateStr(stage.start_date),
       end_date: toDateStr(stage.end_date),
-      broadcast_days: stage.broadcast_days.map((day) => ({
-        id: day.id,
-        tempId: tempId(),
-        label: day.label,
-        date: toDateStr(day.date),
-        broadcast_start: toLocalDatetimeStr(day.broadcast_start),
-        broadcast_end: toLocalDatetimeStr(day.broadcast_end),
-      })),
+      broadcast_days: stage.broadcast_days.map((day) => {
+        const startParts = utcToLocalTimeParts(day.broadcast_start, seriesTimezone);
+        const endParts = utcToLocalTimeParts(day.broadcast_end, seriesTimezone);
+        return {
+          id: day.id,
+          tempId: tempId(),
+          label: day.label,
+          date: toDateStr(day.date),
+          broadcast_start_time: startParts.time,
+          broadcast_end_time: endParts.time,
+        };
+      }),
     })),
   };
 }
@@ -348,6 +345,7 @@ export function SeriesEditPage({
         game: form.game.trim() || undefined,
         partner: form.partner.trim() || undefined,
         status: form.status,
+        timezone: form.timezone,
         min_role: isAdmin ? form.min_role : undefined,
         start_date: form.start_date || undefined,
         end_date: form.end_date || undefined,
@@ -407,22 +405,23 @@ export function SeriesEditPage({
           const dayForm = visibleDays[di]!;
           setProgress(`Saving day ${di + 1} for ${stageForm.name || `Stage ${si + 1}`}...`);
 
+          const dayPayload = {
+            label: dayForm.label.trim() || `Day ${di + 1}`,
+            date: dayForm.date,
+            broadcast_start: dayForm.broadcast_start_time && dayForm.date
+              ? localTimeToUTC(dayForm.date, dayForm.broadcast_start_time, form.timezone)
+              : undefined,
+            broadcast_end: dayForm.broadcast_end_time && dayForm.date
+              ? localTimeToUTC(dayForm.date, dayForm.broadcast_end_time, form.timezone)
+              : undefined,
+          };
+
           if (dayForm.id) {
             // Update existing day
-            await api.updateBroadcastDay(dayForm.id, {
-              label: dayForm.label.trim() || `Day ${di + 1}`,
-              date: dayForm.date,
-              broadcast_start: dayForm.broadcast_start || undefined,
-              broadcast_end: dayForm.broadcast_end || undefined,
-            });
+            await api.updateBroadcastDay(dayForm.id, dayPayload);
           } else {
             // Create new day
-            await api.createBroadcastDay(stageId, {
-              label: dayForm.label.trim() || `Day ${di + 1}`,
-              date: dayForm.date,
-              broadcast_start: dayForm.broadcast_start || undefined,
-              broadcast_end: dayForm.broadcast_end || undefined,
-            });
+            await api.createBroadcastDay(stageId, dayPayload);
           }
         }
       }
@@ -543,6 +542,14 @@ export function SeriesEditPage({
                 type="date"
                 value={form.end_date}
                 onChange={(e) => updateField('end_date', e.target.value)}
+              />
+            </FormField>
+
+            <FormField label="Timezone">
+              <Select
+                options={TIMEZONE_OPTIONS}
+                value={form.timezone}
+                onChange={(e) => updateField('timezone', e.target.value)}
               />
             </FormField>
 
@@ -771,21 +778,21 @@ export function SeriesEditPage({
                                 onChange={(e) => updateDay(si, di, 'date', e.target.value)}
                               />
                             </FormField>
-                            <FormField label="Start Time">
+                            <FormField label={`Start Time${form.timezone !== 'UTC' ? ` (${form.timezone.split('/').pop()})` : ''}`}>
                               <TextInput
-                                type="datetime-local"
-                                value={day.broadcast_start}
+                                type="time"
+                                value={day.broadcast_start_time}
                                 onChange={(e) =>
-                                  updateDay(si, di, 'broadcast_start', e.target.value)
+                                  updateDay(si, di, 'broadcast_start_time', e.target.value)
                                 }
                               />
                             </FormField>
-                            <FormField label="End Time">
+                            <FormField label={`End Time${form.timezone !== 'UTC' ? ` (${form.timezone.split('/').pop()})` : ''}`}>
                               <TextInput
-                                type="datetime-local"
-                                value={day.broadcast_end}
+                                type="time"
+                                value={day.broadcast_end_time}
                                 onChange={(e) =>
-                                  updateDay(si, di, 'broadcast_end', e.target.value)
+                                  updateDay(si, di, 'broadcast_end_time', e.target.value)
                                 }
                               />
                             </FormField>

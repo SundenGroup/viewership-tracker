@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Button, StatusBadge, Spinner } from '@/components/common';
 import { useAuth } from '@/hooks/useAuth';
-import { formatDate } from '@/utils/formatters';
+import { formatDate, formatTimeInTz } from '@/utils/formatters';
 import type { SeriesWithStages, BroadcastStatus } from '@/types/api';
 
 interface EventTreeViewProps {
@@ -108,6 +108,9 @@ export function EventTreeView({
                     </div>
                     <span className="text-[10px] text-gray-600">
                       {formatDate(day.date)}
+                      {day.broadcast_start && seriesDetail?.timezone && (
+                        <> &middot; {formatTimeInTz(day.broadcast_start, seriesDetail.timezone)}</>
+                      )}
                     </span>
                   </div>
 

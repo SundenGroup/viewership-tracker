@@ -111,9 +111,29 @@ function langColor(index: number): string {
   return LANGUAGE_COLORS[index % LANGUAGE_COLORS.length];
 }
 
-function formatTimeHHMM(isoStr: string): string {
+function formatTimeHHMM(isoStr: string, timezone?: string): string {
   const d = new Date(isoStr);
+  if (timezone) {
+    return d.toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: timezone,
+    });
+  }
   return d.toISOString().slice(11, 16);
+}
+
+function getTzAbbr(timezone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'short',
+    }).formatToParts(new Date());
+    return parts.find((p) => p.type === 'timeZoneName')?.value ?? timezone;
+  } catch {
+    return timezone;
+  }
 }
 
 // ── Main Export ─────────────────────────────────────────────────────────────
@@ -126,13 +146,15 @@ export function buildHTMLReport(data: HTMLReportData): string {
 
   // Build header subtitle
   const days = payload.broadcastDays;
+  const seriesTz = payload.series.timezone ?? 'UTC';
+  const tzLabel = getTzAbbr(seriesTz);
   let subtitle = '';
   if (scope === 'day' && days.length === 1) {
     const day = days[0];
     const dateStr = day.date;
-    const start = day.broadcastStart ? formatTimeHHMM(day.broadcastStart) : '';
-    const end = day.broadcastEnd ? formatTimeHHMM(day.broadcastEnd) : '';
-    const timeRange = start && end ? `${start} \u2013 ${end} UTC` : '';
+    const start = day.broadcastStart ? formatTimeHHMM(day.broadcastStart, seriesTz) : '';
+    const end = day.broadcastEnd ? formatTimeHHMM(day.broadcastEnd, seriesTz) : '';
+    const timeRange = start && end ? `${start} \u2013 ${end} ${tzLabel}` : '';
     subtitle = [dateStr, timeRange, `${payload.channels.length} Streamers`]
       .filter(Boolean)
       .join(' &nbsp;\u00b7&nbsp; ');
@@ -157,7 +179,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
   const platformNames = [...new Set(platformTimeSeries.map((p) => p.groupKey?.toLowerCase()).filter(Boolean))];
 
   // Build per-platform time series arrays
-  const timeLabels = totalTimeSeries.map((p) => formatTimeHHMM(p.timestamp));
+  const timeLabels = totalTimeSeries.map((p) => formatTimeHHMM(p.timestamp, seriesTz));
   const totalCCVArray = totalTimeSeries.map((p) => p.totalCCV);
 
   // Map grouped data to per-platform arrays aligned with timeLabels
@@ -916,7 +938,7 @@ new Chart(document.getElementById('lineChart'), {
         borderWidth: 1,
         titleFont: { weight: '600' },
         callbacks: {
-          title: function(items) { return timeLabels[items[0].dataIndex] + ' UTC'; },
+          title: function(items) { return timeLabels[items[0].dataIndex] + ' ${esc(tzLabel)}'; },
           label: function(ctx) { return '  ' + ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString(); }
         }
       }

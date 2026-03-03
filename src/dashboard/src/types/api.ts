@@ -31,6 +31,7 @@ export interface TournamentSeries {
   game: string | null;
   partner: string | null;
   status: TournamentStatus;
+  timezone: string;
   min_role: UserRole;
   start_date: string | null;
   end_date: string | null;
@@ -47,6 +48,7 @@ export interface CreateTournamentSeries {
   game?: string;
   partner?: string;
   status?: TournamentStatus;
+  timezone?: string;
   min_role?: UserRole;
   start_date?: string;
   end_date?: string;
@@ -314,6 +316,7 @@ export interface ReportPayload {
     game: string | null;
     partner: string | null;
     status: TournamentStatus;
+    timezone: string;
     startDate: string | null;
     endDate: string | null;
   };
