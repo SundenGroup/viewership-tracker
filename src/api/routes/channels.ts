@@ -227,12 +227,14 @@ router.post('/:seriesId/channels', requireRole('admin', 'editor'), async (req: R
       resolvedIdentifier = await resolveYouTubeIdentifier(resolvedIdentifier);
     }
 
+    // Strip broadcast_day_ids from body before inserting (it's not a column on channels)
+    const { broadcast_day_ids: _dayIds, ...channelBody } = req.body;
     const channel = await ChannelModel.create({
-      ...req.body,
+      ...channelBody,
       channel_identifier: resolvedIdentifier,
       series_id: seriesId,
-      source: req.body.source || 'manual',
-      is_active: req.body.is_active !== undefined ? req.body.is_active : true,
+      source: channelBody.source || 'manual',
+      is_active: channelBody.is_active !== undefined ? channelBody.is_active : true,
     });
 
     // Assign to specific broadcast days if provided
@@ -286,12 +288,14 @@ router.post('/:seriesId/channels/bulk', requireRole('admin', 'editor'), async (r
         if (ch.platform === 'youtube' && !YT_CHANNEL_ID_RE.test(resolvedId)) {
           resolvedId = await resolveYouTubeIdentifier(resolvedId);
         }
+        // Strip broadcast_day_ids from individual channel objects (not a DB column)
+        const { broadcast_day_ids: _bdi, ...chBody } = ch;
         const created = await ChannelModel.create({
-          ...ch,
+          ...chBody,
           channel_identifier: resolvedId,
           series_id: seriesId,
-          source: ch.source || 'manual',
-          is_active: ch.is_active !== undefined ? ch.is_active : true,
+          source: chBody.source || 'manual',
+          is_active: chBody.is_active !== undefined ? chBody.is_active : true,
         });
 
         // Assign to specific broadcast days if provided
