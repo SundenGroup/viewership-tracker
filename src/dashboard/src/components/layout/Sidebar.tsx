@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Button, StatusBadge } from '@/components/common';
 import { EventTreeView } from '@/components/sidebar/EventTreeView';
 import { AddChannelForm } from '@/components/sidebar/AddChannelForm';
@@ -54,10 +54,14 @@ export function Sidebar({
     ? discoveryStatus?.activeDiscoveries.includes(seriesId)
     : false;
 
+  // Flatten all broadcast days from the series detail
+  const allBroadcastDays = useMemo(() => {
+    if (!seriesDetail) return [];
+    return seriesDetail.stages.flatMap((s) => s.broadcast_days);
+  }, [seriesDetail]);
+
   // Determine if there are any live broadcast days for contextual hints
-  const hasLiveDays = seriesDetail?.stages.some(
-    (stage) => stage.broadcast_days.some((day) => day.status === 'live'),
-  ) ?? false;
+  const hasLiveDays = allBroadcastDays.some((day) => day.status === 'live');
 
   if (collapsed) {
     return (
@@ -261,7 +265,7 @@ export function Sidebar({
                 Added channels appear in the Channels panel on the dashboard. Start polling with a live broadcast day to collect viewer data.
               </p>
 
-              <AddChannelForm seriesId={seriesId} onSuccess={onChannelAdded} />
+              <AddChannelForm seriesId={seriesId} broadcastDays={allBroadcastDays} onSuccess={onChannelAdded} />
 
               <div className="px-4">
                 <Button
@@ -278,6 +282,7 @@ export function Sidebar({
                 open={bulkModalOpen}
                 onClose={() => setBulkModalOpen(false)}
                 seriesId={seriesId}
+                broadcastDays={allBroadcastDays}
                 onSuccess={onChannelAdded}
               />
             </div>

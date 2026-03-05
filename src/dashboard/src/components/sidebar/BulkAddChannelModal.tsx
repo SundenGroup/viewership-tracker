@@ -1,15 +1,16 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Modal, Button, FormField } from '@/components/common';
 import { Select } from '@/components/common/Select';
 import { TextArea } from '@/components/common/TextArea';
 import { useMutation } from '@/hooks/useMutation';
 import * as api from '@/services/api';
-import type { Platform, ChannelTier, BulkChannelResult, CreateChannel } from '@/types/api';
+import type { Platform, ChannelTier, BulkChannelResult, CreateChannel, BroadcastDay } from '@/types/api';
 
 interface BulkAddChannelModalProps {
   open: boolean;
   onClose: () => void;
   seriesId: string;
+  broadcastDays: BroadcastDay[];
   onSuccess: () => void;
 }
 
@@ -82,16 +83,37 @@ export function BulkAddChannelModal({
   open,
   onClose,
   seriesId,
+  broadcastDays,
   onSuccess,
 }: BulkAddChannelModalProps) {
   const [input, setInput] = useState('');
   const [defaultPlatform, setDefaultPlatform] = useState<Platform>('twitch');
   const [defaultTier, setDefaultTier] = useState<ChannelTier>('community');
+  const [selectedDayIds, setSelectedDayIds] = useState<Set<string>>(new Set());
   const [result, setResult] = useState<BulkChannelResult | null>(null);
 
+  // Auto-select live days when tier is community or watch_party
+  useEffect(() => {
+    if (defaultTier === 'community' || defaultTier === 'watch_party') {
+      const liveDayIds = broadcastDays
+        .filter((d) => d.status === 'live')
+        .map((d) => d.id);
+      if (liveDayIds.length > 0) {
+        setSelectedDayIds(new Set(liveDayIds));
+      }
+    } else {
+      setSelectedDayIds(new Set());
+    }
+  }, [defaultTier, broadcastDays]);
+
   const bulkCreate = useCallback(
-    (channels: CreateChannel[]) => api.bulkCreateChannels(seriesId, channels),
-    [seriesId],
+    (channels: CreateChannel[]) =>
+      api.bulkCreateChannels(
+        seriesId,
+        channels,
+        selectedDayIds.size > 0 ? Array.from(selectedDayIds) : undefined,
+      ),
+    [seriesId, selectedDayIds],
   );
 
   const { mutate, loading, error, reset } = useMutation<BulkChannelResult, [CreateChannel[]]>(bulkCreate);
@@ -123,8 +145,21 @@ export function BulkAddChannelModal({
   const handleClose = () => {
     setInput('');
     setResult(null);
+    setSelectedDayIds(new Set());
     reset();
     onClose();
+  };
+
+  const toggleDay = (dayId: string) => {
+    setSelectedDayIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(dayId)) {
+        next.delete(dayId);
+      } else {
+        next.add(dayId);
+      }
+      return next;
+    });
   };
 
   const lineCount = input.split('\n').filter((l) => l.trim()).length;
@@ -220,6 +255,38 @@ export function BulkAddChannelModal({
               />
             </FormField>
           </div>
+
+          {/* Broadcast Day Selector */}
+          {broadcastDays.length > 0 && (
+            <FormField label="Broadcast Days">
+              <p className="mb-1.5 text-[9px] text-gray-600">
+                Leave empty for all days
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {broadcastDays.map((day) => (
+                  <label
+                    key={day.id}
+                    className={`cursor-pointer rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                      selectedDayIds.has(day.id)
+                        ? 'border-clutch-red bg-clutch-red/20 text-clutch-red'
+                        : 'border-navy-700 bg-navy-800 text-gray-500 hover:text-gray-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="hidden"
+                      checked={selectedDayIds.has(day.id)}
+                      onChange={() => toggleDay(day.id)}
+                    />
+                    {day.label}
+                    {day.status === 'live' && (
+                      <span className="ml-0.5 text-accent-green">{'\u25CF'}</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+            </FormField>
+          )}
 
           <p className="text-[11px] text-gray-600">
             URLs from Twitch, YouTube, Kick, and TikTok will auto-detect the platform.

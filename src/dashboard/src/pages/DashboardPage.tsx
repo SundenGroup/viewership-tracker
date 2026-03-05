@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import {
   TotalCCVPanel,
   PlatformBreakdownPanel,
@@ -31,6 +32,12 @@ export function DashboardPage({
 }: DashboardPageProps) {
   const { hasRole } = useAuth();
   const canExport = hasRole('editor');
+
+  // Flatten all broadcast days from series detail for channel list panel
+  const allBroadcastDays = useMemo(() => {
+    if (!seriesDetail) return [];
+    return seriesDetail.stages.flatMap((s) => s.broadcast_days);
+  }, [seriesDetail]);
 
   if (!seriesId) {
     return (
@@ -97,7 +104,7 @@ export function DashboardPage({
       </div>
 
       {/* Row 4: All Channels — full width */}
-      <ChannelListPanel seriesId={seriesId} refreshKey={channelRefreshKey} />
+      <ChannelListPanel seriesId={seriesId} broadcastDays={allBroadcastDays} refreshKey={channelRefreshKey} />
 
       {/* Row 5: Discovery Feed — full width */}
       <DiscoveryFeedPanel

@@ -1,6 +1,8 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import axios from 'axios';
 import * as ChannelModel from '../../models/channel';
+import * as ChannelBroadcastDayModel from '../../models/channel-broadcast-day';
+import * as BroadcastDayModel from '../../models/broadcast-day';
 import * as TournamentSeriesModel from '../../models/tournament-series';
 import logger from '../../utils/logger';
 import { requireRole } from '../middleware/auth';
@@ -101,6 +103,45 @@ async function resolveYouTubeIdentifier(identifier: string): Promise<string> {
   return identifier;
 }
 
+// ── Helper: attach broadcast_day_ids to channel objects ──────────────────
+
+async function attachBroadcastDayIds<T extends { id: string }>(
+  channels: T[],
+): Promise<(T & { broadcast_day_ids: string[] })[]> {
+  if (channels.length === 0) return [];
+  const channelIds = channels.map((ch) => ch.id);
+  const assignments = await ChannelBroadcastDayModel.findByChannelIds(channelIds);
+
+  // Build map: channelId → dayIds[]
+  const map = new Map<string, string[]>();
+  for (const a of assignments) {
+    const list = map.get(a.channel_id) ?? [];
+    list.push(a.broadcast_day_id);
+    map.set(a.channel_id, list);
+  }
+
+  return channels.map((ch) => ({
+    ...ch,
+    broadcast_day_ids: map.get(ch.id) ?? [],
+  }));
+}
+
+// ── Helper: validate broadcast_day_ids belong to the same series ─────────
+
+async function validateBroadcastDayIds(
+  broadcastDayIds: string[],
+  seriesId: string,
+): Promise<string | null> {
+  if (broadcastDayIds.length === 0) return null;
+  const days = await BroadcastDayModel.findAll({ series_id: seriesId });
+  const validIds = new Set(days.map((d) => d.id));
+  const invalid = broadcastDayIds.filter((id) => !validIds.has(id));
+  if (invalid.length > 0) {
+    return `Invalid broadcast_day_ids for this series: ${invalid.join(', ')}`;
+  }
+  return null;
+}
+
 // GET /api/series/:seriesId/channels — List channels (filterable)
 router.get('/:seriesId/channels', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -138,7 +179,9 @@ router.get('/:seriesId/channels', async (req: Request, res: Response, next: Next
       );
     }
 
-    res.json(channels);
+    // Attach broadcast_day_ids to each channel
+    const enriched = await attachBroadcastDayIds(channels);
+    res.json(enriched);
   } catch (err) {
     next(err);
   }
@@ -147,7 +190,7 @@ router.get('/:seriesId/channels', async (req: Request, res: Response, next: Next
 // POST /api/series/:seriesId/channels — Add a channel (editor+)
 router.post('/:seriesId/channels', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { platform, channel_identifier, display_name } = req.body;
+    const { platform, channel_identifier, display_name, broadcast_day_ids } = req.body;
     if (!platform || !['twitch', 'youtube', 'kick', 'tiktok'].includes(platform)) {
       res.status(400).json({ error: 'platform must be one of: twitch, youtube, kick, tiktok' });
       return;
@@ -161,10 +204,21 @@ router.post('/:seriesId/channels', requireRole('admin', 'editor'), async (req: R
       return;
     }
 
-    const series = await TournamentSeriesModel.findById(req.params.seriesId as string);
+    const seriesId = req.params.seriesId as string;
+    const series = await TournamentSeriesModel.findById(seriesId);
     if (!series) {
       res.status(404).json({ error: 'Series not found' });
       return;
+    }
+
+    // Validate broadcast_day_ids if provided
+    const dayIds: string[] = Array.isArray(broadcast_day_ids) ? broadcast_day_ids : [];
+    if (dayIds.length > 0) {
+      const validationError = await validateBroadcastDayIds(dayIds, seriesId);
+      if (validationError) {
+        res.status(400).json({ error: validationError });
+        return;
+      }
     }
 
     // Strip platform URLs to just the username and resolve YouTube handles
@@ -176,11 +230,17 @@ router.post('/:seriesId/channels', requireRole('admin', 'editor'), async (req: R
     const channel = await ChannelModel.create({
       ...req.body,
       channel_identifier: resolvedIdentifier,
-      series_id: req.params.seriesId as string,
+      series_id: seriesId,
       source: req.body.source || 'manual',
       is_active: req.body.is_active !== undefined ? req.body.is_active : true,
     });
-    res.status(201).json(channel);
+
+    // Assign to specific broadcast days if provided
+    if (dayIds.length > 0) {
+      await ChannelBroadcastDayModel.replaceForChannel(channel.id, dayIds);
+    }
+
+    res.status(201).json({ ...channel, broadcast_day_ids: dayIds });
   } catch (err) {
     next(err);
   }
@@ -189,16 +249,27 @@ router.post('/:seriesId/channels', requireRole('admin', 'editor'), async (req: R
 // POST /api/series/:seriesId/channels/bulk — Add multiple channels (editor+)
 router.post('/:seriesId/channels/bulk', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { channels } = req.body;
+    const { channels, broadcast_day_ids } = req.body;
     if (!Array.isArray(channels) || channels.length === 0) {
       res.status(400).json({ error: 'channels must be a non-empty array' });
       return;
     }
 
-    const series = await TournamentSeriesModel.findById(req.params.seriesId as string);
+    const seriesId = req.params.seriesId as string;
+    const series = await TournamentSeriesModel.findById(seriesId);
     if (!series) {
       res.status(404).json({ error: 'Series not found' });
       return;
+    }
+
+    // Validate shared broadcast_day_ids if provided
+    const dayIds: string[] = Array.isArray(broadcast_day_ids) ? broadcast_day_ids : [];
+    if (dayIds.length > 0) {
+      const validationError = await validateBroadcastDayIds(dayIds, seriesId);
+      if (validationError) {
+        res.status(400).json({ error: validationError });
+        return;
+      }
     }
 
     const results: ChannelModel.Channel[] = [];
@@ -218,10 +289,16 @@ router.post('/:seriesId/channels/bulk', requireRole('admin', 'editor'), async (r
         const created = await ChannelModel.create({
           ...ch,
           channel_identifier: resolvedId,
-          series_id: req.params.seriesId as string,
+          series_id: seriesId,
           source: ch.source || 'manual',
           is_active: ch.is_active !== undefined ? ch.is_active : true,
         });
+
+        // Assign to specific broadcast days if provided
+        if (dayIds.length > 0) {
+          await ChannelBroadcastDayModel.replaceForChannel(created.id, dayIds);
+        }
+
         results.push(created);
       } catch (err) {
         errors.push({ index: i, error: (err as Error).message });
@@ -244,6 +321,35 @@ router.put('/channels/:id', requireRole('admin', 'editor'), async (req: Request,
     }
     const updated = await ChannelModel.update(req.params.id as string, req.body);
     res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/channels/:id/days — Update broadcast day assignments (editor+)
+router.put('/channels/:id/days', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const channelId = req.params.id as string;
+    const existing = await ChannelModel.findById(channelId);
+    if (!existing) {
+      res.status(404).json({ error: 'Channel not found' });
+      return;
+    }
+
+    const { broadcast_day_ids } = req.body;
+    const dayIds: string[] = Array.isArray(broadcast_day_ids) ? broadcast_day_ids : [];
+
+    // Validate that all day IDs belong to the channel's series
+    if (dayIds.length > 0) {
+      const validationError = await validateBroadcastDayIds(dayIds, existing.series_id);
+      if (validationError) {
+        res.status(400).json({ error: validationError });
+        return;
+      }
+    }
+
+    await ChannelBroadcastDayModel.replaceForChannel(channelId, dayIds);
+    res.json({ broadcast_day_ids: dayIds });
   } catch (err) {
     next(err);
   }

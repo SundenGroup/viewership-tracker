@@ -367,6 +367,21 @@ export class PollingOrchestrator {
 
     const channelList = Array.from(uniqueChannels.values());
 
+    // 2b. Load per-day channel assignments (channel_broadcast_days junction table)
+    //     Channels with no entries are series-wide (apply to all days).
+    //     Channels with entries are restricted to only those specific days.
+    const channelDayAssignments = await this.db('channel_broadcast_days')
+      .whereIn('channel_id', channelList.map((ch) => ch.id))
+      .select('channel_id', 'broadcast_day_id');
+
+    const channelDayMap = new Map<string, Set<string>>();
+    for (const a of channelDayAssignments) {
+      if (!channelDayMap.has(a.channel_id)) {
+        channelDayMap.set(a.channel_id, new Set());
+      }
+      channelDayMap.get(a.channel_id)!.add(a.broadcast_day_id);
+    }
+
     // 3. Build multi-platform request
     const multiPlatformChannels: MultiPlatformChannel[] = channelList.map((ch) => ({
       platform: ch.platform as MultiPlatformChannel['platform'],
@@ -433,7 +448,13 @@ export class PollingOrchestrator {
 
       // Each channel's series may have multiple active broadcast days
       const days = seriesToDays.get(channel.series_id) ?? [];
+      const assignedDays = channelDayMap.get(channel.id);
+
       for (const day of days) {
+        // If channel has specific day assignments, only create snapshots for those days
+        if (assignedDays && assignedDays.size > 0 && !assignedDays.has(day.id)) {
+          continue;
+        }
         insertRows.push({
           channel_id: channel.id,
           broadcast_day_id: day.id,

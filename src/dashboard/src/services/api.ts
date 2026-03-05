@@ -197,10 +197,13 @@ export function createChannel(seriesId: string, data: CreateChannel) {
   });
 }
 
-export function bulkCreateChannels(seriesId: string, channels: CreateChannel[]) {
+export function bulkCreateChannels(seriesId: string, channels: CreateChannel[], broadcastDayIds?: string[]) {
   return request<BulkChannelResult>(`/api/series/${seriesId}/channels/bulk`, {
     method: 'POST',
-    body: JSON.stringify({ channels }),
+    body: JSON.stringify({
+      channels,
+      broadcast_day_ids: broadcastDayIds?.length ? broadcastDayIds : undefined,
+    }),
   });
 }
 
@@ -219,6 +222,13 @@ export function toggleChannelActive(id: string, isActive: boolean) {
   return request<Channel>(`/api/channels/${id}/active`, {
     method: 'PUT',
     body: JSON.stringify({ is_active: isActive }),
+  });
+}
+
+export function updateChannelDays(channelId: string, broadcastDayIds: string[]) {
+  return request<{ broadcast_day_ids: string[] }>(`/api/channels/${channelId}/days`, {
+    method: 'PUT',
+    body: JSON.stringify({ broadcast_day_ids: broadcastDayIds }),
   });
 }
 

@@ -1,13 +1,14 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Button, FormField } from '@/components/common';
 import { Select } from '@/components/common/Select';
 import { TextInput } from '@/components/common/TextInput';
 import { useMutation } from '@/hooks/useMutation';
 import * as api from '@/services/api';
-import type { Platform, ChannelTier, Channel } from '@/types/api';
+import type { Platform, ChannelTier, Channel, BroadcastDay } from '@/types/api';
 
 interface AddChannelFormProps {
   seriesId: string;
+  broadcastDays: BroadcastDay[];
   onSuccess: () => void;
 }
 
@@ -34,9 +35,24 @@ const INITIAL_FORM = {
   tier: 'community' as ChannelTier,
 };
 
-export function AddChannelForm({ seriesId, onSuccess }: AddChannelFormProps) {
+export function AddChannelForm({ seriesId, broadcastDays, onSuccess }: AddChannelFormProps) {
   const [expanded, setExpanded] = useState(false);
   const [form, setForm] = useState(INITIAL_FORM);
+  const [selectedDayIds, setSelectedDayIds] = useState<Set<string>>(new Set());
+
+  // Auto-select live days when tier is community or watch_party
+  useEffect(() => {
+    if (form.tier === 'community' || form.tier === 'watch_party') {
+      const liveDayIds = broadcastDays
+        .filter((d) => d.status === 'live')
+        .map((d) => d.id);
+      if (liveDayIds.length > 0) {
+        setSelectedDayIds(new Set(liveDayIds));
+      }
+    } else {
+      setSelectedDayIds(new Set());
+    }
+  }, [form.tier, broadcastDays]);
 
   const createChannel = useCallback(
     (data: typeof INITIAL_FORM) =>
@@ -48,8 +64,9 @@ export function AddChannelForm({ seriesId, onSuccess }: AddChannelFormProps) {
         region: data.region || undefined,
         tier: data.tier,
         is_active: true,
+        broadcast_day_ids: selectedDayIds.size > 0 ? Array.from(selectedDayIds) : undefined,
       }),
-    [seriesId],
+    [seriesId, selectedDayIds],
   );
 
   const { mutate, loading, error } = useMutation<Channel, [typeof INITIAL_FORM]>(createChannel);
@@ -59,6 +76,7 @@ export function AddChannelForm({ seriesId, onSuccess }: AddChannelFormProps) {
     const result = await mutate(form);
     if (result) {
       setForm(INITIAL_FORM);
+      setSelectedDayIds(new Set());
       onSuccess();
     }
   };
@@ -68,6 +86,18 @@ export function AddChannelForm({ seriesId, onSuccess }: AddChannelFormProps) {
     value: (typeof INITIAL_FORM)[K],
   ) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const toggleDay = (dayId: string) => {
+    setSelectedDayIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(dayId)) {
+        next.delete(dayId);
+      } else {
+        next.add(dayId);
+      }
+      return next;
+    });
   };
 
   if (!expanded) {
@@ -169,6 +199,38 @@ export function AddChannelForm({ seriesId, onSuccess }: AddChannelFormProps) {
           onChange={(e) => updateField('tier', e.target.value as ChannelTier)}
         />
       </FormField>
+
+      {/* Broadcast Day Selector */}
+      {broadcastDays.length > 0 && (
+        <FormField label="Broadcast Days">
+          <p className="mb-1.5 text-[9px] text-gray-600">
+            Leave empty for all days
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {broadcastDays.map((day) => (
+              <label
+                key={day.id}
+                className={`cursor-pointer rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                  selectedDayIds.has(day.id)
+                    ? 'border-clutch-red bg-clutch-red/20 text-clutch-red'
+                    : 'border-navy-700 bg-navy-800 text-gray-500 hover:text-gray-300'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  className="hidden"
+                  checked={selectedDayIds.has(day.id)}
+                  onChange={() => toggleDay(day.id)}
+                />
+                {day.label}
+                {day.status === 'live' && (
+                  <span className="ml-0.5 text-accent-green">{'\u25CF'}</span>
+                )}
+              </label>
+            ))}
+          </div>
+        </FormField>
+      )}
 
       {error && <p className="text-xs text-accent-red">{error}</p>}
 

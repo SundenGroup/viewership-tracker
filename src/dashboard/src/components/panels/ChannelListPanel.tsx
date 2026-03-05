@@ -4,14 +4,15 @@ import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/hooks/useAuth';
 import * as api from '@/services/api';
 import { formatDate, tierLabel, getStreamUrl } from '@/utils/formatters';
-import type { Channel } from '@/types/api';
+import type { Channel, BroadcastDay } from '@/types/api';
 
 interface ChannelListPanelProps {
   seriesId: string | undefined;
+  broadcastDays: BroadcastDay[];
   refreshKey?: number;
 }
 
-export function ChannelListPanel({ seriesId, refreshKey = 0 }: ChannelListPanelProps) {
+export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: ChannelListPanelProps) {
   const { hasRole } = useAuth();
   const canEdit = hasRole('editor');
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -34,6 +35,9 @@ export function ChannelListPanel({ seriesId, refreshKey = 0 }: ChannelListPanelP
     if (filter === 'inactive') return !ch.is_active;
     return true;
   });
+
+  // Build a quick lookup: dayId → label
+  const dayLabelMap = new Map(broadcastDays.map((d) => [d.id, d.label]));
 
   const action = (
     <div className="flex gap-1">
@@ -71,6 +75,7 @@ export function ChannelListPanel({ seriesId, refreshKey = 0 }: ChannelListPanelP
                 <th className="pb-2 text-left font-medium">Channel</th>
                 <th className="pb-2 text-left font-medium">Platform</th>
                 <th className="pb-2 text-left font-medium">Tier</th>
+                <th className="pb-2 text-left font-medium">Days</th>
                 <th className="pb-2 text-left font-medium">Source</th>
                 <th className="pb-2 text-left font-medium">Status</th>
                 <th className="pb-2 text-left font-medium">Added</th>
@@ -83,6 +88,8 @@ export function ChannelListPanel({ seriesId, refreshKey = 0 }: ChannelListPanelP
                   key={ch.id}
                   channel={ch}
                   seriesId={seriesId}
+                  broadcastDays={broadcastDays}
+                  dayLabelMap={dayLabelMap}
                   onRefresh={refetch}
                   canEdit={canEdit}
                 />
@@ -98,11 +105,15 @@ export function ChannelListPanel({ seriesId, refreshKey = 0 }: ChannelListPanelP
 function ChannelRow({
   channel,
   seriesId,
+  broadcastDays,
+  dayLabelMap,
   onRefresh,
   canEdit,
 }: {
   channel: Channel;
   seriesId: string;
+  broadcastDays: BroadcastDay[];
+  dayLabelMap: Map<string, string>;
   onRefresh: () => void;
   canEdit: boolean;
 }) {
@@ -113,6 +124,9 @@ function ChannelRow({
   const [editRegion, setEditRegion] = useState(channel.region ?? '');
   const [editTier, setEditTier] = useState(channel.tier ?? 'community');
   const [editDisplayName, setEditDisplayName] = useState(channel.display_name);
+  const [editDayIds, setEditDayIds] = useState<Set<string>>(
+    new Set(channel.broadcast_day_ids ?? []),
+  );
 
   const handleToggle = async () => {
     setActing(true);
@@ -154,12 +168,25 @@ function ChannelRow({
   const handleSaveEdit = async () => {
     setActing(true);
     try {
+      // Update channel properties
       await api.updateChannel(channel.id, {
         display_name: editDisplayName,
         language: editLang || undefined,
         region: editRegion || undefined,
         tier: editTier,
       });
+
+      // Update day assignments
+      const currentDayIds = new Set(channel.broadcast_day_ids ?? []);
+      const newDayIdsArray = Array.from(editDayIds);
+      const daysChanged =
+        currentDayIds.size !== editDayIds.size ||
+        newDayIdsArray.some((id) => !currentDayIds.has(id));
+
+      if (daysChanged) {
+        await api.updateChannelDays(channel.id, newDayIdsArray);
+      }
+
       setEditing(false);
       onRefresh();
     } catch {
@@ -174,13 +201,44 @@ function ChannelRow({
     setEditRegion(channel.region ?? '');
     setEditTier(channel.tier ?? 'community');
     setEditDisplayName(channel.display_name);
+    setEditDayIds(new Set(channel.broadcast_day_ids ?? []));
     setEditing(false);
   };
+
+  const toggleEditDay = (dayId: string) => {
+    setEditDayIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(dayId)) {
+        next.delete(dayId);
+      } else {
+        next.add(dayId);
+      }
+      return next;
+    });
+  };
+
+  // Render assigned days as pills
+  const assignedDayIds = channel.broadcast_day_ids ?? [];
+  const daysPills =
+    assignedDayIds.length === 0 ? (
+      <span className="text-[10px] text-gray-600">All Days</span>
+    ) : (
+      <div className="flex flex-wrap gap-0.5">
+        {assignedDayIds.map((id) => (
+          <span
+            key={id}
+            className="rounded-full bg-navy-700 px-1.5 py-0.5 text-[9px] text-gray-400"
+          >
+            {dayLabelMap.get(id) ?? 'Unknown'}
+          </span>
+        ))}
+      </div>
+    );
 
   if (canEdit && editing) {
     return (
       <tr className="border-b border-navy-700/30 last:border-0 bg-navy-800/50">
-        <td colSpan={7} className="py-3 px-2">
+        <td colSpan={8} className="py-3 px-2">
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2 text-xs text-gray-400">
               <PlatformBadge platform={channel.platform} />
@@ -230,6 +288,40 @@ function ChannelRow({
                 </select>
               </div>
             </div>
+
+            {/* Broadcast Day Assignments */}
+            {broadcastDays.length > 0 && (
+              <div>
+                <label className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-gray-500">
+                  Broadcast Days
+                  <span className="ml-1 normal-case font-normal text-gray-600">(empty = all days)</span>
+                </label>
+                <div className="flex flex-wrap gap-1">
+                  {broadcastDays.map((day) => (
+                    <label
+                      key={day.id}
+                      className={`cursor-pointer rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                        editDayIds.has(day.id)
+                          ? 'border-clutch-red bg-clutch-red/20 text-clutch-red'
+                          : 'border-navy-700 bg-navy-800 text-gray-500 hover:text-gray-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="hidden"
+                        checked={editDayIds.has(day.id)}
+                        onChange={() => toggleEditDay(day.id)}
+                      />
+                      {day.label}
+                      {day.status === 'live' && (
+                        <span className="ml-0.5 text-accent-green">{'\u25CF'}</span>
+                      )}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-end gap-1">
               <Button variant="ghost" size="sm" onClick={handleCancelEdit}>Cancel</Button>
               <Button variant="primary" size="sm" onClick={handleSaveEdit} loading={acting}>Save</Button>
@@ -274,6 +366,7 @@ function ChannelRow({
         <PlatformBadge platform={channel.platform} />
       </td>
       <td className="py-2 text-xs text-gray-400">{tierLabel(channel.tier)}</td>
+      <td className="py-2">{daysPills}</td>
       <td className="py-2 text-xs text-gray-500">
         {channel.source === 'auto_discovered' ? 'Auto' : 'Manual'}
       </td>

@@ -125,6 +125,7 @@ export interface Channel {
   is_active: boolean;
   added_at: string;
   metadata: Record<string, unknown>;
+  broadcast_day_ids?: string[];
 }
 
 export interface CreateChannel {
@@ -137,6 +138,7 @@ export interface CreateChannel {
   source?: ChannelSource;
   is_active?: boolean;
   metadata?: Record<string, unknown>;
+  broadcast_day_ids?: string[];
 }
 
 export interface BulkChannelResult {
