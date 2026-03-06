@@ -796,34 +796,36 @@ export class YouTubeAdapter implements PlatformAdapter {
         continue;
       }
 
-      // Channel is live — try API data first, fall back to scraped data
+      // Channel is live — prefer scraped viewer count (validated via "watching now"
+      // text), use API only as fallback when scraper returns 0.
+      // The YouTube Data API's liveStreamingDetails.concurrentViewers sometimes
+      // returns total view counts instead of concurrent viewers, so we can't blindly
+      // trust it. The scraper's value is validated against the "watching now" context.
       const apiVideo = videoMap.get(scraped.videoId);
+      const scrapedViewers = scraped.concurrentViewers;
+      const apiViewers = apiVideo?.liveStreamingDetails?.concurrentViewers
+        ? parseInt(apiVideo.liveStreamingDetails.concurrentViewers, 10)
+        : null;
 
-      if (apiVideo && apiVideo.liveStreamingDetails?.concurrentViewers) {
-        // API data available — use it (more accurate)
-        results.push({
-          channelIdentifier: originalId,
-          displayName: apiVideo.snippet.channelTitle,
-          concurrentViewers: parseInt(apiVideo.liveStreamingDetails.concurrentViewers, 10),
-          isLive: true,
-          language: apiVideo.snippet.defaultAudioLanguage ?? scraped.language,
-          gameName: null,
-          title: apiVideo.snippet.title,
-          startedAt: apiVideo.liveStreamingDetails.actualStartTime ?? scraped.startedAt,
-        });
-      } else {
-        // API unavailable — use scraped data (still accurate for viewer counts)
-        results.push({
-          channelIdentifier: originalId,
-          displayName: scraped.channelName ?? originalId,
-          concurrentViewers: scraped.concurrentViewers,
-          isLive: true,
-          language: scraped.language,
-          gameName: null,
-          title: scraped.title,
-          startedAt: scraped.startedAt,
-        });
+      // Use scraped value if available; fall back to API only when scraper returned 0
+      let finalViewers = scrapedViewers;
+      if (scrapedViewers === 0 && apiViewers !== null) {
+        finalViewers = apiViewers;
+        logger.debug(`YouTube: scraper returned 0 for ${originalId}, using API value: ${apiViewers}`);
+      } else if (apiViewers !== null && apiViewers !== scrapedViewers) {
+        logger.debug(`YouTube: scraper=${scrapedViewers}, API=${apiViewers} for ${originalId} — using scraper (validated)`);
       }
+
+      results.push({
+        channelIdentifier: originalId,
+        displayName: apiVideo?.snippet.channelTitle ?? scraped.channelName ?? originalId,
+        concurrentViewers: finalViewers,
+        isLive: true,
+        language: apiVideo?.snippet.defaultAudioLanguage ?? scraped.language,
+        gameName: null,
+        title: apiVideo?.snippet.title ?? scraped.title,
+        startedAt: apiVideo?.liveStreamingDetails?.actualStartTime ?? scraped.startedAt,
+      });
     }
 
     const liveCount = results.filter((r) => r.isLive).length;
