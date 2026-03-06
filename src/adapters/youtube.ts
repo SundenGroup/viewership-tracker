@@ -983,36 +983,37 @@ function todayDateString(): string {
  * Returns 0 if no live viewer count is found.
  */
 function extractLiveConcurrentViewers(html: string): number {
-  // Strategy 1: Look for originalViewCount inside videoViewCountRenderer with isLive:true
-  // Format: "videoViewCountRenderer":{"viewCount":{...},"originalViewCount":"123","isLive":true}
-  const liveRendererMatch = html.match(
-    /"videoViewCountRenderer"\s*:\s*\{[^}]*?"originalViewCount"\s*:\s*"(\d+)"[^}]*?"isLive"\s*:\s*true/,
-  );
-  if (liveRendererMatch) {
-    return parseInt(liveRendererMatch[1], 10);
+  // Strategy 1: Find "videoViewCountRenderer" block — this is the "X watching now"
+  // component on live streams. Extract a ~500-char window after it and look for
+  // both "originalViewCount" and "isLive":true within that window.
+  // We can't use [^}]* because the renderer object has nested {} objects.
+  const rendererIdx = html.indexOf('"videoViewCountRenderer"');
+  if (rendererIdx !== -1) {
+    const chunk = html.substring(rendererIdx, rendererIdx + 500);
+    const hasIsLive = chunk.includes('"isLive":true');
+    const viewCountMatch = chunk.match(/"originalViewCount":"(\d+)"/);
+    if (hasIsLive && viewCountMatch) {
+      return parseInt(viewCountMatch[1], 10);
+    }
   }
 
-  // Strategy 2: isLive might appear before originalViewCount in the renderer
-  const liveRendererMatchAlt = html.match(
-    /"videoViewCountRenderer"\s*:\s*\{[^}]*?"isLive"\s*:\s*true[^}]*?"originalViewCount"\s*:\s*"(\d+)"/,
-  );
-  if (liveRendererMatchAlt) {
-    return parseInt(liveRendererMatchAlt[1], 10);
-  }
-
-  // Strategy 3: Fallback — look for originalViewCount near "watching now" text
+  // Strategy 2: Look for "originalViewCount" near "watching now" text (±300 chars)
   // YouTube renders "X watching now" which is always the concurrent viewer count
-  const watchingNowMatch = html.match(
-    /"originalViewCount"\s*:\s*"(\d+)"[^}]*?watching now/i,
-  );
-  if (watchingNowMatch) {
-    return parseInt(watchingNowMatch[1], 10);
+  const allViewCounts = html.matchAll(/"originalViewCount":"(\d+)"/g);
+  for (const match of allViewCounts) {
+    const pos = match.index!;
+    const surrounding = html.substring(pos, pos + 300);
+    if (surrounding.toLowerCase().includes('watching now')) {
+      return parseInt(match[1], 10);
+    }
   }
 
-  // Strategy 4: Last resort — broad match (may occasionally pick up total views)
+  // Strategy 3: Last resort — broad match (may occasionally pick up total views)
+  // Only use this if isLive is confirmed on the page (we already checked that
+  // before calling this function), and log a warning for monitoring.
   const broadMatch = html.match(/"originalViewCount":"(\d+)"/);
   if (broadMatch) {
-    logger.debug(`YouTube: using broad originalViewCount match (${broadMatch[1]}) — context-specific patterns did not match`);
+    logger.warn(`YouTube: using broad originalViewCount match (${broadMatch[1]}) — videoViewCountRenderer pattern did not match`);
     return parseInt(broadMatch[1], 10);
   }
 
