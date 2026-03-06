@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button, StatusBadge, Spinner } from '@/components/common';
 import { useAuth } from '@/hooks/useAuth';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { formatDate, formatTimeInTz } from '@/utils/formatters';
 import type { SeriesWithStages, BroadcastStatus } from '@/types/api';
 
@@ -26,7 +27,7 @@ export function EventTreeView({
   statusLoading,
 }: EventTreeViewProps) {
   const { isAdmin } = useAuth();
-  const [expandedStages, setExpandedStages] = useState<Record<string, boolean>>({});
+  const [expandedStages, setExpandedStages] = useLocalStorage<Record<string, boolean>>('cvt:expandedStages', {});
   const [extendMenuOpen, setExtendMenuOpen] = useState<string | null>(null);
   const extendMenuRef = useRef<HTMLDivElement>(null);
 

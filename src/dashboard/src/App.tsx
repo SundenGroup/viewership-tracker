@@ -239,6 +239,18 @@ function AppContent() {
     navigate('/');
   }, [navigate, refetchSeriesList]);
 
+  // ── Mobile sidebar state ──────────────────────────────────────────────
+
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
+  const handleToggleSidebar = useCallback(() => {
+    setMobileSidebarOpen((v) => !v);
+  }, []);
+
+  const handleCloseSidebar = useCallback(() => {
+    setMobileSidebarOpen(false);
+  }, []);
+
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
@@ -249,6 +261,7 @@ function AppContent() {
           selectedSeriesId={selectedSeriesId}
           onSeriesChange={handleSeriesChange}
           wsStatus={pollingData.wsStatus as ConnectionStatus}
+          onToggleSidebar={handleToggleSidebar}
         />
       }
       sidebar={
@@ -270,8 +283,11 @@ function AppContent() {
           pollLoading={pollLoading}
           discoveryLoading={discoveryLoading}
           broadcastDayStatusLoading={bdStatusLoading}
+          onClose={mobileSidebarOpen ? handleCloseSidebar : undefined}
         />
       }
+      sidebarOpen={mobileSidebarOpen}
+      onCloseSidebar={handleCloseSidebar}
     >
       {isUsersPage ? (
         <UserManagementPage />

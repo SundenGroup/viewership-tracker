@@ -4,6 +4,7 @@ import { EventTreeView } from '@/components/sidebar/EventTreeView';
 import { AddChannelForm } from '@/components/sidebar/AddChannelForm';
 import { BulkAddChannelModal } from '@/components/sidebar/BulkAddChannelModal';
 import { useAuth } from '@/hooks/useAuth';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
 import type { OrchestratorStatus, DiscoveryStatus, SeriesWithStages, BroadcastStatus } from '@/types/api';
 import { formatTimeAgo, formatDuration } from '@/utils/formatters';
 
@@ -25,6 +26,8 @@ interface SidebarProps {
   pollLoading?: boolean;
   discoveryLoading?: boolean;
   broadcastDayStatusLoading?: string;
+  /** When provided, shows a close button (mobile overlay mode) */
+  onClose?: () => void;
 }
 
 export function Sidebar({
@@ -45,10 +48,11 @@ export function Sidebar({
   pollLoading = false,
   discoveryLoading = false,
   broadcastDayStatusLoading,
+  onClose,
 }: SidebarProps) {
   const { isAdmin, hasRole } = useAuth();
   const isEditor = hasRole('editor');
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useLocalStorage<boolean>('cvt:sidebarCollapsed', false);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
 
   const isPollingRunning = pollingStatus?.state === 'running';
@@ -65,9 +69,10 @@ export function Sidebar({
   // Determine if there are any live broadcast days for contextual hints
   const hasLiveDays = allBroadcastDays.some((day) => day.status === 'live');
 
-  if (collapsed) {
+  // On mobile (overlay mode), don't use the collapsed mini-sidebar — just hide entirely
+  if (collapsed && !onClose) {
     return (
-      <aside className="flex w-12 flex-col items-center border-r border-navy-700/50 bg-navy-900 py-4">
+      <aside className="hidden md:flex w-12 flex-col items-center border-r border-navy-700/50 bg-navy-900 py-4">
         <button
           onClick={() => setCollapsed(false)}
           className="text-gray-500 hover:text-gray-300 transition-colors"
@@ -87,14 +92,30 @@ export function Sidebar({
         <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">
           Controls
         </span>
-        <button
-          onClick={() => setCollapsed(true)}
-          className="text-gray-500 hover:text-gray-300 transition-colors"
-        >
-          <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
-          </svg>
-        </button>
+        <div className="flex items-center gap-1">
+          {/* Collapse button — desktop only */}
+          {!onClose && (
+            <button
+              onClick={() => setCollapsed(true)}
+              className="text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+            </button>
+          )}
+          {/* Close button — mobile overlay only */}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Event Tree Section */}

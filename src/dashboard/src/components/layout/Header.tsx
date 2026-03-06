@@ -8,6 +8,8 @@ interface HeaderProps {
   selectedSeriesId: string | undefined;
   onSeriesChange: (id: string) => void;
   wsStatus: ConnectionStatus;
+  /** Toggle mobile sidebar — visible only below md */
+  onToggleSidebar?: () => void;
 }
 
 const statusConfig: Record<ConnectionStatus, { color: string; label: string }> = {
@@ -28,6 +30,7 @@ export function Header({
   selectedSeriesId,
   onSeriesChange,
   wsStatus,
+  onToggleSidebar,
 }: HeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -57,9 +60,22 @@ export function Header({
 
   return (
     <header className="sticky top-0 z-40 bg-navy-900/95 backdrop-blur-sm">
-      <div className="flex h-14 items-center justify-between px-6">
+      <div className="flex h-14 items-center justify-between px-3 md:px-6">
         {/* Logo / Brand + Nav */}
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-3 md:gap-6">
+          {/* Hamburger — mobile only */}
+          {onToggleSidebar && (
+            <button
+              onClick={onToggleSidebar}
+              className="flex items-center justify-center rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-navy-800 hover:text-gray-200 md:hidden"
+              aria-label="Toggle sidebar"
+            >
+              <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+              </svg>
+            </button>
+          )}
+
           <div className="flex items-center gap-2">
             {/* Official Clutch horizontal logo */}
             <img
@@ -67,13 +83,13 @@ export function Header({
               alt="Clutch Group"
               className="h-6"
             />
-            <span className="text-[10px] font-medium text-gray-500 uppercase tracking-widest border-l border-navy-700 pl-2">
+            <span className="hidden text-[10px] font-medium text-gray-500 uppercase tracking-widest border-l border-navy-700 pl-2 sm:inline">
               Viewership Tracker
             </span>
           </div>
 
-          {/* Navigation */}
-          <nav className="flex items-center gap-1">
+          {/* Navigation — hidden on mobile */}
+          <nav className="hidden items-center gap-1 md:flex">
             {navItems.map((item) => {
               if (!item.show) return null;
               return (
@@ -94,12 +110,13 @@ export function Header({
         </div>
 
         {/* Series Selector + Status + User */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 md:gap-4">
           <select
             value={selectedSeriesId ?? ''}
             onChange={(e) => onSeriesChange(e.target.value)}
-            className="rounded-lg border border-navy-700 bg-navy-800 px-3 py-1.5 text-sm text-gray-200
-                       focus:border-clutch-red focus:outline-none focus:ring-1 focus:ring-clutch-red/50"
+            className="max-w-[140px] rounded-lg border border-navy-700 bg-navy-800 px-2 py-1.5 text-sm text-gray-200
+                       focus:border-clutch-red focus:outline-none focus:ring-1 focus:ring-clutch-red/50
+                       md:max-w-none md:px-3"
           >
             <option value="">Select a series...</option>
             {seriesList.map((s) => (
@@ -109,18 +126,21 @@ export function Header({
             ))}
           </select>
 
-          {/* Connection Status */}
-          <div className="flex items-center gap-2">
+          {/* Connection Status — hidden on mobile */}
+          <div className="hidden items-center gap-2 md:flex">
             <span className={`h-2 w-2 rounded-full ${statusCfg.color}`} />
             <span className="text-xs text-gray-500">{statusCfg.label}</span>
           </div>
 
+          {/* Mobile: connection dot only (no label) */}
+          <span className={`h-2 w-2 flex-shrink-0 rounded-full md:hidden ${statusCfg.color}`} />
+
           {/* User menu */}
           {user && (
-            <div className="flex items-center gap-2 border-l border-navy-700 pl-4">
-              <span className="text-xs text-gray-400">{user.display_name}</span>
+            <div className="flex items-center gap-2 border-l border-navy-700 pl-2 md:pl-4">
+              <span className="hidden text-xs text-gray-400 md:inline">{user.display_name}</span>
               <span
-                className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                className={`hidden rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide md:inline ${
                   ROLE_COLORS[user.role] ?? 'bg-gray-500/20 text-gray-400'
                 }`}
               >
@@ -128,10 +148,14 @@ export function Header({
               </span>
               <button
                 onClick={logout}
-                className="ml-1 rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-navy-800 hover:text-gray-300"
+                className="rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-navy-800 hover:text-gray-300"
                 title="Sign out"
               >
-                Sign Out
+                <span className="hidden md:inline">Sign Out</span>
+                {/* Mobile: just an icon */}
+                <svg className="h-4 w-4 md:hidden" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V4a1 1 0 00-1-1H3zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z" clipRule="evenodd" />
+                </svg>
               </button>
             </div>
           )}
