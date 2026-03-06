@@ -461,6 +461,18 @@ export function buildHTMLReport(data: HTMLReportData): string {
     border-collapse: collapse;
     font-size: 13px;
   }
+  .tables-grid table {
+    table-layout: fixed;
+  }
+  .tables-grid th,
+  .tables-grid td {
+    padding: 10px 8px;
+  }
+  .tables-grid td:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   th {
     text-align: left;
     font-weight: 600;
