@@ -983,39 +983,42 @@ function todayDateString(): string {
  * Returns 0 if no live viewer count is found.
  */
 function extractLiveConcurrentViewers(html: string): number {
-  // Strategy 1: Find "videoViewCountRenderer" block — this is the "X watching now"
-  // component on live streams. Extract a ~500-char window after it and look for
-  // both "originalViewCount" and "isLive":true within that window.
-  // We can't use [^}]* because the renderer object has nested {} objects.
-  const rendererIdx = html.indexOf('"videoViewCountRenderer"');
+  // Strategy 1: Find the actual "videoViewCountRenderer" JSON block.
+  // IMPORTANT: We search for `"videoViewCountRenderer":` (with the colon) because
+  // YouTube pages also list renderer names in comma-separated arrays like
+  // `"videoPrimaryInfoRenderer","videoViewCountRenderer","menuRenderer"` — searching
+  // without the colon would match that list entry first (wrong location).
+  // The correct block looks like:
+  //   "videoViewCountRenderer":{"viewCount":{"runs":[{"text":"18"},{"text":" watching now"}]},"isLive":true,"originalViewCount":"18"}
+  const rendererIdx = html.indexOf('"videoViewCountRenderer":');
   if (rendererIdx !== -1) {
     const chunk = html.substring(rendererIdx, rendererIdx + 500);
     const hasIsLive = chunk.includes('"isLive":true');
     const viewCountMatch = chunk.match(/"originalViewCount":"(\d+)"/);
     if (hasIsLive && viewCountMatch) {
+      logger.debug(`YouTube: extracted viewers via videoViewCountRenderer strategy: ${viewCountMatch[1]}`);
       return parseInt(viewCountMatch[1], 10);
     }
   }
 
-  // Strategy 2: Look for "originalViewCount" near "watching now" text (±300 chars)
-  // YouTube renders "X watching now" which is always the concurrent viewer count
-  const allViewCounts = html.matchAll(/"originalViewCount":"(\d+)"/g);
+  // Strategy 2: Look for "originalViewCount" near "watching now" text.
+  // YouTube renders "X watching now" which is always the concurrent viewer count.
+  // The "watching now" text appears BEFORE originalViewCount in the same renderer
+  // block, so we look backward (200 chars) from each originalViewCount match.
+  const allViewCounts = [...html.matchAll(/"originalViewCount":"(\d+)"/g)];
   for (const match of allViewCounts) {
     const pos = match.index!;
-    const surrounding = html.substring(pos, pos + 300);
-    if (surrounding.toLowerCase().includes('watching now')) {
+    const lookback = html.substring(Math.max(0, pos - 200), pos + match[0].length);
+    if (lookback.toLowerCase().includes('watching now')) {
+      logger.debug(`YouTube: extracted viewers via "watching now" proximity strategy: ${match[1]}`);
       return parseInt(match[1], 10);
     }
   }
 
-  // Strategy 3: Last resort — broad match (may occasionally pick up total views)
-  // Only use this if isLive is confirmed on the page (we already checked that
-  // before calling this function), and log a warning for monitoring.
-  const broadMatch = html.match(/"originalViewCount":"(\d+)"/);
-  if (broadMatch) {
-    logger.warn(`YouTube: using broad originalViewCount match (${broadMatch[1]}) — videoViewCountRenderer pattern did not match`);
-    return parseInt(broadMatch[1], 10);
-  }
-
+  // No reliable match found. Do NOT fall back to a broad "originalViewCount" match
+  // because it may pick up total video views (e.g. 1,976) instead of concurrent
+  // viewers (e.g. 18). It's better to report 0 and let the next poll cycle retry
+  // than to report wildly incorrect data that corrupts charts.
+  logger.warn(`YouTube: could not extract live concurrent viewers — no videoViewCountRenderer block or "watching now" context found`);
   return 0;
 }
