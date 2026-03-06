@@ -20,6 +20,7 @@ interface SidebarProps {
   onStopDiscovery: () => void;
   onTriggerDiscovery: () => void;
   onBroadcastDayStatusChange: (dayId: string, status: BroadcastStatus) => void;
+  onExtendBroadcast: (dayId: string, minutes: number) => void;
   onChannelAdded: () => void;
   pollLoading?: boolean;
   discoveryLoading?: boolean;
@@ -39,6 +40,7 @@ export function Sidebar({
   onStopDiscovery,
   onTriggerDiscovery,
   onBroadcastDayStatusChange,
+  onExtendBroadcast,
   onChannelAdded,
   pollLoading = false,
   discoveryLoading = false,
@@ -106,6 +108,7 @@ export function Sidebar({
           seriesDetail={seriesDetail}
           loading={seriesDetailLoading}
           onStatusChange={onBroadcastDayStatusChange}
+          onExtendBroadcast={onExtendBroadcast}
           statusLoading={broadcastDayStatusLoading}
         />
       </div>

@@ -172,6 +172,36 @@ function AppContent() {
     [refetchSeriesDetail],
   );
 
+  // ── Sidebar: Extend broadcast day end time ───────────────────────────
+
+  const handleExtendBroadcast = useCallback(
+    async (dayId: string, minutes: number) => {
+      if (!seriesDetail) return;
+      // Find the broadcast day to get current broadcast_end
+      let broadcastEnd: string | null = null;
+      for (const stage of seriesDetail.stages) {
+        const day = stage.broadcast_days.find((d) => d.id === dayId);
+        if (day) {
+          broadcastEnd = day.broadcast_end;
+          break;
+        }
+      }
+      const base = Math.max(
+        broadcastEnd ? new Date(broadcastEnd).getTime() : Date.now(),
+        Date.now(),
+      );
+      const newEnd = new Date(base + minutes * 60_000).toISOString();
+
+      setBdStatusLoading(dayId);
+      try {
+        await api.updateBroadcastDay(dayId, { broadcast_end: newEnd });
+        refetchSeriesDetail();
+      } catch { /* ignore */ }
+      finally { setBdStatusLoading(undefined); }
+    },
+    [seriesDetail, refetchSeriesDetail],
+  );
+
   // ── Sidebar: Channel management ───────────────────────────────────────
 
   const [channelRefreshKey, setChannelRefreshKey] = useState(0);
@@ -235,6 +265,7 @@ function AppContent() {
           onStopDiscovery={handleStopDiscovery}
           onTriggerDiscovery={handleTriggerDiscovery}
           onBroadcastDayStatusChange={handleBroadcastDayStatusChange}
+          onExtendBroadcast={handleExtendBroadcast}
           onChannelAdded={handleChannelAdded}
           pollLoading={pollLoading}
           discoveryLoading={discoveryLoading}
