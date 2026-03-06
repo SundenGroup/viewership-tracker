@@ -988,16 +988,26 @@ function extractLiveConcurrentViewers(html: string): number {
   // YouTube pages also list renderer names in comma-separated arrays like
   // `"videoPrimaryInfoRenderer","videoViewCountRenderer","menuRenderer"` — searching
   // without the colon would match that list entry first (wrong location).
-  // The correct block looks like:
+  //
+  // The correct block for a live stream looks like:
   //   "videoViewCountRenderer":{"viewCount":{"runs":[{"text":"18"},{"text":" watching now"}]},"isLive":true,"originalViewCount":"18"}
+  //
+  // CRITICAL: YouTube sometimes serves a page where the videoViewCountRenderer has
+  // "isLive":true but shows TOTAL VIEWS instead of concurrent viewers. The runs text
+  // will say "X views" instead of "X watching now" in that case. We MUST check for
+  // "watching now" to distinguish the two.
   const rendererIdx = html.indexOf('"videoViewCountRenderer":');
   if (rendererIdx !== -1) {
     const chunk = html.substring(rendererIdx, rendererIdx + 500);
-    const hasIsLive = chunk.includes('"isLive":true');
+    const hasWatchingNow = chunk.toLowerCase().includes('watching now');
     const viewCountMatch = chunk.match(/"originalViewCount":"(\d+)"/);
-    if (hasIsLive && viewCountMatch) {
+    if (hasWatchingNow && viewCountMatch) {
       logger.debug(`YouTube: extracted viewers via videoViewCountRenderer strategy: ${viewCountMatch[1]}`);
       return parseInt(viewCountMatch[1], 10);
+    }
+    // Log what we found if it didn't match, to help debug
+    if (viewCountMatch && !hasWatchingNow) {
+      logger.warn(`YouTube: videoViewCountRenderer found originalViewCount=${viewCountMatch[1]} but text is NOT "watching now" (likely total views) — rejecting`);
     }
   }
 
@@ -1019,6 +1029,6 @@ function extractLiveConcurrentViewers(html: string): number {
   // because it may pick up total video views (e.g. 1,976) instead of concurrent
   // viewers (e.g. 18). It's better to report 0 and let the next poll cycle retry
   // than to report wildly incorrect data that corrupts charts.
-  logger.warn(`YouTube: could not extract live concurrent viewers — no videoViewCountRenderer block or "watching now" context found`);
+  logger.warn(`YouTube: could not extract live concurrent viewers — no "watching now" context found in videoViewCountRenderer or page`);
   return 0;
 }
