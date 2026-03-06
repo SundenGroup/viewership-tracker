@@ -301,7 +301,14 @@ export class KickAdapter implements PlatformAdapter {
       }
     }
 
-    logger.debug(`Kick getViewerCounts: ${results.filter(r => r.isLive).length}/${channelNames.length} live`);
+    const liveResults = results.filter(r => r.isLive);
+    logger.debug(`Kick getViewerCounts: ${liveResults.length}/${channelNames.length} live`);
+
+    // Log individual viewer counts for live channels to help trace discrepancies
+    for (const r of liveResults) {
+      logger.debug(`Kick: ${r.channelIdentifier} → ${r.concurrentViewers} viewers`);
+    }
+
     return results;
   }
 

@@ -410,14 +410,7 @@ export class PollingOrchestrator {
       return result;
     }
 
-    // 5. Build a lookup: channel_identifier+platform → adapter snapshot
-    const snapshotMap = new Map<string, ChannelSnapshot>();
-    for (const snap of snapshots) {
-      // Use the original identifier (lowercase for matching)
-      snapshotMap.set(snap.channelIdentifier.toLowerCase(), snap);
-    }
-
-    // 6. Build broadcast day lookup: series_id → broadcast_day(s)
+    // 5. Build broadcast day lookup: series_id → broadcast_day(s)
     const seriesToDays = new Map<string, BroadcastDay[]>();
     for (const day of activeDays) {
       const list = seriesToDays.get(day.series_id) ?? [];
@@ -425,8 +418,11 @@ export class PollingOrchestrator {
       seriesToDays.set(day.series_id, list);
     }
 
-    // 7. Build snapshot insert rows
+    // 6. Build snapshot insert rows
     //    Each channel gets one snapshot per active broadcast day in its series
+    //    NOTE: snapshots[] is in the exact same order as channelList[] (guaranteed
+    //    by getViewerCountsMultiPlatform), so we use index-based matching to avoid
+    //    cross-platform identifier collisions that a Map<identifier> would cause.
     interface SnapshotInsertRow {
       channel_id: string;
       broadcast_day_id: string;
@@ -442,8 +438,9 @@ export class PollingOrchestrator {
     const insertRows: SnapshotInsertRow[] = [];
     let totalCCV = 0;
 
-    for (const channel of channelList) {
-      const adapterResult = snapshotMap.get(channel.channel_identifier.toLowerCase());
+    for (let i = 0; i < channelList.length; i++) {
+      const channel = channelList[i];
+      const adapterResult = snapshots[i];
       const viewers = adapterResult?.concurrentViewers ?? 0;
 
       // Each channel's series may have multiple active broadcast days
