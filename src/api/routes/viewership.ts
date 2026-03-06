@@ -216,16 +216,24 @@ router.get('/timeseries', async (req: Request, res: Response, next: NextFunction
 
     const groupColumn = groupBy === 'channel' ? 'channel_id' : groupBy;
 
+    // Subquery deduplicates per channel within each bucket (MAX) to avoid
+    // double-counting when multiple poll cycles land in the same time bucket.
     const rows: Array<{ bucket: Date; group_key: string; total_ccv: string; channel_count: string }> = await db.raw(
-      `SELECT
-         date_trunc('minute', "timestamp")
-           + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
-           * interval '1 second' AS bucket,
-         "${groupColumn}" AS group_key,
-         SUM(concurrent_viewers)::text AS total_ccv,
-         COUNT(DISTINCT channel_id)::text AS channel_count
-       FROM viewership_snapshots
-       WHERE "${scopeColumn}" = :id
+      `SELECT bucket, group_key,
+         SUM(max_viewers)::text AS total_ccv,
+         COUNT(*)::text AS channel_count
+       FROM (
+         SELECT
+           date_trunc('minute', "timestamp")
+             + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
+             * interval '1 second' AS bucket,
+           channel_id,
+           "${groupColumn}" AS group_key,
+           MAX(concurrent_viewers) AS max_viewers
+         FROM viewership_snapshots
+         WHERE "${scopeColumn}" = :id
+         GROUP BY bucket, channel_id, group_key
+       ) per_channel
        GROUP BY bucket, group_key
        ORDER BY bucket ASC, total_ccv DESC`,
       { interval, id: scopeObj.id },

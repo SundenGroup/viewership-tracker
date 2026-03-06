@@ -224,15 +224,24 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25): Promise<L
 
 export async function getTimeSeriesData(scope: Scope, intervalSeconds = 60): Promise<TimeSeriesBucket[]> {
   const col = scopeColumnBare(scope);
+  // Subquery deduplicates per channel within each bucket (MAX) to avoid
+  // double-counting when multiple poll cycles land in the same time bucket
+  // (e.g. after a deploy restart).
   return db.raw(
-    `SELECT
-       date_trunc('minute', "timestamp")
-         + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
-         * interval '1 second' AS bucket,
-       SUM(concurrent_viewers)::text AS total_ccv,
-       COUNT(DISTINCT channel_id)::text AS channel_count
-     FROM viewership_snapshots
-     WHERE "${col}" = :id
+    `SELECT bucket,
+       SUM(max_viewers)::text AS total_ccv,
+       COUNT(*)::text AS channel_count
+     FROM (
+       SELECT
+         date_trunc('minute', "timestamp")
+           + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
+           * interval '1 second' AS bucket,
+         channel_id,
+         MAX(concurrent_viewers) AS max_viewers
+       FROM viewership_snapshots
+       WHERE "${col}" = :id
+       GROUP BY bucket, channel_id
+     ) per_channel
      GROUP BY bucket
      ORDER BY bucket ASC`,
     { interval: intervalSeconds, id: scope.id },
@@ -256,16 +265,24 @@ export async function getGroupedTimeSeriesData(
   intervalSeconds = 60,
 ): Promise<GroupedTimeSeriesBucket[]> {
   const col = scopeColumnBare(scope);
+  // Subquery deduplicates per channel within each bucket (MAX) to avoid
+  // double-counting when multiple poll cycles land in the same time bucket.
   return db.raw(
-    `SELECT
-       date_trunc('minute', "timestamp")
-         + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
-         * interval '1 second' AS bucket,
-       "${groupBy}" AS group_key,
-       SUM(concurrent_viewers)::text AS total_ccv,
-       COUNT(DISTINCT channel_id)::text AS channel_count
-     FROM viewership_snapshots
-     WHERE "${col}" = :id
+    `SELECT bucket, group_key,
+       SUM(max_viewers)::text AS total_ccv,
+       COUNT(*)::text AS channel_count
+     FROM (
+       SELECT
+         date_trunc('minute', "timestamp")
+           + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
+           * interval '1 second' AS bucket,
+         channel_id,
+         "${groupBy}" AS group_key,
+         MAX(concurrent_viewers) AS max_viewers
+       FROM viewership_snapshots
+       WHERE "${col}" = :id
+       GROUP BY bucket, channel_id, group_key
+     ) per_channel
      GROUP BY bucket, group_key
      ORDER BY bucket ASC, total_ccv DESC`,
     { interval: intervalSeconds, id: scope.id },
