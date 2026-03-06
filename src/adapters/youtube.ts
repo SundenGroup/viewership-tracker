@@ -330,11 +330,10 @@ export class YouTubeAdapter implements PlatformAdapter {
       }
 
       // Get concurrent viewers from ytInitialData (originalViewCount field)
-      // This is the actual live concurrent viewer count, NOT the total view count
-      const originalViewCountMatch = html.match(/"originalViewCount":"(\d+)"/);
-      if (originalViewCountMatch) {
-        concurrentViewers = parseInt(originalViewCountMatch[1], 10);
-      }
+      // IMPORTANT: YouTube pages embed multiple JSON objects and originalViewCount
+      // can appear in different contexts. We specifically look for it inside a
+      // videoViewCountRenderer with isLive:true — this is the "X watching now" display.
+      concurrentViewers = extractLiveConcurrentViewers(html);
 
       logger.debug(`YouTube scrape: ${channelId} is LIVE → videoId=${videoId}, viewers=${concurrentViewers}, title="${title?.substring(0, 50) ?? 'unknown'}"`);
 
@@ -393,11 +392,9 @@ export class YouTubeAdapter implements PlatformAdapter {
       const authorMatch = html.match(/"author":"([^"]+)"/);
       channelName = authorMatch ? authorMatch[1] : null;
 
-      // Concurrent viewers
-      const viewerMatch = html.match(/"originalViewCount":"(\d+)"/);
-      if (viewerMatch) {
-        concurrentViewers = parseInt(viewerMatch[1], 10);
-      }
+      // Concurrent viewers — use context-aware extraction to avoid picking up
+      // total view counts from other JSON objects on the page
+      concurrentViewers = extractLiveConcurrentViewers(html);
 
       // Channel ID for reference
       const channelIdMatch = html.match(/"channelId":"(UC[a-zA-Z0-9_-]+)"/);
@@ -972,4 +969,52 @@ function sleep(ms: number): Promise<void> {
 
 function todayDateString(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Extracts the live concurrent viewer count from YouTube page HTML.
+ *
+ * YouTube pages embed multiple JSON objects. The `originalViewCount` field
+ * can appear in different contexts — sometimes as total video views (all-time)
+ * and sometimes as live concurrent viewers. We specifically look for it inside
+ * a `videoViewCountRenderer` that has `isLive: true`, which is the "X watching now"
+ * display component on live streams.
+ *
+ * Returns 0 if no live viewer count is found.
+ */
+function extractLiveConcurrentViewers(html: string): number {
+  // Strategy 1: Look for originalViewCount inside videoViewCountRenderer with isLive:true
+  // Format: "videoViewCountRenderer":{"viewCount":{...},"originalViewCount":"123","isLive":true}
+  const liveRendererMatch = html.match(
+    /"videoViewCountRenderer"\s*:\s*\{[^}]*?"originalViewCount"\s*:\s*"(\d+)"[^}]*?"isLive"\s*:\s*true/,
+  );
+  if (liveRendererMatch) {
+    return parseInt(liveRendererMatch[1], 10);
+  }
+
+  // Strategy 2: isLive might appear before originalViewCount in the renderer
+  const liveRendererMatchAlt = html.match(
+    /"videoViewCountRenderer"\s*:\s*\{[^}]*?"isLive"\s*:\s*true[^}]*?"originalViewCount"\s*:\s*"(\d+)"/,
+  );
+  if (liveRendererMatchAlt) {
+    return parseInt(liveRendererMatchAlt[1], 10);
+  }
+
+  // Strategy 3: Fallback — look for originalViewCount near "watching now" text
+  // YouTube renders "X watching now" which is always the concurrent viewer count
+  const watchingNowMatch = html.match(
+    /"originalViewCount"\s*:\s*"(\d+)"[^}]*?watching now/i,
+  );
+  if (watchingNowMatch) {
+    return parseInt(watchingNowMatch[1], 10);
+  }
+
+  // Strategy 4: Last resort — broad match (may occasionally pick up total views)
+  const broadMatch = html.match(/"originalViewCount":"(\d+)"/);
+  if (broadMatch) {
+    logger.debug(`YouTube: using broad originalViewCount match (${broadMatch[1]}) — context-specific patterns did not match`);
+    return parseInt(broadMatch[1], 10);
+  }
+
+  return 0;
 }
