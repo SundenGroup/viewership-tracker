@@ -317,9 +317,10 @@ export function platformColor(platform: string): string {
 // ── Tier / Status Formatting ────────────────────────────────────────────
 
 const TIER_LABELS: Record<string, string> = {
-  primary: 'Primary',
-  secondary: 'Secondary',
+  official: 'Official',
+  partner: 'Partner',
   community: 'Community',
+  player: 'Player',
   watch_party: 'Watch Party',
 };
 

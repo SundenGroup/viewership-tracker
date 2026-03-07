@@ -22,9 +22,10 @@ const PLATFORM_OPTIONS = [
 ];
 
 const TIER_OPTIONS = [
-  { value: 'primary', label: 'Primary' },
-  { value: 'secondary', label: 'Secondary' },
+  { value: 'official', label: 'Official' },
+  { value: 'partner', label: 'Partner' },
   { value: 'community', label: 'Community' },
+  { value: 'player', label: 'Player' },
   { value: 'watch_party', label: 'Watch Party' },
 ];
 

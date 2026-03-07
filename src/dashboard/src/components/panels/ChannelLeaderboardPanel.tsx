@@ -11,9 +11,10 @@ interface ChannelLeaderboardPanelProps {
 // ── Tier badge colors ────────────────────────────────────────────────────
 
 const TIER_COLORS: Record<string, string> = {
-  primary: 'bg-clutch-red/15 text-clutch-red border border-red-500/20',
-  secondary: 'bg-clutch-blue/15 text-accent-blue border border-blue-500/20',
+  official: 'bg-clutch-red/15 text-clutch-red border border-red-500/20',
+  partner: 'bg-amber-500/15 text-amber-400 border border-amber-500/20',
   community: 'bg-navy-700 text-gray-400',
+  player: 'bg-sky-500/15 text-sky-400 border border-sky-500/20',
   watch_party: 'bg-accent-purple/15 text-accent-purple border border-purple-500/20',
 };
 

@@ -117,7 +117,7 @@ function DiscoveryRow({
     setActing(true);
     setActionError(null);
     try {
-      await api.promoteChannel(channel.id, 'secondary');
+      await api.promoteChannel(channel.id, 'partner');
       setActionDone('approved');
       onRefresh();
     } catch (err) {

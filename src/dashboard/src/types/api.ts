@@ -17,7 +17,7 @@ export interface AuthUser {
 export type TournamentStatus = 'draft' | 'active' | 'completed';
 export type BroadcastStatus = 'scheduled' | 'live' | 'completed';
 export type Platform = 'twitch' | 'youtube' | 'kick' | 'tiktok';
-export type ChannelTier = 'primary' | 'secondary' | 'community' | 'watch_party';
+export type ChannelTier = 'official' | 'partner' | 'community' | 'player' | 'watch_party';
 export type ChannelSource = 'manual' | 'auto_discovered';
 export type ScopeLevel = 'day' | 'stage' | 'series';
 export type MetricType = 'vod_views' | 'clip_views' | 'total_video_views';

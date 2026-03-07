@@ -385,7 +385,7 @@ export class DiscoveryService {
    * Promote a channel to a new tier.
    */
   async promoteChannel(channelId: string, tier: string): Promise<void> {
-    const validTiers = ['primary', 'secondary', 'community', 'watch_party'];
+    const validTiers = ['official', 'partner', 'community', 'player', 'watch_party'];
     if (!validTiers.includes(tier)) {
       throw new Error(`Invalid tier: ${tier}. Must be one of: ${validTiers.join(', ')}`);
     }

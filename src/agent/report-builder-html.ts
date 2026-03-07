@@ -62,9 +62,9 @@ const LANGUAGE_COLORS: string[] = [
 const TIER_CLASSES: Record<string, { tag: string; label: string }> = {
   official: { tag: 'tag-official', label: 'Official' },
   partner: { tag: 'tag-partner', label: 'Partner' },
-  primary: { tag: 'tag-primary', label: 'Primary' },
   community: { tag: 'tag-community', label: 'Community' },
-  watchparty: { tag: 'tag-watchparty', label: 'Watch Party' },
+  player: { tag: 'tag-player', label: 'Player' },
+  watch_party: { tag: 'tag-watchparty', label: 'Watch Party' },
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -236,9 +236,9 @@ export function buildHTMLReport(data: HTMLReportData): string {
   const TIER_COLORS: Record<string, string> = {
     official: '#FF154D',
     partner: '#f0c040',
-    primary: '#f0c040',
     community: '#26c6da',
-    watchparty: '#7c4dff',
+    player: '#38bdf8',
+    watch_party: '#7c4dff',
   };
   const tierColors = tierEntries.map(([t]) => TIER_COLORS[t] ?? '#7a82a0');
 
@@ -559,9 +559,9 @@ export function buildHTMLReport(data: HTMLReportData): string {
   }
   .tag-official { background: rgba(255,21,77,0.15); color: #FF154D; }
   .tag-partner { background: rgba(240,192,64,0.15); color: #f0c040; }
-  .tag-primary { background: rgba(240,192,64,0.15); color: #f0c040; }
-  .tag-watchparty { background: rgba(124,77,255,0.15); color: #b388ff; }
   .tag-community { background: rgba(38,198,218,0.15); color: #26c6da; }
+  .tag-player { background: rgba(56,189,248,0.15); color: #38bdf8; }
+  .tag-watchparty { background: rgba(124,77,255,0.15); color: #b388ff; }
 
   /* Sortable table */
   .sortable-th {

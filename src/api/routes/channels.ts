@@ -159,7 +159,7 @@ router.get('/:seriesId/channels', async (req: Request, res: Response, next: Next
     if (platform && ['twitch', 'youtube', 'kick', 'tiktok'].includes(platform as string)) {
       filters.platform = platform as ChannelModel.Platform;
     }
-    if (tier && ['primary', 'secondary', 'community', 'watch_party'].includes(tier as string)) {
+    if (tier && ['official', 'partner', 'community', 'player', 'watch_party'].includes(tier as string)) {
       filters.tier = tier as ChannelModel.ChannelTier;
     }
     if (is_active !== undefined) {
