@@ -47,6 +47,7 @@ interface SeriesForm {
   game: string;
   partner: string;
   timezone: string;
+  auto_start_polling: boolean;
   start_date: string;
   end_date: string;
   discovery_keywords: string;
@@ -124,6 +125,7 @@ function seriesDetailToForm(detail: SeriesWithStages): SeriesForm {
     game: detail.game ?? '',
     partner: detail.partner ?? '',
     timezone: seriesTimezone,
+    auto_start_polling: detail.auto_start_polling ?? true,
     start_date: toDateStr(detail.start_date),
     end_date: toDateStr(detail.end_date),
     discovery_keywords: (detail.discovery_keywords ?? []).join(', '),
@@ -346,6 +348,7 @@ export function SeriesEditPage({
         partner: form.partner.trim() || undefined,
         status: form.status,
         timezone: form.timezone,
+        auto_start_polling: form.auto_start_polling,
         min_role: isAdmin ? form.min_role : undefined,
         start_date: form.start_date || undefined,
         end_date: form.end_date || undefined,
@@ -584,6 +587,28 @@ export function SeriesEditPage({
                 />
               </FormField>
             )}
+
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={form.auto_start_polling}
+                onClick={() => updateField('auto_start_polling', !form.auto_start_polling)}
+                className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ${
+                  form.auto_start_polling ? 'bg-accent-green' : 'bg-navy-700'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ${
+                    form.auto_start_polling ? 'translate-x-4' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+              <div>
+                <span className="text-sm font-medium text-gray-300">Auto-start live</span>
+                <p className="text-xs text-gray-500">Automatically go live when broadcast start time arrives</p>
+              </div>
+            </div>
           </div>
 
           <FormField label="Discovery Keywords" className="max-w-lg">

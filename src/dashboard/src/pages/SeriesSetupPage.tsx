@@ -34,6 +34,7 @@ interface SeriesForm {
   game: string;
   partner: string;
   timezone: string;
+  auto_start_polling: boolean;
   start_date: string;
   end_date: string;
   discovery_keywords: string;
@@ -96,6 +97,7 @@ const INITIAL_FORM: SeriesForm = {
   game: '',
   partner: '',
   timezone: 'UTC',
+  auto_start_polling: true,
   start_date: '',
   end_date: '',
   discovery_keywords: '',
@@ -259,6 +261,7 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
         partner: form.partner.trim() || undefined,
         status: form.status,
         timezone: form.timezone,
+        auto_start_polling: form.auto_start_polling,
         min_role: isAdmin ? form.min_role : undefined,
         start_date: form.start_date || undefined,
         end_date: form.end_date || undefined,
@@ -285,15 +288,29 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
             `Creating broadcast day ${di + 1} of ${stageForm.broadcast_days.length} for ${stageForm.name || `Stage ${stageForm.order}`}...`,
           );
 
+          // Compute start/end UTC timestamps
+          let computedStart = dayForm.broadcast_start_time && dayForm.date
+            ? localTimeToUTC(dayForm.date, dayForm.broadcast_start_time, form.timezone)
+            : undefined;
+          let computedEnd = dayForm.broadcast_end_time && dayForm.date
+            ? localTimeToUTC(dayForm.date, dayForm.broadcast_end_time, form.timezone)
+            : undefined;
+
+          // Cross-midnight fix: if end time is before or equal to start time,
+          // the user intends the end to be on the next calendar day
+          if (computedStart && computedEnd) {
+            const startMs = new Date(computedStart).getTime();
+            const endMs = new Date(computedEnd).getTime();
+            if (endMs <= startMs) {
+              computedEnd = new Date(endMs + 24 * 60 * 60 * 1000).toISOString();
+            }
+          }
+
           await api.createBroadcastDay(stage.id, {
             label: dayForm.label.trim() || `Day ${di + 1}`,
             date: dayForm.date,
-            broadcast_start: dayForm.broadcast_start_time && dayForm.date
-              ? localTimeToUTC(dayForm.date, dayForm.broadcast_start_time, form.timezone)
-              : undefined,
-            broadcast_end: dayForm.broadcast_end_time && dayForm.date
-              ? localTimeToUTC(dayForm.date, dayForm.broadcast_end_time, form.timezone)
-              : undefined,
+            broadcast_start: computedStart,
+            broadcast_end: computedEnd,
           });
         }
       }
@@ -424,6 +441,28 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
                 />
               </FormField>
             )}
+
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={form.auto_start_polling}
+                onClick={() => updateField('auto_start_polling', !form.auto_start_polling)}
+                className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ${
+                  form.auto_start_polling ? 'bg-accent-green' : 'bg-navy-700'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ${
+                    form.auto_start_polling ? 'translate-x-4' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+              <div>
+                <span className="text-sm font-medium text-gray-300">Auto-start live</span>
+                <p className="text-xs text-gray-500">Automatically go live when broadcast start time arrives</p>
+              </div>
+            </div>
           </div>
 
           <FormField label="Discovery Keywords" className="max-w-lg">

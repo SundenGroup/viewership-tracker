@@ -32,6 +32,7 @@ export interface TournamentSeries {
   partner: string | null;
   status: TournamentStatus;
   timezone: string;
+  auto_start_polling: boolean;
   min_role: UserRole;
   start_date: string | null;
   end_date: string | null;
@@ -49,6 +50,7 @@ export interface CreateTournamentSeries {
   partner?: string;
   status?: TournamentStatus;
   timezone?: string;
+  auto_start_polling?: boolean;
   min_role?: UserRole;
   start_date?: string;
   end_date?: string;

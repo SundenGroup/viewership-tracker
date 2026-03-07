@@ -128,21 +128,13 @@ async function bootstrap(): Promise<void> {
   // ── 9. Start WebSocket server ──────────────────────────────────────────
   wsServer.start();
 
-  // ── 10. Auto-resume polling if there are live broadcast days ──────────
-  try {
-    const liveDays = await db('broadcast_days').where('status', 'live').count('* as count').first();
-    const liveCount = parseInt((liveDays as { count: string })?.count ?? '0', 10);
-    if (liveCount > 0) {
-      logger.info(`[CVT] Found ${liveCount} live broadcast day(s) — auto-starting polling orchestrator`);
-      orchestrator.start();
-    } else {
-      logger.info('[CVT] No live broadcast days — polling will start when a broadcast day goes live');
-    }
-  } catch (err) {
-    logger.warn('[CVT] Could not check for live broadcast days on startup', {
-      error: (err as Error).message,
-    });
-  }
+  // ── 10. Always start the polling orchestrator ──────────────────────────
+  // The orchestrator handles scheduled→live transitions for series with
+  // auto_start_polling enabled. Idle cycles are very cheap (one DB query),
+  // so it's safe to always run. Manual Start/Stop buttons still work as
+  // an emergency override from the dashboard.
+  orchestrator.start();
+  logger.info('[CVT] Polling orchestrator started (auto-start mode)');
 
   // ── 11. Startup complete ───────────────────────────────────────────────
   logger.info(

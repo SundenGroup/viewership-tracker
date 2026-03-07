@@ -10,6 +10,7 @@ export interface TournamentSeries {
   partner: string | null;
   status: TournamentStatus;
   timezone: string;
+  auto_start_polling: boolean;
   start_date: string | null;
   end_date: string | null;
   discovery_keywords: string[];
@@ -26,6 +27,7 @@ export interface CreateTournamentSeries {
   partner?: string;
   status?: TournamentStatus;
   timezone?: string;
+  auto_start_polling?: boolean;
   start_date?: string;
   end_date?: string;
   discovery_keywords?: string[];

@@ -172,11 +172,14 @@ export class PollingOrchestrator {
     const now = new Date();
 
     try {
-      // Identify days about to go live (so we know which series are affected)
+      // Identify days about to go live — only for series with auto_start_polling enabled
       const goingLive = await this.db<BroadcastDay>('broadcast_days')
-        .where('status', 'scheduled')
+        .where('broadcast_days.status', 'scheduled')
         .whereNotNull('broadcast_start')
         .where('broadcast_start', '<=', now)
+        .whereIn('series_id', function () {
+          this.select('id').from('tournament_series').where('auto_start_polling', true);
+        })
         .select('id', 'series_id');
 
       if (goingLive.length > 0) {
