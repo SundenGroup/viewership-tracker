@@ -405,15 +405,29 @@ export function SeriesEditPage({
           const dayForm = visibleDays[di]!;
           setProgress(`Saving day ${di + 1} for ${stageForm.name || `Stage ${si + 1}`}...`);
 
+          // Compute start/end UTC timestamps
+          let computedStart = dayForm.broadcast_start_time && dayForm.date
+            ? localTimeToUTC(dayForm.date, dayForm.broadcast_start_time, form.timezone)
+            : undefined;
+          let computedEnd = dayForm.broadcast_end_time && dayForm.date
+            ? localTimeToUTC(dayForm.date, dayForm.broadcast_end_time, form.timezone)
+            : undefined;
+
+          // Cross-midnight fix: if end time is before or equal to start time,
+          // the user intends the end to be on the next calendar day (e.g. start 19:00, end 05:30)
+          if (computedStart && computedEnd) {
+            const startMs = new Date(computedStart).getTime();
+            const endMs = new Date(computedEnd).getTime();
+            if (endMs <= startMs) {
+              computedEnd = new Date(endMs + 24 * 60 * 60 * 1000).toISOString();
+            }
+          }
+
           const dayPayload = {
             label: dayForm.label.trim() || `Day ${di + 1}`,
             date: dayForm.date,
-            broadcast_start: dayForm.broadcast_start_time && dayForm.date
-              ? localTimeToUTC(dayForm.date, dayForm.broadcast_start_time, form.timezone)
-              : undefined,
-            broadcast_end: dayForm.broadcast_end_time && dayForm.date
-              ? localTimeToUTC(dayForm.date, dayForm.broadcast_end_time, form.timezone)
-              : undefined,
+            broadcast_start: computedStart,
+            broadcast_end: computedEnd,
           };
 
           if (dayForm.id) {

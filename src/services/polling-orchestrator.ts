@@ -198,10 +198,13 @@ export class PollingOrchestrator {
       }
 
       // Identify days about to complete (so we can check if all days for that series are done)
+      // Safety: only complete if broadcast_end > broadcast_start (valid window).
+      // This prevents instant-completion when cross-midnight end times are misconfigured.
       const goingCompleted = await this.db<BroadcastDay>('broadcast_days')
         .where('status', 'live')
         .whereNotNull('broadcast_end')
         .where('broadcast_end', '<=', now)
+        .whereRaw('broadcast_end > broadcast_start')
         .select('id', 'series_id');
 
       if (goingCompleted.length > 0) {
