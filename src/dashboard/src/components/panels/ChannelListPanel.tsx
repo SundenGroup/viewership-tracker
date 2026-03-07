@@ -1,10 +1,36 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { Card, Button, PlatformBadge, StatusBadge, LoadingOverlay } from '@/components/common';
 import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/hooks/useAuth';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
 import * as api from '@/services/api';
 import { formatDate, tierLabel, getStreamUrl } from '@/utils/formatters';
 import type { Channel, BroadcastDay } from '@/types/api';
+
+// ── Sort types & helpers ────────────────────────────────────────────────
+
+type SortField = 'display_name' | 'platform' | 'tier' | 'source' | 'is_active' | 'added_at';
+type SortDir = 'asc' | 'desc';
+interface SortState { field: SortField; dir: SortDir }
+
+const TIER_ORDER: Record<string, number> = { official: 0, partner: 1, community: 2, player: 3, watch_party: 4 };
+
+function sortChannels(channels: Channel[], { field, dir }: SortState): Channel[] {
+  const d = dir === 'asc' ? 1 : -1;
+  return [...channels].sort((a, b) => {
+    switch (field) {
+      case 'display_name': return d * a.display_name.localeCompare(b.display_name);
+      case 'platform': return d * a.platform.localeCompare(b.platform);
+      case 'tier': return d * ((TIER_ORDER[a.tier] ?? 99) - (TIER_ORDER[b.tier] ?? 99));
+      case 'source': return d * (a.source ?? '').localeCompare(b.source ?? '');
+      case 'is_active': return d * (Number(b.is_active) - Number(a.is_active));
+      case 'added_at': return d * (new Date(a.added_at).getTime() - new Date(b.added_at).getTime());
+      default: return 0;
+    }
+  });
+}
+
+// ── Component ───────────────────────────────────────────────────────────
 
 interface ChannelListPanelProps {
   seriesId: string | undefined;
@@ -16,6 +42,14 @@ export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: Ch
   const { hasRole } = useAuth();
   const canEdit = hasRole('editor');
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [sort, setSort] = useLocalStorage<SortState>('cvt:channelListSort', { field: 'display_name', dir: 'asc' });
+
+  const handleSort = useCallback((field: SortField) => {
+    setSort((prev) => ({
+      field,
+      dir: prev.field === field && prev.dir === 'asc' ? 'desc' : 'asc',
+    }));
+  }, [setSort]);
 
   const { data: channels, loading, error, refetch } = useApi(
     () => (seriesId ? api.listChannels(seriesId) : Promise.resolve([])),
@@ -35,6 +69,8 @@ export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: Ch
     if (filter === 'inactive') return !ch.is_active;
     return true;
   });
+
+  const sorted = sortChannels(filtered, sort);
 
   // Build a quick lookup: dayId → label
   const dayLabelMap = new Map(broadcastDays.map((d) => [d.id, d.label]));
@@ -72,18 +108,44 @@ export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: Ch
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-navy-700/50 text-xs text-gray-500">
-                <th className="pb-2 text-left font-medium">Channel</th>
-                <th className="pb-2 text-left font-medium">Platform</th>
-                <th className="pb-2 text-left font-medium">Tier</th>
+                {([
+                  ['display_name', 'Channel'],
+                  ['platform', 'Platform'],
+                  ['tier', 'Tier'],
+                ] as [SortField, string][]).map(([field, label]) => (
+                  <th
+                    key={field}
+                    className="pb-2 text-left font-medium cursor-pointer select-none hover:text-gray-300 transition-colors"
+                    onClick={() => handleSort(field)}
+                  >
+                    {label}
+                    {sort.field === field && (
+                      <span className="ml-1 text-clutch-red">{sort.dir === 'asc' ? '▲' : '▼'}</span>
+                    )}
+                  </th>
+                ))}
                 <th className="pb-2 text-left font-medium">Days</th>
-                <th className="pb-2 text-left font-medium">Source</th>
-                <th className="pb-2 text-left font-medium">Status</th>
-                <th className="pb-2 text-left font-medium">Added</th>
+                {([
+                  ['source', 'Source'],
+                  ['is_active', 'Status'],
+                  ['added_at', 'Added'],
+                ] as [SortField, string][]).map(([field, label]) => (
+                  <th
+                    key={field}
+                    className="pb-2 text-left font-medium cursor-pointer select-none hover:text-gray-300 transition-colors"
+                    onClick={() => handleSort(field)}
+                  >
+                    {label}
+                    {sort.field === field && (
+                      <span className="ml-1 text-clutch-red">{sort.dir === 'asc' ? '▲' : '▼'}</span>
+                    )}
+                  </th>
+                ))}
                 {canEdit && <th className="pb-2 text-right font-medium">Actions</th>}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((ch) => (
+              {sorted.map((ch) => (
                 <ChannelRow
                   key={ch.id}
                   channel={ch}
