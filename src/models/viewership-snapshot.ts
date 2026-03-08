@@ -173,34 +173,66 @@ export async function getTotalViewedHours(scope: Scope): Promise<string> {
   return (minutes / 60).toFixed(2);
 }
 
+/**
+ * Two-level breakdown query: first sums all channel CCVs per (timestamp, group)
+ * to get per-timestamp group totals, then computes AVG and MAX of those totals.
+ * This gives the correct average and peak CCV for each group (platform/language/region).
+ */
+async function getBreakdown(scope: Scope, dimension: string): Promise<BreakdownResult[]> {
+  const col = scopeColumnBare(scope);
+  return db.raw(
+    `SELECT group_key AS key,
+       SUM(ts_total)::text AS total_ccv,
+       ROUND(AVG(ts_total))::text AS avg_ccv,
+       MAX(ts_total)::text AS peak_ccv
+     FROM (
+       SELECT "timestamp", "${dimension}" AS group_key,
+         SUM(concurrent_viewers) AS ts_total
+       FROM viewership_snapshots
+       WHERE "${col}" = :id
+       GROUP BY "timestamp", "${dimension}"
+     ) per_ts
+     GROUP BY group_key
+     ORDER BY total_ccv DESC`,
+    { id: scope.id },
+  ).then((r: { rows: BreakdownResult[] }) => r.rows);
+}
+
 export async function getPlatformBreakdown(scope: Scope): Promise<BreakdownResult[]> {
-  return applyScope(db(TABLE), scope)
-    .select('platform as key')
-    .sum('concurrent_viewers as total_ccv')
-    .avg('concurrent_viewers as avg_ccv')
-    .max('concurrent_viewers as peak_ccv')
-    .groupBy('platform')
-    .orderBy('total_ccv', 'desc');
+  return getBreakdown(scope, 'platform');
 }
 
 export async function getLanguageBreakdown(scope: Scope): Promise<BreakdownResult[]> {
-  return applyScope(db(TABLE), scope)
-    .select('language as key')
-    .sum('concurrent_viewers as total_ccv')
-    .avg('concurrent_viewers as avg_ccv')
-    .max('concurrent_viewers as peak_ccv')
-    .groupBy('language')
-    .orderBy('total_ccv', 'desc');
+  return getBreakdown(scope, 'language');
 }
 
 export async function getRegionBreakdown(scope: Scope): Promise<BreakdownResult[]> {
-  return applyScope(db(TABLE), scope)
-    .select('region as key')
-    .sum('concurrent_viewers as total_ccv')
-    .avg('concurrent_viewers as avg_ccv')
-    .max('concurrent_viewers as peak_ccv')
-    .groupBy('region')
-    .orderBy('total_ccv', 'desc');
+  return getBreakdown(scope, 'region');
+}
+
+/**
+ * Category/tier breakdown: joins channels to get tier, then applies the same
+ * two-level aggregation (per-timestamp tier totals → AVG/MAX per tier).
+ */
+export async function getTierBreakdown(scope: Scope): Promise<BreakdownResult[]> {
+  const col = scopeColumnBare(scope);
+  return db.raw(
+    `SELECT group_key AS key,
+       SUM(ts_total)::text AS total_ccv,
+       ROUND(AVG(ts_total))::text AS avg_ccv,
+       MAX(ts_total)::text AS peak_ccv
+     FROM (
+       SELECT vs."timestamp", c.tier AS group_key,
+         SUM(vs.concurrent_viewers) AS ts_total
+       FROM viewership_snapshots vs
+       JOIN channels c ON c.id = vs.channel_id
+       WHERE vs."${col}" = :id
+       GROUP BY vs."timestamp", c.tier
+     ) per_ts
+     GROUP BY group_key
+     ORDER BY total_ccv DESC`,
+    { id: scope.id },
+  ).then((r: { rows: BreakdownResult[] }) => r.rows);
 }
 
 export async function getChannelLeaderboard(scope: Scope, limit = 25): Promise<LeaderboardEntry[]> {

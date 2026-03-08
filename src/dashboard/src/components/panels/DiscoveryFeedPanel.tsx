@@ -23,11 +23,13 @@ function ExternalLinkIcon({ className = 'h-3 w-3' }: { className?: string }) {
 interface DiscoveryFeedPanelProps {
   seriesId: string | undefined;
   lastDiscoveryResult: DiscoveryResult | null;
+  defaultTier?: string;
 }
 
 export function DiscoveryFeedPanel({
   seriesId,
   lastDiscoveryResult,
+  defaultTier = 'watch_party',
 }: DiscoveryFeedPanelProps) {
   const { hasRole } = useAuth();
   const canEdit = hasRole('editor');
@@ -90,6 +92,7 @@ export function DiscoveryFeedPanel({
               seriesId={seriesId}
               onRefresh={refetch}
               canEdit={canEdit}
+              defaultTier={defaultTier}
             />
           ))}
         </div>
@@ -105,11 +108,13 @@ function DiscoveryRow({
   seriesId,
   onRefresh,
   canEdit,
+  defaultTier,
 }: {
   channel: Channel;
   seriesId: string;
   onRefresh: () => void;
   canEdit: boolean;
+  defaultTier: string;
 }) {
   const [acting, setActing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -119,7 +124,7 @@ function DiscoveryRow({
     setActing(true);
     setActionError(null);
     try {
-      await api.promoteChannel(channel.id, 'partner');
+      await api.promoteChannel(channel.id, defaultTier);
       setActionDone('approved');
       onRefresh();
     } catch (err) {
@@ -129,7 +134,7 @@ function DiscoveryRow({
     } finally {
       setActing(false);
     }
-  }, [channel.id, onRefresh]);
+  }, [channel.id, defaultTier, onRefresh]);
 
   const handleBlock = useCallback(async () => {
     setActing(true);

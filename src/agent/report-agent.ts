@@ -38,6 +38,7 @@ import {
   type PlatformBreakdown,
   type LanguageBreakdown,
   type RegionBreakdown,
+  type TierBreakdown,
   type ChannelLeaderboardEntry,
   type DayMetrics,
   type StageMetrics,
@@ -497,13 +498,14 @@ export class ReportAgent {
     const dayMetrics = await Promise.all(
       broadcastDayIds.map(async (dayId) => {
         const scopeObj: ViewershipSnapshotModel.Scope = { level: 'day', id: dayId };
-        const [peak, avg, hours, platforms, languages, regions, leaderboard] = await Promise.all([
+        const [peak, avg, hours, platforms, languages, regions, tiers, leaderboard] = await Promise.all([
           ViewershipSnapshotModel.getPeakCCV(scopeObj),
           ViewershipSnapshotModel.getAverageCCV(scopeObj),
           ViewershipSnapshotModel.getTotalViewedHours(scopeObj),
           ViewershipSnapshotModel.getPlatformBreakdown(scopeObj),
           ViewershipSnapshotModel.getLanguageBreakdown(scopeObj),
           ViewershipSnapshotModel.getRegionBreakdown(scopeObj),
+          ViewershipSnapshotModel.getTierBreakdown(scopeObj),
           ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, isDetailed ? 9999 : 10),
         ]);
         return {
@@ -526,6 +528,12 @@ export class ReportAgent {
           })),
           regionBreakdown: regions.map((b) => ({
             region: b.key,
+            totalCCV: parseInt(b.total_ccv, 10),
+            avgCCV: parseFloat(b.avg_ccv),
+            peakCCV: parseInt(b.peak_ccv, 10),
+          })),
+          tierBreakdown: tiers.map((b) => ({
+            tier: b.key,
             totalCCV: parseInt(b.total_ccv, 10),
             avgCCV: parseFloat(b.avg_ccv),
             peakCCV: parseInt(b.peak_ccv, 10),
@@ -838,6 +846,7 @@ export class ReportAgent {
     platformBreakdown: PlatformBreakdown[];
     languageBreakdown: LanguageBreakdown[];
     regionBreakdown: RegionBreakdown[];
+    tierBreakdown: TierBreakdown[];
     channelLeaderboard: ChannelLeaderboardEntry[];
   } {
     if (metrics.length === 0) {
@@ -848,6 +857,7 @@ export class ReportAgent {
         platformBreakdown: [],
         languageBreakdown: [],
         regionBreakdown: [],
+        tierBreakdown: [],
         channelLeaderboard: [],
       };
     }
@@ -864,68 +874,70 @@ export class ReportAgent {
     // Total viewed hours
     const totalViewedHours = metrics.reduce((sum, m) => sum + m.totalViewedHours, 0);
 
-    // Merge platform breakdowns
-    const platformMap = new Map<string, PlatformBreakdown>();
-    let platformCount = 0;
-    for (const m of metrics) {
-      for (const p of m.platformBreakdown) {
-        const existing = platformMap.get(p.platform);
-        if (existing) {
-          existing.totalCCV += p.totalCCV;
-          existing.avgCCV += p.avgCCV;
-          existing.peakCCV = Math.max(existing.peakCCV, p.peakCCV);
-        } else {
-          platformMap.set(p.platform, { ...p });
+    /**
+     * Merge breakdown entries across days using weighted averages.
+     * Per-day avg/peak are now correct (computed from per-timestamp group totals).
+     * To combine across days: totalCCV = sum, peakCCV = max, avgCCV = weighted avg
+     * where weight = number of timestamps per day ≈ totalCCV / avgCCV.
+     */
+    function mergeBreakdowns<T extends { totalCCV: number; avgCCV: number; peakCCV: number }>(
+      getEntries: (m: ReportPayload['metrics'][0]) => T[],
+      getKey: (entry: T) => string,
+    ): T[] {
+      const map = new Map<string, { entry: T; totalCCV: number; weightedAvgSum: number; timestampCount: number }>();
+      for (const m of getEntries.length ? metrics : []) {
+        for (const entry of getEntries(m)) {
+          const key = getKey(entry);
+          // Estimate number of timestamps from totalCCV / avgCCV
+          const timestamps = entry.avgCCV > 0 ? entry.totalCCV / entry.avgCCV : 0;
+          const existing = map.get(key);
+          if (existing) {
+            existing.totalCCV += entry.totalCCV;
+            existing.weightedAvgSum += entry.avgCCV * timestamps;
+            existing.timestampCount += timestamps;
+            if (entry.peakCCV > existing.entry.peakCCV) {
+              existing.entry = { ...existing.entry, peakCCV: entry.peakCCV };
+            }
+          } else {
+            map.set(key, {
+              entry: { ...entry },
+              totalCCV: entry.totalCCV,
+              weightedAvgSum: entry.avgCCV * timestamps,
+              timestampCount: timestamps,
+            });
+          }
         }
       }
-      if (m.platformBreakdown.length > 0) platformCount++;
+      return [...map.values()].map(({ entry, totalCCV, weightedAvgSum, timestampCount }) => ({
+        ...entry,
+        totalCCV,
+        avgCCV: timestampCount > 0 ? Math.round(weightedAvgSum / timestampCount) : 0,
+      })).sort((a, b) => b.totalCCV - a.totalCCV);
     }
-    const platformBreakdown = [...platformMap.values()].map((p) => ({
-      ...p,
-      avgCCV: platformCount > 0 ? Math.round(p.avgCCV / platformCount) : 0,
-    })).sort((a, b) => b.totalCCV - a.totalCCV);
+
+    // Merge platform breakdowns
+    const platformBreakdown = mergeBreakdowns(
+      (m) => m.platformBreakdown,
+      (e) => e.platform,
+    );
 
     // Merge language breakdowns
-    const langMap = new Map<string, LanguageBreakdown>();
-    let langCount = 0;
-    for (const m of metrics) {
-      for (const l of m.languageBreakdown) {
-        const existing = langMap.get(l.language);
-        if (existing) {
-          existing.totalCCV += l.totalCCV;
-          existing.avgCCV += l.avgCCV;
-          existing.peakCCV = Math.max(existing.peakCCV, l.peakCCV);
-        } else {
-          langMap.set(l.language, { ...l });
-        }
-      }
-      if (m.languageBreakdown.length > 0) langCount++;
-    }
-    const languageBreakdown = [...langMap.values()].map((l) => ({
-      ...l,
-      avgCCV: langCount > 0 ? Math.round(l.avgCCV / langCount) : 0,
-    })).sort((a, b) => b.totalCCV - a.totalCCV);
+    const languageBreakdown = mergeBreakdowns(
+      (m) => m.languageBreakdown,
+      (e) => e.language,
+    );
 
     // Merge region breakdowns
-    const regionMap = new Map<string, RegionBreakdown>();
-    let regionCount = 0;
-    for (const m of metrics) {
-      for (const r of m.regionBreakdown) {
-        const existing = regionMap.get(r.region);
-        if (existing) {
-          existing.totalCCV += r.totalCCV;
-          existing.avgCCV += r.avgCCV;
-          existing.peakCCV = Math.max(existing.peakCCV, r.peakCCV);
-        } else {
-          regionMap.set(r.region, { ...r });
-        }
-      }
-      if (m.regionBreakdown.length > 0) regionCount++;
-    }
-    const regionBreakdown = [...regionMap.values()].map((r) => ({
-      ...r,
-      avgCCV: regionCount > 0 ? Math.round(r.avgCCV / regionCount) : 0,
-    })).sort((a, b) => b.totalCCV - a.totalCCV);
+    const regionBreakdown = mergeBreakdowns(
+      (m) => m.regionBreakdown,
+      (e) => e.region,
+    );
+
+    // Merge tier breakdowns
+    const tierBreakdown = mergeBreakdowns(
+      (m) => m.tierBreakdown ?? [],
+      (e) => e.tier,
+    );
 
     // Merge channel leaderboards (take best per channel)
     const channelMap = new Map<string, ChannelLeaderboardEntry>();
@@ -954,6 +966,7 @@ export class ReportAgent {
       platformBreakdown,
       languageBreakdown,
       regionBreakdown,
+      tierBreakdown,
       channelLeaderboard,
     };
   }

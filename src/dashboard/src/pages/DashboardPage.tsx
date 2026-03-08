@@ -199,6 +199,7 @@ export function DashboardPage({
         <DiscoveryFeedPanel
           seriesId={seriesId}
           lastDiscoveryResult={pollingData.lastDiscoveryResult}
+          defaultTier={seriesDetail?.discovery_default_tier}
         />
       )}
 

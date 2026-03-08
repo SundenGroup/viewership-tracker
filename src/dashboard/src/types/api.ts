@@ -38,6 +38,7 @@ export interface TournamentSeries {
   end_date: string | null;
   discovery_keywords: string[];
   discovery_game_ids: Record<string, string>;
+  discovery_default_tier: string;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -56,6 +57,7 @@ export interface CreateTournamentSeries {
   end_date?: string;
   discovery_keywords?: string[];
   discovery_game_ids?: Record<string, string>;
+  discovery_default_tier?: string;
   metadata?: Record<string, unknown>;
 }
 

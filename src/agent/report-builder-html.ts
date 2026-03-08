@@ -16,6 +16,7 @@ import type { ReportPayload, Narratives } from './report-builder';
 import type {
   PlatformBreakdown,
   LanguageBreakdown,
+  TierBreakdown,
   ChannelLeaderboardEntry,
   TimeSeriesPoint,
   GroupedTimeSeriesPoint,
@@ -33,6 +34,7 @@ export interface HTMLReportData {
     totalViewedHours: number;
     platformBreakdown: PlatformBreakdown[];
     languageBreakdown: LanguageBreakdown[];
+    tierBreakdown: TierBreakdown[];
     channelLeaderboard: ChannelLeaderboardEntry[];
   };
   narratives: Narratives;
@@ -217,25 +219,12 @@ export function buildHTMLReport(data: HTMLReportData): string {
   const langVH = aggregated.languageBreakdown.map((l) => Math.round(l.totalCCV / 60));
   const langColors = aggregated.languageBreakdown.map((_, i) => langColor(i));
 
-  // Tier/category breakdown: aggregate from channels + leaderboard
-  const tierMap = new Map<string, { totalCCV: number; avgCCV: number; peakCCV: number }>();
-  for (const ch of aggregated.channelLeaderboard) {
-    const channel = payload.channels.find((c) => c.id === ch.channelId);
-    const tier = channel?.tier ?? 'community';
-    const existing = tierMap.get(tier);
-    if (existing) {
-      existing.totalCCV += ch.totalViewedMinutes ?? 0;
-      existing.avgCCV += ch.avgCCV;
-      existing.peakCCV = Math.max(existing.peakCCV, ch.peakCCV);
-    } else {
-      tierMap.set(tier, {
-        totalCCV: ch.totalViewedMinutes ?? 0,
-        avgCCV: ch.avgCCV,
-        peakCCV: ch.peakCCV,
-      });
-    }
-  }
-  const tierEntries = [...tierMap.entries()].sort((a, b) => b[1].totalCCV - a[1].totalCCV);
+  // Tier/category breakdown: use pre-computed DB data
+  const tierEntries: [string, { totalCCV: number; avgCCV: number; peakCCV: number }][] =
+    aggregated.tierBreakdown.map((t) => [
+      t.tier,
+      { totalCCV: t.totalCCV, avgCCV: t.avgCCV, peakCCV: t.peakCCV },
+    ]);
   const tierLabels = tierEntries.map(([t]) => tierLabel(t));
   const tierVH = tierEntries.map(([, v]) => Math.round(v.totalCCV / 60));
   const TIER_COLORS: Record<string, string> = {

@@ -155,13 +155,14 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const dayMetrics = await Promise.all(
       broadcastDayIds.map(async (dayId) => {
         const scopeObj: ViewershipSnapshotModel.Scope = { level: 'day', id: dayId };
-        const [peak, avg, hours, platforms, languages, regions, leaderboard] = await Promise.all([
+        const [peak, avg, hours, platforms, languages, regions, tiers, leaderboard] = await Promise.all([
           ViewershipSnapshotModel.getPeakCCV(scopeObj),
           ViewershipSnapshotModel.getAverageCCV(scopeObj),
           ViewershipSnapshotModel.getTotalViewedHours(scopeObj),
           ViewershipSnapshotModel.getPlatformBreakdown(scopeObj),
           ViewershipSnapshotModel.getLanguageBreakdown(scopeObj),
           ViewershipSnapshotModel.getRegionBreakdown(scopeObj),
+          ViewershipSnapshotModel.getTierBreakdown(scopeObj),
           ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, isDetailed ? 9999 : 10),
         ]);
         return {
@@ -188,12 +189,19 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
             avgCCV: parseFloat(b.avg_ccv),
             peakCCV: parseInt(b.peak_ccv, 10),
           })),
+          tierBreakdown: tiers.map((b) => ({
+            tier: b.key,
+            totalCCV: parseInt(b.total_ccv, 10),
+            avgCCV: parseFloat(b.avg_ccv),
+            peakCCV: parseInt(b.peak_ccv, 10),
+          })),
           channelLeaderboard: leaderboard.map((e) => ({
             channelId: e.channel_id,
             displayName: e.display_name,
             platform: e.platform,
             peakCCV: parseInt(e.peak_ccv, 10),
             avgCCV: parseFloat(e.avg_ccv),
+            totalViewedMinutes: parseInt(e.total_viewed_minutes, 10),
           })),
         };
       }),

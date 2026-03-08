@@ -54,6 +54,7 @@ interface SeriesForm {
   discovery_game_ids_twitch: string;
   discovery_game_ids_youtube: string;
   discovery_game_ids_kick: string;
+  discovery_default_tier: string;
   status: TournamentStatus;
   min_role: UserRole;
   stages: StageForm[];
@@ -132,6 +133,7 @@ function seriesDetailToForm(detail: SeriesWithStages): SeriesForm {
     discovery_game_ids_twitch: gameIds.twitch ?? '',
     discovery_game_ids_youtube: gameIds.youtube ?? '',
     discovery_game_ids_kick: gameIds.kick ?? '',
+    discovery_default_tier: detail.discovery_default_tier ?? 'watch_party',
     status: detail.status,
     min_role: detail.min_role ?? 'viewer',
     stages: detail.stages.map((stage) => ({
@@ -354,6 +356,7 @@ export function SeriesEditPage({
         end_date: form.end_date || undefined,
         discovery_keywords: keywords.length > 0 ? keywords : [],
         discovery_game_ids: gameIds,
+        discovery_default_tier: form.discovery_default_tier,
       });
 
       // 2. Process stages
@@ -611,14 +614,33 @@ export function SeriesEditPage({
             </div>
           </div>
 
-          <FormField label="Discovery Keywords" className="max-w-lg">
-            <TextArea
-              value={form.discovery_keywords}
-              onChange={(e) => updateField('discovery_keywords', e.target.value)}
-              placeholder="Comma-separated: PEC, PUBG Championship, pubg esports"
-              rows={2}
-            />
-          </FormField>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField label="Discovery Keywords">
+              <TextArea
+                value={form.discovery_keywords}
+                onChange={(e) => updateField('discovery_keywords', e.target.value)}
+                placeholder="Comma-separated: PEC, PUBG Championship, pubg esports"
+                rows={2}
+              />
+            </FormField>
+
+            <FormField label="Default Category for Discovered Channels">
+              <Select
+                value={form.discovery_default_tier}
+                onChange={(e) => updateField('discovery_default_tier', e.target.value)}
+                options={[
+                  { value: 'watch_party', label: 'Watch Party' },
+                  { value: 'community', label: 'Community' },
+                  { value: 'partner', label: 'Partner' },
+                  { value: 'official', label: 'Official' },
+                  { value: 'player', label: 'Player' },
+                ]}
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Category assigned when approving channels from the discovery feed
+              </p>
+            </FormField>
+          </div>
 
           {/* Discovery Game IDs */}
           <div>

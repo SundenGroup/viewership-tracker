@@ -68,6 +68,14 @@ export interface RegionBreakdown {
   peakCCV: number;
 }
 
+/** Tier/category breakdown entry from the metrics API. */
+export interface TierBreakdown {
+  tier: string;
+  totalCCV: number;
+  avgCCV: number;
+  peakCCV: number;
+}
+
 /** Channel leaderboard entry from the metrics API. */
 export interface ChannelLeaderboardEntry {
   channelId: string;

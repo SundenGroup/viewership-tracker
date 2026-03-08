@@ -125,6 +125,12 @@ export interface ReportPayload {
       avgCCV: number;
       peakCCV: number;
     }>;
+    tierBreakdown: Array<{
+      tier: string;
+      totalCCV: number;
+      avgCCV: number;
+      peakCCV: number;
+    }>;
     channelLeaderboard: Array<{
       channelId: string;
       displayName: string;
