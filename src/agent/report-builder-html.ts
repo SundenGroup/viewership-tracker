@@ -206,6 +206,28 @@ export function buildHTMLReport(data: HTMLReportData): string {
     }
   }
 
+  // Day boundary markers: find the data index where each broadcast day starts
+  const dayBoundaries: Array<{ index: number; label: string }> = [];
+  if (days.length > 1) {
+    for (const day of days) {
+      if (!day.broadcastStart) continue;
+      const startMs = new Date(day.broadcastStart).getTime();
+      const idx = totalTimeSeries.findIndex((p) => new Date(p.timestamp).getTime() >= startMs);
+      if (idx >= 0) {
+        dayBoundaries.push({ index: idx, label: day.label });
+      }
+    }
+  }
+
+  // Date labels for multi-day X axis context (e.g. "Mar 7", "Mar 8")
+  const dateLabels = totalTimeSeries.map((p) => {
+    const d = new Date(p.timestamp);
+    if (seriesTz) {
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: seriesTz });
+    }
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  });
+
   // Platform breakdown for pie chart
   const platLabels = aggregated.platformBreakdown.map((p) => capitalize(p.platform));
   const platVH = aggregated.platformBreakdown.map((p) => {
@@ -282,6 +304,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${seriesName} — ${esc(scopeTitle)}</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -816,6 +839,8 @@ const CA = ${JSON.stringify(Object.fromEntries(Object.entries(PLATFORM_COLORS_AL
 
 const streamerStats = ${JSON.stringify(streamerStats)};
 const timeLabels = ${JSON.stringify(timeLabels)};
+const dateLabels = ${JSON.stringify(dateLabels)};
+const dayBoundaries = ${JSON.stringify(dayBoundaries)};
 const totalTS = ${JSON.stringify(totalCCVArray)};
 const platformTS = ${JSON.stringify(platformTSData)};
 
@@ -880,7 +905,34 @@ buildPie('pieCat', 'legendCat',
 );
 
 // ── Line Chart ──
-var sparseLabels = timeLabels.map(function(l, i) { return i % 12 === 0 ? l : ''; });
+var sparseLabels = timeLabels.map(function(l, i) {
+  if (i % 12 !== 0) return '';
+  if (dayBoundaries.length > 0 && i > 0 && dateLabels[i] !== dateLabels[i - 1]) {
+    return dateLabels[i] + ', ' + l;
+  }
+  return dayBoundaries.length > 0 && i === 0 ? dateLabels[0] + ', ' + l : l;
+});
+
+// Build annotation objects for day boundary markers
+var dayAnnotations = {};
+dayBoundaries.forEach(function(b, i) {
+  dayAnnotations['dayLine' + i] = {
+    type: 'line',
+    xMin: b.index,
+    xMax: b.index,
+    borderColor: 'rgba(107, 114, 128, 0.5)',
+    borderWidth: 1,
+    borderDash: [4, 4],
+    label: {
+      display: true,
+      content: b.label,
+      position: 'start',
+      backgroundColor: 'transparent',
+      color: '#9ca3af',
+      font: { size: 10, weight: '600' }
+    }
+  };
+});
 
 var lineDatasets = [
   {
@@ -944,10 +996,15 @@ new Chart(document.getElementById('lineChart'), {
         borderWidth: 1,
         titleFont: { weight: '600' },
         callbacks: {
-          title: function(items) { return timeLabels[items[0].dataIndex] + ' ${esc(tzLabel)}'; },
+          title: function(items) {
+            var idx = items[0].dataIndex;
+            var prefix = dayBoundaries.length > 0 ? dateLabels[idx] + ', ' : '';
+            return prefix + timeLabels[idx] + ' ${esc(tzLabel)}';
+          },
           label: function(ctx) { return '  ' + ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString(); }
         }
-      }
+      },
+      annotation: { annotations: dayAnnotations }
     }
   }
 });
