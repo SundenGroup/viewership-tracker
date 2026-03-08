@@ -1153,8 +1153,18 @@ Respond with ONLY the JSON object, no markdown code blocks.`;
     const shortName = (payload.series.shortName ?? payload.series.name)
       .replace(/[^a-zA-Z0-9_-]/g, '_')
       .toLowerCase();
-    const date = new Date().toISOString().split('T')[0];
-    const filename = `${scope}_${date}.${format}`;
+    // Use the actual broadcast day / stage date rather than "now"
+    let dateSuffix: string;
+    if (scope === 'day' && payload.broadcastDays.length > 0) {
+      dateSuffix = payload.broadcastDays[0]!.date;                 // e.g. "2026-03-07"
+    } else if (scope === 'stage' && payload.stages.length > 0) {
+      dateSuffix = payload.stages[0]!.name
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .toLowerCase();                                            // e.g. "group_stage"
+    } else {
+      dateSuffix = new Date().toISOString().split('T')[0];         // fallback: today
+    }
+    const filename = `${scope}_${dateSuffix}.${format}`;
 
     switch (method) {
       case 'local': {
