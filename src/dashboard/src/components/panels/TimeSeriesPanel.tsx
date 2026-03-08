@@ -96,6 +96,27 @@ function isMultiDay(firstTs: number, lastTs: number): boolean {
     || a.getDate() !== b.getDate();
 }
 
+/**
+ * Snap a target timestamp to the nearest data point timestamp.
+ * Returns the exact ts value from sortedTs that is closest to (and >= ) target,
+ * or the closest one before if none are after.
+ */
+function snapToDataPoint(target: number, sortedTs: number[]): number | null {
+  if (sortedTs.length === 0) return null;
+  // Find first ts >= target
+  let lo = 0;
+  let hi = sortedTs.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sortedTs[mid]! < target) lo = mid + 1;
+    else hi = mid;
+  }
+  // lo is the index of first ts >= target
+  if (lo < sortedTs.length) return sortedTs[lo]!;
+  // All ts are < target, return the last one
+  return sortedTs[sortedTs.length - 1]!;
+}
+
 // ── Main Panel ─────────────────────────────────────────────────────────
 
 export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName, broadcastDays }: TimeSeriesPanelProps) {
@@ -168,29 +189,38 @@ export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName, b
     return { groupedChartData: chartData, groupKeys: keys };
   }, [data, viewMode]);
 
-  // ── Compute day boundary markers ─────────────────────────────────────
+  // ── Collect all data timestamps for snapping ───────────────────────────
+
+  const allDataTs = useMemo(() => {
+    const chartData = viewMode === 'total' ? totalChartData : groupedChartData;
+    return chartData.map((d) => (d as { ts: number }).ts);
+  }, [viewMode, totalChartData, groupedChartData]);
+
+  // ── Compute day boundary markers (snapped to nearest data point) ──────
 
   const dayMarkers = useMemo((): DayMarker[] => {
     // Only show markers when viewing series or stage scope (multi-day)
     if (effectiveScope.level === 'day') return [];
     if (!broadcastDays || broadcastDays.length === 0) return [];
+    if (allDataTs.length === 0) return [];
 
-    return broadcastDays
-      .filter((d) => d.broadcast_start)
-      .map((d) => ({
-        ts: new Date(d.broadcast_start!).getTime(),
-        label: d.label,
-      }));
-  }, [broadcastDays, effectiveScope.level]);
+    const markers: DayMarker[] = [];
+    for (const d of broadcastDays) {
+      if (!d.broadcast_start) continue;
+      const targetTs = new Date(d.broadcast_start).getTime();
+      const snapped = snapToDataPoint(targetTs, allDataTs);
+      if (snapped !== null) {
+        markers.push({ ts: snapped, label: d.label });
+      }
+    }
+    return markers;
+  }, [broadcastDays, effectiveScope.level, allDataTs]);
 
   // Detect multi-day range for tick formatting
   const multiDay = useMemo(() => {
-    const chartData = viewMode === 'total' ? totalChartData : groupedChartData;
-    if (chartData.length < 2) return false;
-    const first = (chartData[0] as { ts: number }).ts;
-    const last = (chartData[chartData.length - 1] as { ts: number }).ts;
-    return isMultiDay(first, last);
-  }, [viewMode, totalChartData, groupedChartData]);
+    if (allDataTs.length < 2) return false;
+    return isMultiDay(allDataTs[0]!, allDataTs[allDataTs.length - 1]!);
+  }, [allDataTs]);
 
   const tickFormatter = multiDay ? formatTickDateTime : formatTickTime;
 
@@ -317,14 +347,12 @@ function TotalChart({ data, dayMarkers, tickFormatter }: { data: Array<{ ts: num
         <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
         <XAxis
           dataKey="ts"
-          type="number"
-          domain={['dataMin', 'dataMax']}
-          scale="time"
           stroke="#6b7280"
           fontSize={11}
           tickLine={false}
           axisLine={false}
           tickFormatter={tickFormatter}
+          minTickGap={60}
         />
         <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompact(v)} />
         <Tooltip
@@ -351,14 +379,12 @@ function PlatformChart({ data, keys, dayMarkers, tickFormatter }: { data: Array<
         <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
         <XAxis
           dataKey="ts"
-          type="number"
-          domain={['dataMin', 'dataMax']}
-          scale="time"
           stroke="#6b7280"
           fontSize={11}
           tickLine={false}
           axisLine={false}
           tickFormatter={tickFormatter}
+          minTickGap={60}
         />
         <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompact(v)} />
         <Tooltip
@@ -398,14 +424,12 @@ function StackedLanguageChart({ data, keys, dayMarkers, tickFormatter }: { data:
         <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
         <XAxis
           dataKey="ts"
-          type="number"
-          domain={['dataMin', 'dataMax']}
-          scale="time"
           stroke="#6b7280"
           fontSize={11}
           tickLine={false}
           axisLine={false}
           tickFormatter={tickFormatter}
+          minTickGap={60}
         />
         <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompact(v)} />
         <Tooltip
