@@ -14,6 +14,12 @@ interface ScopeSelectorBarProps {
   activeLabel: string;
 }
 
+/** Strip time portion from ISO / Date-like strings → "2026-03-07" */
+function fmtDate(raw: string | Date): string {
+  const s = typeof raw === 'object' && raw instanceof Date ? raw.toISOString() : String(raw);
+  return s.replace(/T.*$/, '');
+}
+
 export function ScopeSelectorBar({
   scopeLevel,
   onScopeLevelChange,
@@ -80,14 +86,14 @@ export function ScopeSelectorBar({
                 <optgroup key={s.id} label={s.name}>
                   {s.broadcast_days.map((d) => (
                     <option key={d.id} value={d.id}>
-                      {d.label} ({d.date})
+                      {d.label} ({fmtDate(d.date)})
                     </option>
                   ))}
                 </optgroup>
               ))
             : allDays.map((d) => (
                 <option key={d.id} value={d.id}>
-                  {d.label} ({d.date})
+                  {d.label} ({fmtDate(d.date)})
                 </option>
               ))}
         </select>
