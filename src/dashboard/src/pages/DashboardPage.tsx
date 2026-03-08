@@ -167,6 +167,7 @@ export function DashboardPage({
       <TimeSeriesPanel
         seriesId={seriesId}
         scope={{ level: resolvedScope.level, id: resolvedScope.id }}
+        broadcastDays={allBroadcastDays}
       />
 
       {/* Row 3: Channel Leaderboard + Language/Region — side by side */}

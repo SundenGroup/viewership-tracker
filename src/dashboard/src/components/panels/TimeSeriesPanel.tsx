@@ -10,11 +10,12 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  ReferenceLine,
 } from 'recharts';
 import { Card, LoadingOverlay } from '@/components/common';
 import { useApi } from '@/hooks/useApi';
 import * as api from '@/services/api';
-import { formatCompact, formatChartTime, platformColor, platformLabel } from '@/utils/formatters';
+import { formatCompact, platformColor, platformLabel } from '@/utils/formatters';
 import type { TimeSeriesBucket, GroupedTimeSeriesBucket, TimeSeriesGroupBy, ScopeLevel } from '@/types/api';
 
 interface TimeSeriesPanelProps {
@@ -22,6 +23,8 @@ interface TimeSeriesPanelProps {
   scope?: { level: ScopeLevel; id: string };
   /** When set, calls public API instead of authenticated API. */
   publicShortName?: string;
+  /** Broadcast days for drawing day boundary markers on multi-day charts. */
+  broadcastDays?: Array<{ label: string; broadcast_start: string | null }>;
 }
 
 type ViewMode = 'total' | 'platform' | 'language';
@@ -46,7 +49,56 @@ const GROUP_COLORS = [
   '#f472b6', '#fbbf24', '#2dd4bf', '#818cf8', '#e879f9',
 ];
 
-export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName }: TimeSeriesPanelProps) {
+// ── Formatting helpers ─────────────────────────────────────────────────
+
+interface DayMarker {
+  ts: number;
+  label: string;
+}
+
+function formatTickTime(epochMs: number): string {
+  return new Date(epochMs).toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatTickDateTime(epochMs: number): string {
+  const d = new Date(epochMs);
+  const month = d.toLocaleDateString('en-US', { month: 'short' });
+  const day = d.getDate();
+  const time = d.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  return `${month} ${day}, ${time}`;
+}
+
+function formatTooltipLabel(epochMs: number): string {
+  const d = new Date(epochMs);
+  return d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+/** Check whether data spans more than one calendar day. */
+function isMultiDay(firstTs: number, lastTs: number): boolean {
+  const a = new Date(firstTs);
+  const b = new Date(lastTs);
+  return a.getFullYear() !== b.getFullYear()
+    || a.getMonth() !== b.getMonth()
+    || a.getDate() !== b.getDate();
+}
+
+// ── Main Panel ─────────────────────────────────────────────────────────
+
+export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName, broadcastDays }: TimeSeriesPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('total');
   const [interval, setInterval] = useState<IntervalOption>(60);
 
@@ -78,11 +130,11 @@ export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName }:
 
   // ── Transform data for charts ──────────────────────────────────────────
 
-  // Total mode: simple array
+  // Total mode: simple array with epoch timestamps
   const totalChartData = useMemo(() => {
     if (!data || viewMode !== 'total') return [];
     return (data.data as TimeSeriesBucket[]).map((d) => ({
-      time: formatChartTime(d.timestamp),
+      ts: new Date(d.timestamp).getTime(),
       ccv: d.totalCCV,
       channels: d.channelCount,
     }));
@@ -95,10 +147,10 @@ export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName }:
     const raw = data.data as GroupedTimeSeriesBucket[];
     const keys = [...new Set(raw.map((d) => d.groupKey))];
 
-    // Pivot: { time, [key1]: ccv, [key2]: ccv, ... }
-    const byTime = new Map<string, Record<string, number>>();
+    // Pivot: { ts, [key1]: ccv, [key2]: ccv, ... }
+    const byTime = new Map<number, Record<string, number>>();
     for (const d of raw) {
-      const t = formatChartTime(d.timestamp);
+      const t = new Date(d.timestamp).getTime();
       if (!byTime.has(t)) {
         byTime.set(t, {});
       }
@@ -106,13 +158,41 @@ export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName }:
       row[d.groupKey] = d.totalCCV;
     }
 
-    const chartData: Record<string, unknown>[] = [...byTime.entries()].map(([time, row]) => ({
-      time,
-      ...row,
-    }));
+    const chartData: Record<string, unknown>[] = [...byTime.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([ts, row]) => ({
+        ts,
+        ...row,
+      }));
 
     return { groupedChartData: chartData, groupKeys: keys };
   }, [data, viewMode]);
+
+  // ── Compute day boundary markers ─────────────────────────────────────
+
+  const dayMarkers = useMemo((): DayMarker[] => {
+    // Only show markers when viewing series or stage scope (multi-day)
+    if (effectiveScope.level === 'day') return [];
+    if (!broadcastDays || broadcastDays.length === 0) return [];
+
+    return broadcastDays
+      .filter((d) => d.broadcast_start)
+      .map((d) => ({
+        ts: new Date(d.broadcast_start!).getTime(),
+        label: d.label,
+      }));
+  }, [broadcastDays, effectiveScope.level]);
+
+  // Detect multi-day range for tick formatting
+  const multiDay = useMemo(() => {
+    const chartData = viewMode === 'total' ? totalChartData : groupedChartData;
+    if (chartData.length < 2) return false;
+    const first = (chartData[0] as { ts: number }).ts;
+    const last = (chartData[chartData.length - 1] as { ts: number }).ts;
+    return isMultiDay(first, last);
+  }, [viewMode, totalChartData, groupedChartData]);
+
+  const tickFormatter = multiDay ? formatTickDateTime : formatTickTime;
 
   // ── Render ──────────────────────────────────────────────────────────────
 
@@ -180,22 +260,54 @@ export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName }:
           No time series data available yet. Start polling to collect data.
         </p>
       ) : viewMode === 'total' ? (
-        <TotalChart data={totalChartData} />
+        <TotalChart data={totalChartData} dayMarkers={dayMarkers} tickFormatter={tickFormatter} />
       ) : viewMode === 'platform' ? (
-        <PlatformChart data={groupedChartData} keys={groupKeys} />
+        <PlatformChart data={groupedChartData} keys={groupKeys} dayMarkers={dayMarkers} tickFormatter={tickFormatter} />
       ) : (
-        <StackedLanguageChart data={groupedChartData} keys={groupKeys} />
+        <StackedLanguageChart data={groupedChartData} keys={groupKeys} dayMarkers={dayMarkers} tickFormatter={tickFormatter} />
       )}
     </Card>
   );
 }
 
+// ── Shared chart props ────────────────────────────────────────────────
+
+interface ChartExtras {
+  dayMarkers: DayMarker[];
+  tickFormatter: (v: number) => string;
+}
+
+// ── Shared axis/tooltip/grid config ────────────────────────────────────
+
+const TOOLTIP_STYLE = {
+  contentStyle: { backgroundColor: '#141820', border: '1px solid #2A2F36', borderRadius: '8px', fontSize: '12px' },
+  labelStyle: { color: '#9ca3af' },
+};
+
+function renderDayMarkers(markers: DayMarker[]) {
+  return markers.map((m) => (
+    <ReferenceLine
+      key={m.ts}
+      x={m.ts}
+      stroke="#4b5563"
+      strokeDasharray="4 4"
+      label={{
+        value: m.label,
+        position: 'insideTopRight',
+        fill: '#9ca3af',
+        fontSize: 10,
+        offset: 4,
+      }}
+    />
+  ));
+}
+
 // ── Total CCV area chart ────────────────────────────────────────────────
 
-function TotalChart({ data }: { data: Array<{ time: string; ccv: number; channels: number }> }) {
+function TotalChart({ data, dayMarkers, tickFormatter }: { data: Array<{ ts: number; ccv: number; channels: number }> } & ChartExtras) {
   return (
     <ResponsiveContainer width="100%" height={320}>
-      <AreaChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+      <AreaChart data={data} margin={{ top: 16, right: 10, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id="tsGradient" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#FF154D" stopOpacity={0.35} />
@@ -203,16 +315,27 @@ function TotalChart({ data }: { data: Array<{ time: string; ccv: number; channel
           </linearGradient>
         </defs>
         <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
-        <XAxis dataKey="time" stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} />
+        <XAxis
+          dataKey="ts"
+          type="number"
+          domain={['dataMin', 'dataMax']}
+          scale="time"
+          stroke="#6b7280"
+          fontSize={11}
+          tickLine={false}
+          axisLine={false}
+          tickFormatter={tickFormatter}
+        />
         <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompact(v)} />
         <Tooltip
-          contentStyle={{ backgroundColor: '#141820', border: '1px solid #2A2F36', borderRadius: '8px', fontSize: '12px' }}
-          labelStyle={{ color: '#9ca3af' }}
+          {...TOOLTIP_STYLE}
+          labelFormatter={(v: number) => formatTooltipLabel(v)}
           formatter={(value: number, name: string) => [
             formatCompact(value),
             name === 'ccv' ? 'Total CCV' : 'Channels',
           ]}
         />
+        {renderDayMarkers(dayMarkers)}
         <Area type="monotone" dataKey="ccv" stroke="#FF154D" strokeWidth={2} fill="url(#tsGradient)" name="ccv" />
       </AreaChart>
     </ResponsiveContainer>
@@ -221,16 +344,26 @@ function TotalChart({ data }: { data: Array<{ time: string; ccv: number; channel
 
 // ── Platform overlaid lines ──────────────────────────────────────────────
 
-function PlatformChart({ data, keys }: { data: Array<Record<string, unknown>>; keys: string[] }) {
+function PlatformChart({ data, keys, dayMarkers, tickFormatter }: { data: Array<Record<string, unknown>>; keys: string[] } & ChartExtras) {
   return (
     <ResponsiveContainer width="100%" height={320}>
-      <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+      <LineChart data={data} margin={{ top: 16, right: 10, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
-        <XAxis dataKey="time" stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} />
+        <XAxis
+          dataKey="ts"
+          type="number"
+          domain={['dataMin', 'dataMax']}
+          scale="time"
+          stroke="#6b7280"
+          fontSize={11}
+          tickLine={false}
+          axisLine={false}
+          tickFormatter={tickFormatter}
+        />
         <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompact(v)} />
         <Tooltip
-          contentStyle={{ backgroundColor: '#141820', border: '1px solid #2A2F36', borderRadius: '8px', fontSize: '12px' }}
-          labelStyle={{ color: '#9ca3af' }}
+          {...TOOLTIP_STYLE}
+          labelFormatter={(v: number) => formatTooltipLabel(v)}
           formatter={(value: number) => [formatCompact(value)]}
         />
         <Legend
@@ -239,6 +372,7 @@ function PlatformChart({ data, keys }: { data: Array<Record<string, unknown>>; k
           wrapperStyle={{ fontSize: '11px', color: '#9ca3af', paddingBottom: '8px' }}
           formatter={(value: string) => platformLabel(value)}
         />
+        {renderDayMarkers(dayMarkers)}
         {keys.map((key, i) => (
           <Line
             key={key}
@@ -257,16 +391,26 @@ function PlatformChart({ data, keys }: { data: Array<Record<string, unknown>>; k
 
 // ── Language stacked area ────────────────────────────────────────────────
 
-function StackedLanguageChart({ data, keys }: { data: Array<Record<string, unknown>>; keys: string[] }) {
+function StackedLanguageChart({ data, keys, dayMarkers, tickFormatter }: { data: Array<Record<string, unknown>>; keys: string[] } & ChartExtras) {
   return (
     <ResponsiveContainer width="100%" height={320}>
-      <AreaChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+      <AreaChart data={data} margin={{ top: 16, right: 10, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
-        <XAxis dataKey="time" stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} />
+        <XAxis
+          dataKey="ts"
+          type="number"
+          domain={['dataMin', 'dataMax']}
+          scale="time"
+          stroke="#6b7280"
+          fontSize={11}
+          tickLine={false}
+          axisLine={false}
+          tickFormatter={tickFormatter}
+        />
         <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompact(v)} />
         <Tooltip
-          contentStyle={{ backgroundColor: '#141820', border: '1px solid #2A2F36', borderRadius: '8px', fontSize: '12px' }}
-          labelStyle={{ color: '#9ca3af' }}
+          {...TOOLTIP_STYLE}
+          labelFormatter={(v: number) => formatTooltipLabel(v)}
           formatter={(value: number) => [formatCompact(value)]}
         />
         <Legend
@@ -275,6 +419,7 @@ function StackedLanguageChart({ data, keys }: { data: Array<Record<string, unkno
           wrapperStyle={{ fontSize: '11px', color: '#9ca3af', paddingBottom: '8px' }}
           formatter={(value: string) => (value || 'Unknown').toUpperCase()}
         />
+        {renderDayMarkers(dayMarkers)}
         {keys.map((key, i) => (
           <Area
             key={key}

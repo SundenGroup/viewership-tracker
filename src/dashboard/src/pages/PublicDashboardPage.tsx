@@ -194,6 +194,7 @@ export function PublicDashboardPage() {
           seriesId={seriesId!}
           scope={{ level: resolvedScope.level, id: resolvedScope.id }}
           publicShortName={shortName}
+          broadcastDays={allBroadcastDays}
         />
 
         {/* Channel Leaderboard + Language/Region */}
