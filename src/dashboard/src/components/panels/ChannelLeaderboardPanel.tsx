@@ -21,6 +21,32 @@ const TIER_COLORS: Record<string, string> = {
   watch_party: 'bg-accent-purple/15 text-accent-purple border border-purple-500/20',
 };
 
+// ── Sort types & helpers ─────────────────────────────────────────────────
+
+type LeaderboardSortField = 'displayName' | 'platform' | 'tier' | 'avgCCV' | 'peakCCV' | 'viewedHours' | 'liveCCV';
+type SortDir = 'asc' | 'desc';
+interface LeaderboardSortState { field: LeaderboardSortField; dir: SortDir }
+
+const TIER_ORDER: Record<string, number> = { official: 0, partner: 1, community: 2, player: 3, watch_party: 4 };
+
+type MergedEntry = LeaderboardStats & { liveCCV: number };
+
+function sortLeaderboard(rows: MergedEntry[], { field, dir }: LeaderboardSortState): MergedEntry[] {
+  const d = dir === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    switch (field) {
+      case 'displayName': return d * a.displayName.localeCompare(b.displayName);
+      case 'platform': return d * a.platform.localeCompare(b.platform);
+      case 'tier': return d * ((TIER_ORDER[a.tier] ?? 99) - (TIER_ORDER[b.tier] ?? 99));
+      case 'avgCCV': return d * (a.avgCCV - b.avgCCV);
+      case 'peakCCV': return d * (a.peakCCV - b.peakCCV);
+      case 'viewedHours': return d * (a.viewedHours - b.viewedHours);
+      case 'liveCCV': return d * (a.liveCCV - b.liveCCV);
+      default: return 0;
+    }
+  });
+}
+
 // ── Language helper ──────────────────────────────────────────────────────
 
 function languageBadge(lang: string | null): string {
@@ -33,8 +59,16 @@ function languageBadge(lang: string | null): string {
 export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading }: ChannelLeaderboardPanelProps) {
   const [expanded, setExpanded] = useLocalStorage<boolean>('cvt:leaderboardExpanded', false);
   const [scope, setScope] = useLocalStorage<'day' | 'series'>('cvt:leaderboardScope', 'day');
+  const [sort, setSort] = useLocalStorage<LeaderboardSortState>('cvt:leaderboardSort', { field: 'peakCCV', dir: 'desc' });
   const [stats, setStats] = useState<LeaderboardStats[] | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+
+  const handleSort = useCallback((field: LeaderboardSortField) => {
+    setSort((prev) => ({
+      field,
+      dir: prev.field === field && prev.dir === 'asc' ? 'desc' : 'asc',
+    }));
+  }, [setSort]);
 
   // Fetch aggregate stats when expanded
   const fetchStats = useCallback(async () => {
@@ -83,6 +117,12 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading }: ChannelL
       liveCCV: liveLookup.get(s.channelId) ?? 0,
     }));
   }, [stats, sorted]);
+
+  // Apply sort to expanded data
+  const sortedExpanded = useMemo(
+    () => sortLeaderboard(mergedExpanded, sort),
+    [mergedExpanded, sort],
+  );
 
   if (loading && !liveCCV) {
     return <Card title="Channel Leaderboard"><LoadingOverlay /></Card>;
@@ -153,17 +193,30 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading }: ChannelL
               <thead className="sticky top-0 bg-navy-850 z-10">
                 <tr className="border-b border-navy-700/50 text-xs text-gray-500">
                   <th className="pb-2 pr-2 text-left font-medium w-8">#</th>
-                  <th className="pb-2 text-left font-medium">Platform</th>
-                  <th className="pb-2 text-left font-medium">Channel</th>
-                  <th className="pb-2 text-left font-medium">Tier</th>
-                  <th className="pb-2 text-right font-medium">Avg CCV</th>
-                  <th className="pb-2 text-right font-medium">Peak CCV</th>
-                  <th className="pb-2 text-right font-medium">Viewed Hrs</th>
-                  <th className="pb-2 text-right font-medium">Live CCV</th>
+                  {([
+                    ['platform', 'Platform', 'text-left'],
+                    ['displayName', 'Channel', 'text-left'],
+                    ['tier', 'Tier', 'text-left'],
+                    ['avgCCV', 'Avg CCV', 'text-right'],
+                    ['peakCCV', 'Peak CCV', 'text-right'],
+                    ['viewedHours', 'Viewed Hrs', 'text-right'],
+                    ['liveCCV', 'Live CCV', 'text-right'],
+                  ] as [LeaderboardSortField, string, string][]).map(([field, label, align]) => (
+                    <th
+                      key={field}
+                      className={`pb-2 ${align} font-medium cursor-pointer select-none hover:text-gray-300 transition-colors`}
+                      onClick={() => handleSort(field)}
+                    >
+                      {label}
+                      {sort.field === field && (
+                        <span className="ml-1 text-clutch-red">{sort.dir === 'asc' ? '▲' : '▼'}</span>
+                      )}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {mergedExpanded.map((ch, i) => (
+                {sortedExpanded.map((ch, i) => (
                   <tr
                     key={ch.channelId}
                     className="border-b border-navy-700/30 last:border-0 hover:bg-navy-800/30 transition-colors"

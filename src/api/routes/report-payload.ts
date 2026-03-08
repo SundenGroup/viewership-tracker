@@ -227,7 +227,9 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
         id: d.id,
         stageId: d.stage_id,
         label: d.label,
-        date: d.date,
+        date: typeof d.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.date)
+          ? d.date
+          : new Date(d.date).toISOString().split('T')[0],
         broadcastStart: d.broadcast_start,
         broadcastEnd: d.broadcast_end,
         status: d.status,

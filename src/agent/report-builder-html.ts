@@ -153,7 +153,10 @@ export function buildHTMLReport(data: HTMLReportData): string {
   let subtitle = '';
   if (scope === 'day' && days.length === 1) {
     const day = days[0];
-    const dateStr = day.date;
+    const rawDate = day.date;
+    const dateStr = typeof rawDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
+      ? rawDate
+      : new Date(rawDate).toISOString().split('T')[0];
     const start = day.broadcastStart ? formatTimeHHMM(day.broadcastStart, seriesTz) : '';
     const end = day.broadcastEnd ? formatTimeHHMM(day.broadcastEnd, seriesTz) : '';
     const timeRange = start && end ? `${start} \u2013 ${end} ${tzLabel}` : '';
@@ -666,6 +669,12 @@ export function buildHTMLReport(data: HTMLReportData): string {
     </div>
   </div>
 
+  <!-- Concurrent Line Chart -->
+  <div class="chart-card full" style="margin-bottom:32px;">
+    <h3>Concurrent Viewers Over Time</h3>
+    <canvas id="lineChart" height="110"></canvas>
+  </div>
+
 ${narratives.executive_summary ? `
   <!-- Executive Summary -->
   <div class="section-title">Executive Summary</div>
@@ -755,12 +764,6 @@ ${tierTableRows.map((r) => `          <tr>
         </tbody>
       </table>
     </div>
-  </div>
-
-  <!-- Concurrent Line Chart -->
-  <div class="chart-card full" style="margin-bottom:32px;">
-    <h3>Concurrent Viewers Over Time</h3>
-    <canvas id="lineChart" height="110"></canvas>
   </div>
 
 ${narratives.viewership_timeline ? `

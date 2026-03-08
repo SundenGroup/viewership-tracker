@@ -570,11 +570,13 @@ export class ReportAgent {
         startDate: s.start_date,
         endDate: s.end_date,
       })),
-      broadcastDays: broadcastDays.map((d: { id: string; stage_id: string; label: string; date: string; broadcast_start: string | null; broadcast_end: string | null; status: string }) => ({
+      broadcastDays: broadcastDays.map((d: { id: string; stage_id: string; label: string; date: string | Date; broadcast_start: string | null; broadcast_end: string | null; status: string }) => ({
         id: d.id,
         stageId: d.stage_id,
         label: d.label,
-        date: d.date,
+        date: typeof d.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.date)
+          ? d.date
+          : new Date(d.date).toISOString().split('T')[0],
         broadcastStart: d.broadcast_start,
         broadcastEnd: d.broadcast_end,
         status: d.status,
