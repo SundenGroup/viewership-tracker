@@ -38,6 +38,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
   const [scope, setScope] = useState<ScopeLevel>('series');
   const [entityId, setEntityId] = useState<string>(seriesId);
   const [format, setFormat] = useState<'csv' | 'json' | 'html' | 'report'>('csv');
+  const [detail, setDetail] = useState<'simple' | 'detailed'>('simple');
   const [htmlLoading, setHtmlLoading] = useState(false);
   const [htmlError, setHtmlError] = useState<string | null>(null);
   const [recentExports, setRecentExports] = useState<ExportRecord[]>([]);
@@ -144,6 +145,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
           id: entityId,
           format: 'html',
           skipNarratives: false,
+          detail,
         });
         const reportUrl = api.getReportUrl(result.filePath);
         window.open(reportUrl, '_blank', 'noopener,noreferrer');
@@ -164,7 +166,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
   };
 
   return (
-    <Card title="Export Data" subtitle="Download viewership data or generate reports">
+    <Card title="Export Data" subtitle="Download viewership data or generate reports" collapsible storageKey="cvt:panel:export">
       <div className="space-y-4">
         {/* Selectors row */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -201,6 +203,31 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
             />
           </FormField>
         </div>
+
+        {/* Detail level toggle — shown for report formats */}
+        {(format === 'html' || format === 'report') && (
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500">Detail Level:</span>
+            <div className="flex rounded-md bg-navy-800 p-0.5">
+              {(['simple', 'detailed'] as const).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setDetail(d)}
+                  className={`rounded px-3 py-1 text-xs font-medium capitalize transition-colors ${
+                    detail === d
+                      ? 'bg-clutch-red text-white'
+                      : 'text-gray-500 hover:text-gray-300'
+                  }`}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+            <span className="text-[10px] text-gray-600">
+              {detail === 'detailed' ? 'All channels included' : 'Top channels only'}
+            </span>
+          </div>
+        )}
 
         {/* Export button */}
         <div className="flex items-center gap-3">

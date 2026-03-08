@@ -156,7 +156,7 @@ export function TimeSeriesPanel({ seriesId }: TimeSeriesPanelProps) {
       : groupedChartData.length === 0;
 
   return (
-    <Card title="CCV Over Time" action={topBar}>
+    <Card title="CCV Over Time" action={topBar} collapsible storageKey="cvt:panel:timeSeries">
       {loading && isEmpty ? (
         <LoadingOverlay />
       ) : error ? (

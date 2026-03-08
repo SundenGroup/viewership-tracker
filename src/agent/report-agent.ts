@@ -77,6 +77,8 @@ export interface ReportRequest {
   branding?: BrandingConfig;
   /** If true, skip narrative generation (faster). */
   skipNarratives?: boolean;
+  /** Report detail level: 'simple' (top 10-20 channels) or 'detailed' (all channels). */
+  detail?: 'simple' | 'detailed';
 }
 
 /** Input to generateExport(). */
@@ -157,8 +159,10 @@ export class ReportAgent {
       template,
     });
 
+    const isDetailed = request.detail === 'detailed';
+
     // 1. Fetch the report payload
-    const payload = await this.fetchReportPayload(scope, request.id, request.ids);
+    const payload = await this.fetchReportPayload(scope, request.id, request.ids, isDetailed);
 
     // 2. Validate minimum data quality
     this.validatePayload(payload);
@@ -185,7 +189,7 @@ export class ReportAgent {
       }
 
       // 5. Aggregate metrics and build HTML
-      const aggregated = this.aggregateMetrics(payload.metrics);
+      const aggregated = this.aggregateMetrics(payload.metrics, isDetailed);
       const builder = new ReportBuilder(request.branding ?? this.branding);
       const htmlData: HTMLReportData = {
         payload,
@@ -198,6 +202,7 @@ export class ReportAgent {
         })),
         aggregated,
         narratives,
+        detail: isDetailed ? 'detailed' : 'simple',
       };
       const tmpPath = await builder.buildHTML(htmlData);
 
@@ -419,6 +424,7 @@ export class ReportAgent {
     scope: ReportScope,
     id?: string,
     ids?: string[],
+    isDetailed = false,
   ): Promise<ReportPayload> {
     let seriesId: string | undefined;
     let stageIds: string[] = [];
@@ -498,7 +504,7 @@ export class ReportAgent {
           ViewershipSnapshotModel.getPlatformBreakdown(scopeObj),
           ViewershipSnapshotModel.getLanguageBreakdown(scopeObj),
           ViewershipSnapshotModel.getRegionBreakdown(scopeObj),
-          ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, 10),
+          ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, isDetailed ? 9999 : 10),
         ]);
         return {
           broadcastDayId: dayId,
@@ -823,7 +829,7 @@ export class ReportAgent {
   }
 
   /** Aggregate metrics across all broadcast days. */
-  private aggregateMetrics(metrics: ReportPayload['metrics']): {
+  private aggregateMetrics(metrics: ReportPayload['metrics'], isDetailed = false): {
     peakCCV: number;
     avgCCV: number;
     totalViewedHours: number;
@@ -936,9 +942,8 @@ export class ReportAgent {
         }
       }
     }
-    const channelLeaderboard = [...channelMap.values()]
-      .sort((a, b) => b.peakCCV - a.peakCCV)
-      .slice(0, 20);
+    const sorted = [...channelMap.values()].sort((a, b) => b.peakCCV - a.peakCCV);
+    const channelLeaderboard = isDetailed ? sorted : sorted.slice(0, 20);
 
     return {
       peakCCV,

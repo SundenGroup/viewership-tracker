@@ -44,7 +44,7 @@ export function PlatformBreakdownPanel({ liveCCV, loading }: PlatformBreakdownPa
     }));
 
   return (
-    <Card title="Platform Breakdown" subtitle="Live CCV by platform">
+    <Card title="Platform Breakdown" subtitle="Live CCV by platform" collapsible storageKey="cvt:panel:platformBreakdown">
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Donut Chart */}
         <ResponsiveContainer width="100%" height={230}>

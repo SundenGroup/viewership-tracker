@@ -10,6 +10,7 @@ import type {
   CreateChannel,
   BulkChannelResult,
   LiveCCVResponse,
+  LeaderboardResponse,
   PaginatedSnapshots,
   MetricsResponse,
   TimeSeriesResponse,
@@ -238,6 +239,14 @@ export function getLiveCCV(seriesId: string) {
   return request<LiveCCVResponse>(`/api/viewership/live/${seriesId}`);
 }
 
+export function getChannelLeaderboard(seriesId: string, scope?: string, dayId?: string) {
+  const params = new URLSearchParams();
+  if (scope) params.set('scope', scope);
+  if (dayId) params.set('dayId', dayId);
+  const qs = params.toString();
+  return request<LeaderboardResponse>(`/api/viewership/leaderboard/${seriesId}${qs ? `?${qs}` : ''}`);
+}
+
 export interface SnapshotQuery {
   scope: ScopeLevel;
   id: string;
@@ -356,6 +365,7 @@ export interface GenerateReportParams {
   format: 'pdf' | 'docx' | 'html';
   template?: string;
   skipNarratives?: boolean;
+  detail?: 'simple' | 'detailed';
 }
 
 export interface GenerateReportResult {

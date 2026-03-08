@@ -36,6 +36,7 @@ export interface HTMLReportData {
     channelLeaderboard: ChannelLeaderboardEntry[];
   };
   narratives: Narratives;
+  detail?: 'simple' | 'detailed';
 }
 
 // ── Platform / Language / Tier Colors ────────────────────────────────────────
@@ -139,7 +140,8 @@ function getTzAbbr(timezone: string): string {
 // ── Main Export ─────────────────────────────────────────────────────────────
 
 export function buildHTMLReport(data: HTMLReportData): string {
-  const { payload, totalTimeSeries, platformTimeSeries, aggregated, narratives } = data;
+  const { payload, totalTimeSeries, platformTimeSeries, aggregated, narratives, detail } = data;
+  const isDetailed = detail === 'detailed';
 
   const seriesName = esc(payload.series.name);
   const scope = payload.scope;
@@ -766,7 +768,7 @@ ${narratives.viewership_timeline ? `
 ` : ''}
 
   <!-- Streamer Table -->
-  <div class="section-title">Streamer Breakdown</div>
+  <div class="section-title">${isDetailed ? `All Streamers \u2014 Detailed Breakdown (${aggregated.channelLeaderboard.length})` : 'Streamer Breakdown'}</div>
   <div class="table-card">
     <table>
       <thead>

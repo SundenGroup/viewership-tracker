@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
 
 interface CardProps {
   children: ReactNode;
@@ -7,6 +8,10 @@ interface CardProps {
   subtitle?: string;
   action?: ReactNode;
   noPadding?: boolean;
+  /** Enable collapse toggle on the card header. */
+  collapsible?: boolean;
+  /** localStorage key to persist collapsed state across sessions. */
+  storageKey?: string;
 }
 
 export function Card({
@@ -16,14 +21,48 @@ export function Card({
   subtitle,
   action,
   noPadding = false,
+  collapsible = false,
+  storageKey,
 }: CardProps) {
+  // Persisted state when storageKey is provided, otherwise local state
+  const [storedCollapsed, setStoredCollapsed] = useLocalStorage<boolean>(
+    storageKey ?? '__unused__',
+    false,
+  );
+  const [localCollapsed, setLocalCollapsed] = useState(false);
+
+  const collapsed = storageKey ? storedCollapsed : localCollapsed;
+  const setCollapsed = storageKey ? setStoredCollapsed : setLocalCollapsed;
+
+  const hasHeader = !!(title || action);
+
   return (
     <div
       className={`rounded-xl border border-navy-700/50 bg-navy-850 shadow-lg ${className}`}
     >
-      {(title || action) && (
-        <div className="flex items-center justify-between border-b border-navy-700/50 px-5 py-3">
+      {hasHeader && (
+        <div
+          className={`flex items-center justify-between px-5 py-3 ${
+            collapsed ? '' : 'border-b border-navy-700/50'
+          } ${collapsible ? 'cursor-pointer select-none' : ''}`}
+          onClick={collapsible ? () => setCollapsed(!collapsed) : undefined}
+        >
           <div className="flex items-center gap-2">
+            {collapsible && (
+              <svg
+                className={`h-3 w-3 text-gray-600 transition-transform duration-200 ${
+                  collapsed ? '-rotate-90' : ''
+                }`}
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            )}
             {title && (
               <>
                 <span className="inline-block h-4 w-[2px] rounded-full bg-clutch-red" />
@@ -34,10 +73,14 @@ export function Card({
               <p className="mt-0.5 text-xs text-gray-500">{subtitle}</p>
             )}
           </div>
-          {action && <div>{action}</div>}
+          {action && (
+            <div onClick={(e) => e.stopPropagation()}>{action}</div>
+          )}
         </div>
       )}
-      <div className={noPadding ? '' : 'p-5'}>{children}</div>
+      {!collapsed && (
+        <div className={noPadding ? '' : 'p-5'}>{children}</div>
+      )}
     </div>
   );
 }

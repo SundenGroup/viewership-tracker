@@ -1,9 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { Card, PlatformBadge, LoadingOverlay } from '@/components/common';
 import { formatNumber, tierLabel, getStreamUrl } from '@/utils/formatters';
-import type { LiveCCVResponse } from '@/types/api';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
+import * as api from '@/services/api';
+import type { LiveCCVResponse, LeaderboardStats } from '@/types/api';
 
 interface ChannelLeaderboardPanelProps {
+  seriesId: string | undefined;
   liveCCV: LiveCCVResponse | null;
   loading: boolean;
 }
@@ -18,7 +21,7 @@ const TIER_COLORS: Record<string, string> = {
   watch_party: 'bg-accent-purple/15 text-accent-purple border border-purple-500/20',
 };
 
-// ── Language flag emoji lookup (common codes) ────────────────────────────
+// ── Language helper ──────────────────────────────────────────────────────
 
 function languageBadge(lang: string | null): string {
   if (!lang) return '';
@@ -27,7 +30,32 @@ function languageBadge(lang: string | null): string {
 
 // ── Component ────────────────────────────────────────────────────────────
 
-export function ChannelLeaderboardPanel({ liveCCV, loading }: ChannelLeaderboardPanelProps) {
+export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading }: ChannelLeaderboardPanelProps) {
+  const [expanded, setExpanded] = useLocalStorage<boolean>('cvt:leaderboardExpanded', false);
+  const [scope, setScope] = useLocalStorage<'day' | 'series'>('cvt:leaderboardScope', 'day');
+  const [stats, setStats] = useState<LeaderboardStats[] | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+
+  // Fetch aggregate stats when expanded
+  const fetchStats = useCallback(async () => {
+    if (!seriesId) return;
+    setStatsLoading(true);
+    try {
+      const result = await api.getChannelLeaderboard(seriesId, scope);
+      setStats(result.channels);
+    } catch {
+      // Silently handle — expanded view will just show live data
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [seriesId, scope]);
+
+  useEffect(() => {
+    if (expanded && seriesId) {
+      fetchStats();
+    }
+  }, [expanded, fetchStats, seriesId]);
+
   // Sort channels descending by CCV
   const sorted = useMemo(() => {
     if (!liveCCV) return [];
@@ -40,15 +68,27 @@ export function ChannelLeaderboardPanel({ liveCCV, loading }: ChannelLeaderboard
   const p90Threshold = useMemo(() => {
     if (sorted.length === 0) return 0;
     const values = sorted.map((ch) => ch.concurrentViewers);
-    const idx = Math.floor(values.length * 0.1); // top 10% = 90th percentile
+    const idx = Math.floor(values.length * 0.1);
     return values[idx] ?? 0;
   }, [sorted]);
+
+  // Build merged expanded data: aggregate stats + live CCV
+  const mergedExpanded = useMemo(() => {
+    if (!stats) return [];
+    const liveLookup = new Map(
+      sorted.map((ch) => [ch.channelId, ch.concurrentViewers]),
+    );
+    return stats.map((s) => ({
+      ...s,
+      liveCCV: liveLookup.get(s.channelId) ?? 0,
+    }));
+  }, [stats, sorted]);
 
   if (loading && !liveCCV) {
     return <Card title="Channel Leaderboard"><LoadingOverlay /></Card>;
   }
 
-  if (sorted.length === 0) {
+  if (sorted.length === 0 && !expanded) {
     return (
       <Card title="Channel Leaderboard">
         <p className="py-8 text-center text-sm text-gray-500">No channels streaming.</p>
@@ -56,10 +96,144 @@ export function ChannelLeaderboardPanel({ liveCCV, loading }: ChannelLeaderboard
     );
   }
 
+  // Action buttons: scope toggle (when expanded) + expand/collapse
+  const action = (
+    <div className="flex items-center gap-2">
+      {expanded && (
+        <div className="flex rounded-md bg-navy-800 p-0.5">
+          {(['day', 'series'] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setScope(s)}
+              className={`rounded px-2 py-0.5 text-[10px] font-medium capitalize transition-colors ${
+                scope === s
+                  ? 'bg-clutch-red text-white'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="rounded p-1 text-gray-500 hover:bg-navy-700 hover:text-gray-300 transition-colors"
+        title={expanded ? 'Collapse' : 'Expand detailed stats'}
+      >
+        {expanded ? (
+          <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M14.77 12.79a.75.75 0 01-1.06-.02L10 8.832 6.29 12.77a.75.75 0 11-1.08-1.04l4.25-4.5a.75.75 0 011.08 0l4.25 4.5a.75.75 0 01-.02 1.06z" clipRule="evenodd" />
+          </svg>
+        ) : (
+          <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 10.5a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75zM2 10a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5A.75.75 0 012 10z" clipRule="evenodd" />
+          </svg>
+        )}
+      </button>
+    </div>
+  );
+
+  // ── Expanded view ──────────────────────────────────────────────────────
+
+  if (expanded) {
+    return (
+      <Card
+        title="Channel Leaderboard"
+        subtitle={`${mergedExpanded.length || sorted.length} channels \u00b7 ${scope === 'series' ? 'Series totals' : 'Current day'}`}
+        action={action}
+        collapsible
+        storageKey="cvt:panel:leaderboard"
+      >
+        {statsLoading && !stats ? (
+          <LoadingOverlay />
+        ) : (
+          <div className="max-h-[720px] overflow-y-auto -mx-5 px-5">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-navy-850 z-10">
+                <tr className="border-b border-navy-700/50 text-xs text-gray-500">
+                  <th className="pb-2 pr-2 text-left font-medium w-8">#</th>
+                  <th className="pb-2 text-left font-medium">Platform</th>
+                  <th className="pb-2 text-left font-medium">Channel</th>
+                  <th className="pb-2 text-left font-medium">Tier</th>
+                  <th className="pb-2 text-right font-medium">Avg CCV</th>
+                  <th className="pb-2 text-right font-medium">Peak CCV</th>
+                  <th className="pb-2 text-right font-medium">Viewed Hrs</th>
+                  <th className="pb-2 text-right font-medium">Live CCV</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mergedExpanded.map((ch, i) => (
+                  <tr
+                    key={ch.channelId}
+                    className="border-b border-navy-700/30 last:border-0 hover:bg-navy-800/30 transition-colors"
+                  >
+                    <td className="py-2 pr-2">
+                      <span
+                        className={`
+                          inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold
+                          ${
+                            i === 0
+                              ? 'bg-yellow-500/20 text-yellow-400'
+                              : i === 1
+                                ? 'bg-gray-400/20 text-gray-300'
+                                : i === 2
+                                  ? 'bg-orange-500/20 text-orange-400'
+                                  : 'text-gray-600'
+                          }
+                        `}
+                      >
+                        {i + 1}
+                      </span>
+                    </td>
+                    <td className="py-2">
+                      <PlatformBadge platform={ch.platform ?? 'unknown'} />
+                    </td>
+                    <td className="py-2">
+                      <span className="font-medium text-gray-200">{ch.displayName}</span>
+                    </td>
+                    <td className="py-2">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${TIER_COLORS[ch.tier] ?? TIER_COLORS.community}`}>
+                        {tierLabel(ch.tier)}
+                      </span>
+                    </td>
+                    <td className="py-2 text-right font-mono text-gray-300">
+                      {formatNumber(ch.avgCCV)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-gray-300">
+                      {formatNumber(ch.peakCCV)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-gray-400">
+                      {formatNumber(ch.viewedHours)}
+                    </td>
+                    <td className="py-2 text-right">
+                      {ch.liveCCV > 0 ? (
+                        <span className="font-mono font-bold text-accent-green">
+                          {formatNumber(ch.liveCCV)}
+                        </span>
+                      ) : (
+                        <span className="font-mono text-gray-600">{'\u2014'}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    );
+  }
+
+  // ── Compact view (default) ─────────────────────────────────────────────
+
   return (
     <Card
       title="Channel Leaderboard"
       subtitle={`${sorted.length} channels ranked by CCV`}
+      action={action}
+      collapsible
+      storageKey="cvt:panel:leaderboard"
     >
       <div className="max-h-[480px] overflow-y-auto -mx-5 px-5">
         <table className="w-full text-sm">
@@ -84,7 +258,6 @@ export function ChannelLeaderboardPanel({ liveCCV, loading }: ChannelLeaderboard
                     ${isTop ? 'bg-accent-cyan/[0.04]' : 'hover:bg-navy-800/30'}
                   `}
                 >
-                  {/* Rank */}
                   <td className="py-2 pr-2">
                     <span
                       className={`
@@ -103,13 +276,9 @@ export function ChannelLeaderboardPanel({ liveCCV, loading }: ChannelLeaderboard
                       {i + 1}
                     </span>
                   </td>
-
-                  {/* Platform */}
                   <td className="py-2">
                     <PlatformBadge platform={ch.platform ?? 'unknown'} />
                   </td>
-
-                  {/* Channel Name */}
                   <td className="py-2">
                     <div className="flex items-center gap-1.5">
                       <span className={`font-medium ${isTop ? 'text-accent-cyan' : 'text-gray-200'}`}>
@@ -137,8 +306,6 @@ export function ChannelLeaderboardPanel({ liveCCV, loading }: ChannelLeaderboard
                       })()}
                     </div>
                   </td>
-
-                  {/* Language */}
                   <td className="py-2">
                     {ch.language && (
                       <span className="rounded bg-navy-700 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">
@@ -146,8 +313,6 @@ export function ChannelLeaderboardPanel({ liveCCV, loading }: ChannelLeaderboard
                       </span>
                     )}
                   </td>
-
-                  {/* CCV */}
                   <td className="py-2 text-right">
                     <span
                       className={`font-mono font-bold ${

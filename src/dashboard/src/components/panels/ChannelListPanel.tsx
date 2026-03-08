@@ -94,7 +94,7 @@ export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: Ch
   );
 
   return (
-    <Card title={`Channels (${filtered.length})`} action={action}>
+    <Card title={`Channels (${filtered.length})`} action={action} collapsible storageKey="cvt:panel:channelList">
       {loading && !channels ? (
         <LoadingOverlay />
       ) : error ? (

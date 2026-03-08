@@ -61,7 +61,7 @@ export function RegionDistPanel({ data, loading }: RegionDistPanelProps) {
   const chartHeight = Math.max(200, chartData.length * 36 + 40);
 
   return (
-    <Card title="Region Distribution" subtitle={`${sorted.length} regions detected`}>
+    <Card title="Region Distribution" subtitle={`${sorted.length} regions detected`} collapsible storageKey="cvt:panel:regionDist">
       <ResponsiveContainer width="100%" height={chartHeight}>
         <BarChart
           data={chartData}

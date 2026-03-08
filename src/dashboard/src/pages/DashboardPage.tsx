@@ -88,6 +88,7 @@ export function DashboardPage({
       {/* Row 3: Channel Leaderboard + Language/Region — side by side */}
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <ChannelLeaderboardPanel
+          seriesId={seriesId}
           liveCCV={pollingData.liveCCV}
           loading={pollingData.liveCCVLoading}
         />

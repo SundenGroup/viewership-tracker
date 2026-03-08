@@ -163,6 +163,7 @@ router.get('/metrics', async (req: Request, res: Response, next: NextFunction) =
         channelId: e.channel_id,
         displayName: e.display_name,
         platform: e.platform,
+        tier: e.tier ?? 'community',
         peakCCV: parseInt(e.peak_ccv, 10),
         avgCCV: parseFloat(e.avg_ccv),
         totalViewedMinutes: parseInt(e.total_viewed_minutes, 10),
@@ -248,6 +249,73 @@ router.get('/timeseries', async (req: Request, res: Response, next: NextFunction
         groupKey: r.group_key,
         totalCCV: parseInt(r.total_ccv, 10),
         channelCount: parseInt(r.channel_count, 10),
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/viewership/leaderboard/:seriesId — Aggregate channel leaderboard
+router.get('/leaderboard/:seriesId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!isValidUUID(req.params.seriesId)) {
+      res.status(400).json({ error: 'Invalid seriesId format' });
+      return;
+    }
+
+    const seriesId = req.params.seriesId as string;
+    const scopeParam = (req.query.scope as string) || 'day';
+    const dayId = req.query.dayId as string | undefined;
+
+    let scopeObj: ViewershipSnapshotModel.Scope;
+
+    if (scopeParam === 'series') {
+      scopeObj = { level: 'series', id: seriesId };
+    } else {
+      // scope=day: use provided dayId or auto-detect active/most recent
+      if (dayId && isValidUUID(dayId)) {
+        scopeObj = { level: 'day', id: dayId };
+      } else {
+        // Find active broadcast day (status='live') or most recent completed day
+        const activeDay = await db('broadcast_days')
+          .where('series_id', seriesId)
+          .where('status', 'live')
+          .orderBy('date', 'desc')
+          .first();
+
+        if (activeDay) {
+          scopeObj = { level: 'day', id: activeDay.id };
+        } else {
+          // Fallback: most recent completed day
+          const recentDay = await db('broadcast_days')
+            .where('series_id', seriesId)
+            .where('status', 'completed')
+            .orderBy('date', 'desc')
+            .first();
+
+          if (recentDay) {
+            scopeObj = { level: 'day', id: recentDay.id };
+          } else {
+            // No days at all — fall back to series scope
+            scopeObj = { level: 'series', id: seriesId };
+          }
+        }
+      }
+    }
+
+    const leaderboard = await ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, 9999);
+
+    res.json({
+      scope: scopeObj,
+      channels: leaderboard.map((e) => ({
+        channelId: e.channel_id,
+        displayName: e.display_name,
+        platform: e.platform,
+        tier: e.tier ?? 'community',
+        peakCCV: parseInt(e.peak_ccv, 10),
+        avgCCV: Math.round(parseFloat(e.avg_ccv)),
+        viewedHours: Math.round(parseInt(e.total_viewed_minutes, 10) / 60),
       })),
     });
   } catch (err) {

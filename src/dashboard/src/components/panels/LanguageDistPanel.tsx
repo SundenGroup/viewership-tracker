@@ -62,7 +62,7 @@ export function LanguageDistPanel({ data, loading }: LanguageDistPanelProps) {
   const chartHeight = Math.max(200, chartData.length * 36 + 40);
 
   return (
-    <Card title="Language Distribution" subtitle={`${sorted.length} languages detected`}>
+    <Card title="Language Distribution" subtitle={`${sorted.length} languages detected`} collapsible storageKey="cvt:panel:languageDist">
       <ResponsiveContainer width="100%" height={chartHeight}>
         <BarChart
           data={chartData}

@@ -32,7 +32,7 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       return;
     }
 
-    const { scope, id, ids, template, format, deliveryMethod, skipNarratives } = req.body;
+    const { scope, id, ids, template, format, deliveryMethod, skipNarratives, detail } = req.body;
 
     // Validate scope
     if (!scope) {
@@ -85,6 +85,7 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       format: (format ?? 'pdf') as 'pdf' | 'docx' | 'html',
       deliveryMethod: (deliveryMethod ?? 'local') as DeliveryMethod,
       skipNarratives: skipNarratives ?? false,
+      detail: (detail === 'detailed' ? 'detailed' : 'simple') as 'simple' | 'detailed',
     });
 
     res.json({

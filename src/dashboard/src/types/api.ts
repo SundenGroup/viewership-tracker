@@ -217,6 +217,7 @@ export interface LeaderboardEntry {
   channelId: string;
   displayName: string;
   platform: string;
+  tier?: string;
   peakCCV: number;
   avgCCV: number;
   totalViewedMinutes: number;
@@ -226,6 +227,21 @@ export interface LeaderboardEntry {
   peak_ccv?: string;
   avg_ccv?: string;
   total_viewed_minutes?: string;
+}
+
+export interface LeaderboardStats {
+  channelId: string;
+  displayName: string;
+  platform: string;
+  tier: string;
+  peakCCV: number;
+  avgCCV: number;
+  viewedHours: number;
+}
+
+export interface LeaderboardResponse {
+  scope: { level: ScopeLevel; id: string };
+  channels: LeaderboardStats[];
 }
 
 export interface MetricsResponse {

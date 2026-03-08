@@ -72,6 +72,8 @@ export function DiscoveryFeedPanel({
       title="Discovery Feed"
       subtitle={`${sorted.length} auto-discovered channels`}
       action={action}
+      collapsible
+      storageKey="cvt:panel:discovery"
     >
       {loading && recent.length === 0 ? (
         <LoadingOverlay />

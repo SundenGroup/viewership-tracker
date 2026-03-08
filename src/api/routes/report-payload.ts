@@ -11,7 +11,8 @@ const router = Router();
 // GET /api/report-payload?scope={day|stage|multi_stage|series|custom}&id={uuid}&ids={csv}&startDate=&endDate=
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { scope, id, ids, startDate, endDate } = req.query;
+    const { scope, id, ids, startDate, endDate, detail } = req.query;
+    const isDetailed = detail === 'detailed';
 
     if (!scope) {
       res.status(400).json({ error: 'scope is required (day|stage|multi_stage|series|custom)' });
@@ -161,7 +162,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
           ViewershipSnapshotModel.getPlatformBreakdown(scopeObj),
           ViewershipSnapshotModel.getLanguageBreakdown(scopeObj),
           ViewershipSnapshotModel.getRegionBreakdown(scopeObj),
-          ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, 10),
+          ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, isDetailed ? 9999 : 10),
         ]);
         return {
           broadcastDayId: dayId,
