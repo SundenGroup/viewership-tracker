@@ -470,3 +470,80 @@ export function updateUser(
 export function deleteUser(id: string) {
   return request<void>(`/api/auth/users/${id}`, { method: 'DELETE' });
 }
+
+// ── Public (unauthenticated) API ──────────────────────────────────────────
+
+/** Fetch helper for public endpoints — no auth cookie, no 401 reload. */
+async function publicRequest<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, body.error ?? res.statusText, body);
+  }
+
+  return res.json() as Promise<T>;
+}
+
+export interface PublicSeriesInfo {
+  id: string;
+  name: string;
+  shortName: string;
+  game: string | null;
+  partner: string | null;
+  status: TournamentStatus;
+  timezone: string;
+  startDate: string | null;
+  endDate: string | null;
+  stages: Array<{
+    id: string;
+    name: string;
+    order: number;
+    start_date: string | null;
+    end_date: string | null;
+    broadcast_days: Array<{
+      id: string;
+      label: string;
+      date: string;
+      status: BroadcastStatus;
+      broadcast_start: string | null;
+      broadcast_end: string | null;
+    }>;
+  }>;
+}
+
+export function getPublicSeries(shortName: string) {
+  return publicRequest<PublicSeriesInfo>(`/api/public/${shortName}`);
+}
+
+export function getPublicLiveCCV(shortName: string) {
+  return publicRequest<LiveCCVResponse>(`/api/public/${shortName}/live-ccv`);
+}
+
+export function getPublicMetrics(shortName: string, scope?: ScopeLevel, id?: string) {
+  const params = new URLSearchParams();
+  if (scope) params.set('scope', scope);
+  if (id) params.set('id', id);
+  const qs = params.toString() ? `?${params}` : '';
+  return publicRequest<MetricsResponse>(`/api/public/${shortName}/metrics${qs}`);
+}
+
+export function getPublicTimeSeries(shortName: string, query: Omit<TimeSeriesQuery, 'scope' | 'id'> & { scope?: ScopeLevel; id?: string }) {
+  const params = new URLSearchParams();
+  if (query.scope) params.set('scope', query.scope);
+  if (query.id) params.set('id', query.id);
+  if (query.interval) params.set('interval', String(query.interval));
+  if (query.groupBy) params.set('groupBy', query.groupBy);
+  return publicRequest<TimeSeriesResponse>(`/api/public/${shortName}/timeseries?${params}`);
+}
+
+export function getPublicLeaderboard(shortName: string, scope?: string, scopeEntityId?: string) {
+  const params = new URLSearchParams();
+  if (scope) params.set('scope', scope);
+  if (scope === 'day' && scopeEntityId) params.set('dayId', scopeEntityId);
+  if (scope === 'stage' && scopeEntityId) params.set('stageId', scopeEntityId);
+  const qs = params.toString();
+  return publicRequest<LeaderboardResponse>(`/api/public/${shortName}/leaderboard${qs ? `?${qs}` : ''}`);
+}

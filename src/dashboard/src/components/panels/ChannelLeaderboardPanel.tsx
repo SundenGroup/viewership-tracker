@@ -10,6 +10,8 @@ interface ChannelLeaderboardPanelProps {
   liveCCV: LiveCCVResponse | null;
   loading: boolean;
   scope: { level: ScopeLevel; id: string };
+  /** When set, calls public API instead of authenticated API. */
+  publicShortName?: string;
 }
 
 // ── Tier badge colors ────────────────────────────────────────────────────
@@ -57,7 +59,7 @@ function languageBadge(lang: string | null): string {
 
 // ── Component ────────────────────────────────────────────────────────────
 
-export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope }: ChannelLeaderboardPanelProps) {
+export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, publicShortName }: ChannelLeaderboardPanelProps) {
   const [expanded, setExpanded] = useLocalStorage<boolean>('cvt:leaderboardExpanded', false);
   const [sort, setSort] = useLocalStorage<LeaderboardSortState>('cvt:leaderboardSort', { field: 'peakCCV', dir: 'desc' });
   const [stats, setStats] = useState<LeaderboardStats[] | null>(null);
@@ -76,14 +78,16 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope }: C
     setStatsLoading(true);
     try {
       const scopeEntityId = scope.level !== 'series' ? scope.id : undefined;
-      const result = await api.getChannelLeaderboard(seriesId, scope.level, scopeEntityId);
+      const result = publicShortName
+        ? await api.getPublicLeaderboard(publicShortName, scope.level, scopeEntityId)
+        : await api.getChannelLeaderboard(seriesId, scope.level, scopeEntityId);
       setStats(result.channels);
     } catch {
       // Silently handle — expanded view will just show live data
     } finally {
       setStatsLoading(false);
     }
-  }, [seriesId, scope.level, scope.id]);
+  }, [seriesId, scope.level, scope.id, publicShortName]);
 
   useEffect(() => {
     if (expanded && seriesId) {

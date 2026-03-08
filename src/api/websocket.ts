@@ -100,6 +100,7 @@ interface TrackedClient {
   remoteAddress: string;
   userId: string;
   userRole: string;
+  isPublic: boolean;            // anonymous public viewer
 }
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -124,31 +125,35 @@ export class ViewershipWebSocketServer {
         try {
           const cookies = cookie.parse(info.req.headers.cookie ?? '');
           const token = cookies[config.auth.cookieName];
-          if (!token) {
-            logger.warn('[WS] Connection rejected — no auth cookie');
-            callback(false, 401, 'Unauthorized');
-            return;
-          }
 
-          const payload = jwt.verify(token, config.auth.jwtSecret) as { sub: string };
-          const user = await UserModel.findById(payload.sub);
-          if (!user || !user.is_active) {
-            logger.warn('[WS] Connection rejected — invalid or inactive user');
-            callback(false, 401, 'Unauthorized');
-            return;
+          if (token) {
+            // Authenticated path
+            const payload = jwt.verify(token, config.auth.jwtSecret) as { sub: string };
+            const user = await UserModel.findById(payload.sub);
+            if (!user || !user.is_active) {
+              logger.warn('[WS] Connection rejected — invalid or inactive user');
+              callback(false, 401, 'Unauthorized');
+              return;
+            }
+            (info.req as IncomingMessage & { _wsUser?: { id: string; role: string } })._wsUser = {
+              id: user.id,
+              role: user.role,
+            };
+          } else {
+            // Anonymous path — allow as public viewer
+            (info.req as IncomingMessage & { _wsUser?: { id: string; role: string } })._wsUser = {
+              id: 'anonymous',
+              role: 'public',
+            };
           }
-
-          // Stash user info on the request so onConnection can read it
+          callback(true);
+        } catch {
+          // JWT verification failed — allow as anonymous public viewer
           (info.req as IncomingMessage & { _wsUser?: { id: string; role: string } })._wsUser = {
-            id: user.id,
-            role: user.role,
+            id: 'anonymous',
+            role: 'public',
           };
           callback(true);
-        } catch (err) {
-          logger.warn('[WS] Connection rejected — JWT verification failed', {
-            error: (err as Error).message,
-          });
-          callback(false, 401, 'Unauthorized');
         }
       },
     });
@@ -199,6 +204,7 @@ export class ViewershipWebSocketServer {
     const remoteAddress = req.socket.remoteAddress ?? 'unknown';
     const wsUser = (req as IncomingMessage & { _wsUser?: { id: string; role: string } })._wsUser;
 
+    const isPublic = wsUser?.role === 'public';
     const client: TrackedClient = {
       ws,
       subscriptions: new Set(),
@@ -207,6 +213,7 @@ export class ViewershipWebSocketServer {
       remoteAddress,
       userId: wsUser?.id ?? 'unknown',
       userRole: wsUser?.role ?? 'viewer',
+      isPublic,
     };
 
     this.clients.set(ws, client);
@@ -214,7 +221,7 @@ export class ViewershipWebSocketServer {
 
     // Send welcome message with current state
     try {
-      const welcomeData = await this.buildWelcomePayload();
+      const welcomeData = await this.buildWelcomePayload(isPublic);
       this.send(ws, welcomeData);
     } catch (err) {
       logger.error('[WS] Failed to build welcome payload', { error: (err as Error).message });
@@ -253,13 +260,25 @@ export class ViewershipWebSocketServer {
 
   // ── Message handler ────────────────────────────────────────────────────
 
-  private handleClientMessage(client: TrackedClient, message: ClientMessage): void {
+  private async handleClientMessage(client: TrackedClient, message: ClientMessage): Promise<void> {
     switch (message.type) {
       case 'subscribe': {
         if (!message.seriesId || typeof message.seriesId !== 'string') {
           this.send(client.ws, { type: 'error', data: { message: 'seriesId is required' } });
           return;
         }
+
+        // Public clients can only subscribe to public series
+        if (client.isPublic) {
+          const series = await db('tournament_series')
+            .where({ id: message.seriesId, is_public: true })
+            .first();
+          if (!series) {
+            this.send(client.ws, { type: 'error', data: { message: 'Series not found or not public' } });
+            return;
+          }
+        }
+
         client.subscriptions.add(message.seriesId);
         logger.debug(`[WS] Client ${client.remoteAddress} subscribed to series ${message.seriesId}`);
         break;
@@ -344,6 +363,8 @@ export class ViewershipWebSocketServer {
     };
 
     for (const client of subscribedClients) {
+      // Don't send discovery data to public viewers
+      if (client.isPublic) continue;
       this.send(client.ws, payload);
     }
   }
@@ -380,9 +401,12 @@ export class ViewershipWebSocketServer {
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
-  private async buildWelcomePayload(): Promise<WelcomePayload> {
-    // Get active series
-    const activeSeries = await TournamentSeriesModel.findAll({ status: 'active' });
+  private async buildWelcomePayload(publicOnly = false): Promise<WelcomePayload> {
+    // Get active series (public clients only see public series)
+    let activeSeries = await TournamentSeriesModel.findAll({ status: 'active' });
+    if (publicOnly) {
+      activeSeries = activeSeries.filter((s) => s.is_public);
+    }
 
     // Get live broadcast days
     const liveBroadcastDays = await db<BroadcastDay>('broadcast_days')

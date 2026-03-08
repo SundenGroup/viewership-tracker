@@ -39,6 +39,7 @@ export interface TournamentSeries {
   discovery_keywords: string[];
   discovery_game_ids: Record<string, string>;
   discovery_default_tier: string;
+  is_public: boolean;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -58,6 +59,7 @@ export interface CreateTournamentSeries {
   discovery_keywords?: string[];
   discovery_game_ids?: Record<string, string>;
   discovery_default_tier?: string;
+  is_public?: boolean;
   metadata?: Record<string, unknown>;
 }
 

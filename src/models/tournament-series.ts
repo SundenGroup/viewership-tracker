@@ -16,6 +16,7 @@ export interface TournamentSeries {
   discovery_keywords: string[];
   discovery_game_ids: Record<string, string>;
   discovery_default_tier: string;
+  is_public: boolean;
   metadata: Record<string, unknown>;
   created_at: Date;
   updated_at: Date;
@@ -34,6 +35,7 @@ export interface CreateTournamentSeries {
   discovery_keywords?: string[];
   discovery_game_ids?: Record<string, string>;
   discovery_default_tier?: string;
+  is_public?: boolean;
   metadata?: Record<string, unknown>;
 }
 
@@ -62,6 +64,11 @@ export async function create(data: CreateTournamentSeries): Promise<TournamentSe
 
 export async function findById(id: string): Promise<TournamentSeries | null> {
   const row = await db(TABLE).where({ id }).first();
+  return row ?? null;
+}
+
+export async function findByShortName(shortName: string): Promise<TournamentSeries | null> {
+  const row = await db(TABLE).where({ short_name: shortName }).first();
   return row ?? null;
 }
 

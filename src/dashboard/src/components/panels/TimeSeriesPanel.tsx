@@ -20,6 +20,8 @@ import type { TimeSeriesBucket, GroupedTimeSeriesBucket, TimeSeriesGroupBy, Scop
 interface TimeSeriesPanelProps {
   seriesId: string | undefined;
   scope?: { level: ScopeLevel; id: string };
+  /** When set, calls public API instead of authenticated API. */
+  publicShortName?: string;
 }
 
 type ViewMode = 'total' | 'platform' | 'language';
@@ -44,7 +46,7 @@ const GROUP_COLORS = [
   '#f472b6', '#fbbf24', '#2dd4bf', '#818cf8', '#e879f9',
 ];
 
-export function TimeSeriesPanel({ seriesId, scope: scopeProp }: TimeSeriesPanelProps) {
+export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName }: TimeSeriesPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('total');
   const [interval, setInterval] = useState<IntervalOption>(60);
 
@@ -53,16 +55,25 @@ export function TimeSeriesPanel({ seriesId, scope: scopeProp }: TimeSeriesPanelP
   const effectiveScope = scopeProp ?? { level: 'series' as ScopeLevel, id: seriesId! };
 
   const { data, loading, error } = useApi(
-    () =>
-      seriesId
+    () => {
+      if (publicShortName) {
+        return api.getPublicTimeSeries(publicShortName, {
+          scope: effectiveScope.level,
+          id: effectiveScope.id,
+          interval,
+          groupBy,
+        });
+      }
+      return seriesId
         ? api.getTimeSeries({
             scope: effectiveScope.level,
             id: effectiveScope.id,
             interval,
             groupBy,
           })
-        : Promise.resolve(null),
-    [effectiveScope.level, effectiveScope.id, interval, groupBy],
+        : Promise.resolve(null);
+    },
+    [effectiveScope.level, effectiveScope.id, interval, groupBy, publicShortName],
   );
 
   // ── Transform data for charts ──────────────────────────────────────────

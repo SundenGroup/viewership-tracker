@@ -86,6 +86,32 @@ export function requireRole(...roles: UserRole[]) {
   };
 }
 
+// ── requirePublicSeries ───────────────────────────────────────────────────
+// Verifies the series exists, is public, and stashes it on req for handlers.
+
+export function requirePublicSeries(paramName = 'shortName') {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const shortName = req.params[paramName];
+    if (!shortName) {
+      res.status(400).json({ error: 'Series identifier required' });
+      return;
+    }
+
+    const series = await db('tournament_series')
+      .where({ short_name: shortName, is_public: true })
+      .first();
+
+    if (!series) {
+      res.status(404).json({ error: 'Series not found or not public' });
+      return;
+    }
+
+    // Stash resolved series on request for downstream handlers
+    (req as Request & { publicSeries?: unknown }).publicSeries = series;
+    next();
+  };
+}
+
 // ── requireSeriesAccess ────────────────────────────────────────────────────
 // Checks that the user's role meets the series' min_role requirement.
 // Looks for seriesId in req.params[paramName] or req.query.seriesId.

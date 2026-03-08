@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Header, Sidebar, MainLayout } from '@/components/layout';
 import { DashboardPage } from '@/pages/DashboardPage';
+import { PublicDashboardPage } from '@/pages/PublicDashboardPage';
 import { SeriesSetupPage } from '@/pages/SeriesSetupPage';
 import { SeriesEditPage } from '@/pages/SeriesEditPage';
 import { LoginPage } from '@/pages/LoginPage';
@@ -9,7 +10,7 @@ import { UserManagementPage } from '@/pages/UserManagementPage';
 import { Spinner } from '@/components/common/Loader';
 import { useApi, usePollingApi } from '@/hooks/useApi';
 import { usePollingData } from '@/hooks/usePollingData';
-import { AuthContext, useAuthProvider } from '@/hooks/useAuth';
+import { AuthContext, useAuth, useAuthProvider } from '@/hooks/useAuth';
 import type { ConnectionStatus } from '@/hooks/useWebSocket';
 import * as api from '@/services/api';
 import type {
@@ -23,7 +24,27 @@ import type {
 export default function App() {
   const auth = useAuthProvider();
 
-  // Show loading spinner during initial session check
+  return (
+    <AuthContext.Provider value={auth}>
+      <BrowserRouter>
+        <Routes>
+          {/* Public routes — no auth required */}
+          <Route path="/public/:shortName/*" element={<PublicDashboardPage />} />
+          <Route path="/public/:shortName" element={<PublicDashboardPage />} />
+
+          {/* Authenticated routes — behind auth gate */}
+          <Route path="/*" element={<AuthGate />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthContext.Provider>
+  );
+}
+
+// ── Auth Gate — shows login or authenticated app ────────────────────────────
+
+function AuthGate() {
+  const auth = useAuth();
+
   if (auth.loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-navy-950">
@@ -32,28 +53,18 @@ export default function App() {
     );
   }
 
-  // Not logged in — show login page
   if (!auth.user) {
-    return (
-      <AuthContext.Provider value={auth}>
-        <LoginPage />
-      </AuthContext.Provider>
-    );
+    return <LoginPage />;
   }
 
-  // Logged in — render the app with router
   return (
-    <AuthContext.Provider value={auth}>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/new" element={<AppContent />} />
-          <Route path="/users" element={<AppContent />} />
-          <Route path="/:seriesId/edit" element={<AppContent />} />
-          <Route path="/:seriesId" element={<AppContent />} />
-          <Route path="/" element={<AppContent />} />
-        </Routes>
-      </BrowserRouter>
-    </AuthContext.Provider>
+    <Routes>
+      <Route path="/new" element={<AppContent />} />
+      <Route path="/users" element={<AppContent />} />
+      <Route path="/:seriesId/edit" element={<AppContent />} />
+      <Route path="/:seriesId" element={<AppContent />} />
+      <Route path="/" element={<AppContent />} />
+    </Routes>
   );
 }
 

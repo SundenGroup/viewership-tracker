@@ -13,6 +13,7 @@ import reportPayloadRouter from './routes/report-payload';
 import pollingRouter from './routes/polling';
 import reportsRouter from './routes/reports';
 import authRouter from './routes/auth';
+import publicRouter from './routes/public';
 import { authenticate, requireRole } from './middleware/auth';
 
 export function createApp() {
@@ -40,6 +41,9 @@ export function createApp() {
 
   // Auth routes (login/logout are public, /me and /users are protected internally)
   app.use('/api/auth', authRouter);
+
+  // Public API routes — no authentication required
+  app.use('/api/public', publicRouter);
 
   // All other /api routes require authentication
   app.use('/api', authenticate);
