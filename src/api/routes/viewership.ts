@@ -267,11 +267,19 @@ router.get('/leaderboard/:seriesId', async (req: Request, res: Response, next: N
     const seriesId = req.params.seriesId as string;
     const scopeParam = (req.query.scope as string) || 'day';
     const dayId = req.query.dayId as string | undefined;
+    const stageId = req.query.stageId as string | undefined;
 
     let scopeObj: ViewershipSnapshotModel.Scope;
 
     if (scopeParam === 'series') {
       scopeObj = { level: 'series', id: seriesId };
+    } else if (scopeParam === 'stage') {
+      // scope=stage: use provided stageId or fall back to series
+      if (stageId && isValidUUID(stageId)) {
+        scopeObj = { level: 'stage', id: stageId };
+      } else {
+        scopeObj = { level: 'series', id: seriesId };
+      }
     } else {
       // scope=day: use provided dayId or auto-detect active/most recent
       if (dayId && isValidUUID(dayId)) {

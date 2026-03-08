@@ -239,10 +239,11 @@ export function getLiveCCV(seriesId: string) {
   return request<LiveCCVResponse>(`/api/viewership/live/${seriesId}`);
 }
 
-export function getChannelLeaderboard(seriesId: string, scope?: string, dayId?: string) {
+export function getChannelLeaderboard(seriesId: string, scope?: string, scopeEntityId?: string) {
   const params = new URLSearchParams();
   if (scope) params.set('scope', scope);
-  if (dayId) params.set('dayId', dayId);
+  if (scope === 'day' && scopeEntityId) params.set('dayId', scopeEntityId);
+  if (scope === 'stage' && scopeEntityId) params.set('stageId', scopeEntityId);
   const qs = params.toString();
   return request<LeaderboardResponse>(`/api/viewership/leaderboard/${seriesId}${qs ? `?${qs}` : ''}`);
 }

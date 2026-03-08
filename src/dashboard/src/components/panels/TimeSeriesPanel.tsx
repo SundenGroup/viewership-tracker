@@ -19,6 +19,7 @@ import type { TimeSeriesBucket, GroupedTimeSeriesBucket, TimeSeriesGroupBy, Scop
 
 interface TimeSeriesPanelProps {
   seriesId: string | undefined;
+  scope?: { level: ScopeLevel; id: string };
 }
 
 type ViewMode = 'total' | 'platform' | 'language';
@@ -43,23 +44,25 @@ const GROUP_COLORS = [
   '#f472b6', '#fbbf24', '#2dd4bf', '#818cf8', '#e879f9',
 ];
 
-export function TimeSeriesPanel({ seriesId }: TimeSeriesPanelProps) {
+export function TimeSeriesPanel({ seriesId, scope: scopeProp }: TimeSeriesPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('total');
   const [interval, setInterval] = useState<IntervalOption>(60);
 
   const groupBy: TimeSeriesGroupBy = viewMode === 'total' ? 'total' : viewMode;
 
+  const effectiveScope = scopeProp ?? { level: 'series' as ScopeLevel, id: seriesId! };
+
   const { data, loading, error } = useApi(
     () =>
       seriesId
         ? api.getTimeSeries({
-            scope: 'series' as ScopeLevel,
-            id: seriesId,
+            scope: effectiveScope.level,
+            id: effectiveScope.id,
             interval,
             groupBy,
           })
         : Promise.resolve(null),
-    [seriesId, interval, groupBy],
+    [effectiveScope.level, effectiveScope.id, interval, groupBy],
   );
 
   // ── Transform data for charts ──────────────────────────────────────────

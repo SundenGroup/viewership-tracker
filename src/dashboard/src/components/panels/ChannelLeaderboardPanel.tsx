@@ -3,12 +3,13 @@ import { Card, PlatformBadge, LoadingOverlay } from '@/components/common';
 import { formatNumber, tierLabel, getStreamUrl } from '@/utils/formatters';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import * as api from '@/services/api';
-import type { LiveCCVResponse, LeaderboardStats } from '@/types/api';
+import type { LiveCCVResponse, LeaderboardStats, ScopeLevel } from '@/types/api';
 
 interface ChannelLeaderboardPanelProps {
   seriesId: string | undefined;
   liveCCV: LiveCCVResponse | null;
   loading: boolean;
+  scope: { level: ScopeLevel; id: string };
 }
 
 // ── Tier badge colors ────────────────────────────────────────────────────
@@ -56,9 +57,8 @@ function languageBadge(lang: string | null): string {
 
 // ── Component ────────────────────────────────────────────────────────────
 
-export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading }: ChannelLeaderboardPanelProps) {
+export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope }: ChannelLeaderboardPanelProps) {
   const [expanded, setExpanded] = useLocalStorage<boolean>('cvt:leaderboardExpanded', false);
-  const [scope, setScope] = useLocalStorage<'day' | 'series'>('cvt:leaderboardScope', 'day');
   const [sort, setSort] = useLocalStorage<LeaderboardSortState>('cvt:leaderboardSort', { field: 'peakCCV', dir: 'desc' });
   const [stats, setStats] = useState<LeaderboardStats[] | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -75,14 +75,15 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading }: ChannelL
     if (!seriesId) return;
     setStatsLoading(true);
     try {
-      const result = await api.getChannelLeaderboard(seriesId, scope);
+      const scopeEntityId = scope.level !== 'series' ? scope.id : undefined;
+      const result = await api.getChannelLeaderboard(seriesId, scope.level, scopeEntityId);
       setStats(result.channels);
     } catch {
       // Silently handle — expanded view will just show live data
     } finally {
       setStatsLoading(false);
     }
-  }, [seriesId, scope]);
+  }, [seriesId, scope.level, scope.id]);
 
   useEffect(() => {
     if (expanded && seriesId) {
@@ -136,26 +137,14 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading }: ChannelL
     );
   }
 
-  // Action buttons: scope toggle (when expanded) + expand/collapse
+  // Scope label for subtitle
+  const scopeLabel = scope.level === 'series' ? 'Series totals'
+    : scope.level === 'stage' ? 'Stage totals'
+    : 'Day totals';
+
+  // Action button: expand/collapse
   const action = (
     <div className="flex items-center gap-2">
-      {expanded && (
-        <div className="flex rounded-md bg-navy-800 p-0.5">
-          {(['day', 'series'] as const).map((s) => (
-            <button
-              key={s}
-              onClick={() => setScope(s)}
-              className={`rounded px-2 py-0.5 text-[10px] font-medium capitalize transition-colors ${
-                scope === s
-                  ? 'bg-clutch-red text-white'
-                  : 'text-gray-500 hover:text-gray-300'
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
       <button
         onClick={() => setExpanded(!expanded)}
         className="rounded p-1 text-gray-500 hover:bg-navy-700 hover:text-gray-300 transition-colors"
@@ -180,7 +169,7 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading }: ChannelL
     return (
       <Card
         title="Channel Leaderboard"
-        subtitle={`${mergedExpanded.length || sorted.length} channels \u00b7 ${scope === 'series' ? 'Series totals' : 'Current day'}`}
+        subtitle={`${mergedExpanded.length || sorted.length} channels \u00b7 ${scopeLabel}`}
         action={action}
         collapsible
         storageKey="cvt:panel:leaderboard"

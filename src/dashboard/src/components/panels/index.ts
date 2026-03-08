@@ -6,6 +6,7 @@ export { LanguageDistPanel } from './LanguageDistPanel';
 export { RegionDistPanel } from './RegionDistPanel';
 export { DiscoveryFeedPanel } from './DiscoveryFeedPanel';
 export { SummaryBarPanel } from './SummaryBarPanel';
+export { ScopeSelectorBar } from './ScopeSelectorBar';
 export { ExportPanel } from './ExportPanel';
 
 // Legacy panels kept for reference

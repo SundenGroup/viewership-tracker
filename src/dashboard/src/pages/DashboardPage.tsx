@@ -8,11 +8,15 @@ import {
   RegionDistPanel,
   DiscoveryFeedPanel,
   SummaryBarPanel,
+  ScopeSelectorBar,
   ExportPanel,
   ChannelListPanel,
 } from '@/components/panels';
 import { useAuth } from '@/hooks/useAuth';
-import type { SeriesWithStages } from '@/types/api';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
+import { usePollingApi } from '@/hooks/useApi';
+import * as api from '@/services/api';
+import type { SeriesWithStages, ScopeLevel, MetricsResponse } from '@/types/api';
 import type { PollingDataState } from '@/hooks/usePollingData';
 
 interface DashboardPageProps {
@@ -31,13 +35,73 @@ export function DashboardPage({
   channelRefreshKey = 0,
 }: DashboardPageProps) {
   const { hasRole } = useAuth();
-  const canExport = hasRole('editor');
+  const canManage = hasRole('editor');
 
-  // Flatten all broadcast days from series detail for channel list panel
+  // ── Scope state (persisted) ───────────────────────────────────────────
+  const [scopeLevel, setScopeLevel] = useLocalStorage<ScopeLevel>('cvt:dashboardScope', 'series');
+  const [scopeDayId, setScopeDayId] = useLocalStorage<string>('cvt:dashboardScopeDay', '');
+  const [scopeStageId, setScopeStageId] = useLocalStorage<string>('cvt:dashboardScopeStage', '');
+
+  const hasMultipleStages = (seriesDetail?.stages.length ?? 0) >= 2;
+
+  // Flatten all broadcast days from series detail
   const allBroadcastDays = useMemo(() => {
     if (!seriesDetail) return [];
     return seriesDetail.stages.flatMap((s) => s.broadcast_days);
   }, [seriesDetail]);
+
+  // Derive resolved scope
+  const dashboardScope = useMemo((): { level: ScopeLevel; id: string; label: string } | null => {
+    if (!seriesId || !seriesDetail) return null;
+
+    if (scopeLevel === 'series') {
+      return { level: 'series', id: seriesId, label: 'Full Series' };
+    }
+
+    if (scopeLevel === 'stage') {
+      const stage = seriesDetail.stages.find((s) => s.id === scopeStageId);
+      if (stage) return { level: 'stage', id: stage.id, label: stage.name };
+      // Fallback: first stage
+      const first = seriesDetail.stages[0];
+      if (first) return { level: 'stage', id: first.id, label: first.name };
+      return { level: 'series', id: seriesId, label: 'Full Series' };
+    }
+
+    if (scopeLevel === 'day') {
+      const day = allBroadcastDays.find((d) => d.id === scopeDayId);
+      if (day) return { level: 'day', id: day.id, label: day.label };
+      // Fallback: active day or most recent
+      const active = allBroadcastDays.find((d) => d.status === 'live')
+        ?? allBroadcastDays[allBroadcastDays.length - 1];
+      if (active) return { level: 'day', id: active.id, label: active.label };
+      return { level: 'series', id: seriesId, label: 'Full Series' };
+    }
+
+    return { level: 'series', id: seriesId, label: 'Full Series' };
+  }, [scopeLevel, scopeStageId, scopeDayId, seriesId, seriesDetail, allBroadcastDays]);
+
+  // ── Scoped metrics fetch (only when scope ≠ series) ───────────────────
+
+  const scopeKey = dashboardScope ? `${dashboardScope.level}:${dashboardScope.id}` : '';
+
+  const { data: scopedMetrics, loading: scopedMetricsLoading } = usePollingApi<MetricsResponse>(
+    () =>
+      dashboardScope && dashboardScope.level !== 'series'
+        ? api.getMetrics(dashboardScope.level, dashboardScope.id)
+        : Promise.resolve(null as unknown as MetricsResponse),
+    [scopeKey],
+    { intervalMs: 30_000, enabled: !!dashboardScope && dashboardScope.level !== 'series' },
+  );
+
+  // Use scoped metrics when available, otherwise series-level from pollingData
+  const activeMetrics = dashboardScope?.level !== 'series' && scopedMetrics
+    ? scopedMetrics
+    : pollingData.metrics;
+  const activeMetricsLoading = dashboardScope?.level !== 'series'
+    ? scopedMetricsLoading
+    : pollingData.metricsLoading;
+
+  // ── Render ────────────────────────────────────────────────────────────
 
   if (!seriesId) {
     return (
@@ -60,14 +124,29 @@ export function DashboardPage({
     );
   }
 
+  const resolvedScope = dashboardScope ?? { level: 'series' as ScopeLevel, id: seriesId, label: 'Full Series' };
+
   return (
     <div className="space-y-6">
       {/* Row 0: Summary bar — full width */}
       <SummaryBarPanel
-        metrics={pollingData.metrics}
+        metrics={activeMetrics}
         liveCCV={pollingData.liveCCV}
         broadcastStart={broadcastStart}
-        loading={pollingData.metricsLoading}
+        loading={activeMetricsLoading}
+      />
+
+      {/* Scope selector */}
+      <ScopeSelectorBar
+        scopeLevel={scopeLevel}
+        onScopeLevelChange={setScopeLevel}
+        selectedDayId={scopeDayId}
+        onDayIdChange={setScopeDayId}
+        selectedStageId={scopeStageId}
+        onStageIdChange={setScopeStageId}
+        stages={seriesDetail?.stages ?? []}
+        hasMultipleStages={hasMultipleStages}
+        activeLabel={resolvedScope.label}
       />
 
       {/* Row 1: Total CCV + Platform Breakdown — side by side */}
@@ -78,12 +157,17 @@ export function DashboardPage({
         />
         <PlatformBreakdownPanel
           liveCCV={pollingData.liveCCV}
-          loading={pollingData.liveCCVLoading}
+          metrics={activeMetrics}
+          scopeLevel={resolvedScope.level}
+          loading={activeMetricsLoading}
         />
       </div>
 
       {/* Row 2: Time-series chart — full width */}
-      <TimeSeriesPanel seriesId={seriesId} />
+      <TimeSeriesPanel
+        seriesId={seriesId}
+        scope={{ level: resolvedScope.level, id: resolvedScope.id }}
+      />
 
       {/* Row 3: Channel Leaderboard + Language/Region — side by side */}
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
@@ -91,30 +175,35 @@ export function DashboardPage({
           seriesId={seriesId}
           liveCCV={pollingData.liveCCV}
           loading={pollingData.liveCCVLoading}
+          scope={{ level: resolvedScope.level, id: resolvedScope.id }}
         />
         <div className="space-y-6">
           <LanguageDistPanel
-            data={pollingData.metrics?.languageBreakdown ?? []}
-            loading={pollingData.metricsLoading}
+            data={activeMetrics?.languageBreakdown ?? []}
+            loading={activeMetricsLoading}
           />
           <RegionDistPanel
-            data={pollingData.metrics?.regionBreakdown ?? []}
-            loading={pollingData.metricsLoading}
+            data={activeMetrics?.regionBreakdown ?? []}
+            loading={activeMetricsLoading}
           />
         </div>
       </div>
 
-      {/* Row 4: All Channels — full width */}
-      <ChannelListPanel seriesId={seriesId} broadcastDays={allBroadcastDays} refreshKey={channelRefreshKey} />
+      {/* Row 4: All Channels — editor+ only */}
+      {canManage && (
+        <ChannelListPanel seriesId={seriesId} broadcastDays={allBroadcastDays} refreshKey={channelRefreshKey} />
+      )}
 
-      {/* Row 5: Discovery Feed — full width */}
-      <DiscoveryFeedPanel
-        seriesId={seriesId}
-        lastDiscoveryResult={pollingData.lastDiscoveryResult}
-      />
+      {/* Row 5: Discovery Feed — editor+ only */}
+      {canManage && (
+        <DiscoveryFeedPanel
+          seriesId={seriesId}
+          lastDiscoveryResult={pollingData.lastDiscoveryResult}
+        />
+      )}
 
       {/* Row 6: Export — editor+ only */}
-      {canExport && (
+      {canManage && (
         <ExportPanel
           seriesId={seriesId}
           seriesDetail={seriesDetail}
