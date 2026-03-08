@@ -371,12 +371,14 @@ router.get(
         return;
       }
 
-      const folder = series.short_name;
-      if (!folder) {
+      const rawFolder = series.short_name;
+      if (!rawFolder) {
         res.status(404).json({ error: 'Report not found' });
         return;
       }
 
+      // Normalize to match how report-agent saves files (lowercase, sanitized)
+      const folder = rawFolder.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
       const filePath = path.join(REPORTS_BASE_DIR, folder, filename);
 
       try {
