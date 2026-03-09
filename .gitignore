@@ -3,5 +3,6 @@ dist/
 .env
 .DS_Store
 *.log
+*.docx
 src/dashboard/node_modules/
 src/dashboard/dist/
