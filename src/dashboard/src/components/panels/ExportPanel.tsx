@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { Card, Button, FormField } from '@/components/common';
 import { Select } from '@/components/common/Select';
 import { useMutation } from '@/hooks/useMutation';
@@ -19,6 +19,7 @@ interface ExportRecord {
   entityLabel: string;
   format: string;
   url?: string;
+  publicUrl?: string;
 }
 
 const SCOPE_OPTIONS = [
@@ -43,6 +44,15 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
   const [htmlError, setHtmlError] = useState<string | null>(null);
   const [recentExports, setRecentExports] = useState<ExportRecord[]>([]);
   const [reportData, setReportData] = useState<ReportPayload | null>(null);
+  const [publicReportUrl, setPublicReportUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Reset "Copied!" feedback after 2 seconds
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(t);
+  }, [copied]);
 
   // Build entity options based on scope
   const entityOptions = useMemo(() => {
@@ -101,7 +111,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
   }, [entityOptions, entityId]);
 
   const addExportRecord = useCallback(
-    (fmt: string, url?: string) => {
+    (fmt: string, url?: string, publicUrl?: string) => {
       setRecentExports((prev) => [
         {
           id: crypto.randomUUID(),
@@ -110,6 +120,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
           entityLabel: getEntityLabel(),
           format: fmt,
           url,
+          publicUrl,
         },
         ...prev,
       ]);
@@ -139,6 +150,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
       // HTML Report — generate and open in new tab
       setHtmlLoading(true);
       setHtmlError(null);
+      setPublicReportUrl(null);
       try {
         const result = await api.generateReport({
           scope,
@@ -149,7 +161,18 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
         });
         const reportUrl = api.getReportUrl(result.filePath);
         window.open(reportUrl, '_blank', 'noopener,noreferrer');
-        addExportRecord('HTML', reportUrl);
+
+        // Build public URL if the series is public
+        let pubUrl: string | undefined;
+        if (seriesDetail?.is_public && seriesDetail?.short_name?.trim()) {
+          const filename = result.filePath.split('/').pop() ?? '';
+          if (filename) {
+            pubUrl = api.getPublicReportUrl(seriesDetail.short_name, filename);
+            setPublicReportUrl(pubUrl);
+          }
+        }
+
+        addExportRecord('HTML', reportUrl, pubUrl);
       } catch (err) {
         setHtmlError(err instanceof api.ApiError ? err.message : (err as Error).message);
       } finally {
@@ -249,6 +272,42 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
           )}
         </div>
 
+        {/* Public report URL */}
+        {publicReportUrl && (
+          <div className="rounded-lg border border-navy-700/50 bg-navy-800/60 p-3">
+            <div className="mb-1.5 flex items-center gap-2">
+              <svg className="h-4 w-4 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z" />
+              </svg>
+              <span className="text-xs font-medium text-gray-300">Public Report Link</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <a
+                href={publicReportUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="min-w-0 flex-1 truncate rounded bg-navy-900/60 px-2 py-1 font-mono text-[11px] text-blue-400 hover:text-blue-300 transition-colors"
+                title={publicReportUrl}
+              >
+                {publicReportUrl}
+              </a>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(publicReportUrl);
+                  setCopied(true);
+                }}
+                className="shrink-0 rounded bg-navy-700 px-2.5 py-1 text-[11px] font-medium text-gray-300 hover:bg-navy-600 hover:text-white transition-colors"
+                title="Copy public URL"
+              >
+                {copied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+            <p className="mt-1.5 text-[10px] text-gray-600">
+              Share this link with external parties &mdash; no login required.
+            </p>
+          </div>
+        )}
+
         {/* Report preview */}
         {reportData && (
           <div className="rounded-lg border border-navy-700/50 bg-navy-800/60 p-4">
@@ -312,6 +371,20 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
                     <span className="rounded bg-navy-700 px-1.5 py-0.5 text-[10px] font-medium text-gray-300">
                       {exp.format}
                     </span>
+                    {exp.publicUrl && (
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(exp.publicUrl!);
+                          setCopied(true);
+                        }}
+                        title="Copy public link"
+                        className="text-blue-400 hover:text-blue-300 transition-colors"
+                      >
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                          <path d="M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z" />
+                        </svg>
+                      </button>
+                    )}
                     {exp.url && (
                       <a
                         href={exp.url}

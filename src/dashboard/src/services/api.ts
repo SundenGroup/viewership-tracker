@@ -395,6 +395,11 @@ export function getReportUrl(filePath: string) {
   return `${BASE_URL}/api/reports/${folder}/${filename}`;
 }
 
+export function getPublicReportUrl(shortName: string, filename: string) {
+  // Public reports are served at /api/public/:shortName/reports/:filename (no auth)
+  return `${BASE_URL}/api/public/${shortName}/reports/${filename}`;
+}
+
 // ── Report Payload ─────────────────────────────────────────────────────────
 
 export interface ReportPayloadQuery {
