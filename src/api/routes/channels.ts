@@ -4,6 +4,7 @@ import * as ChannelModel from '../../models/channel';
 import * as ChannelBroadcastDayModel from '../../models/channel-broadcast-day';
 import * as BroadcastDayModel from '../../models/broadcast-day';
 import * as TournamentSeriesModel from '../../models/tournament-series';
+import { SteamAdapter } from '../../adapters/steam';
 import logger from '../../utils/logger';
 import { requireRole } from '../middleware/auth';
 
@@ -15,6 +16,7 @@ const PLATFORM_URL_PATTERNS: Record<string, RegExp> = {
   twitch: /(?:twitch\.tv)\/([a-zA-Z0-9_]+)\/?$/,
   kick: /(?:kick\.com)\/([a-zA-Z0-9_]+)\/?$/,
   tiktok: /(?:tiktok\.com\/@?)([a-zA-Z0-9_.]+)\/?$/,
+  steam: /steamcommunity\.com\/(?:profiles\/(\d+)|id\/([a-zA-Z0-9_-]+))/,
 };
 
 /**
@@ -26,7 +28,10 @@ function extractIdentifierFromUrl(platform: string, identifier: string): string 
   const pattern = PLATFORM_URL_PATTERNS[platform];
   if (!pattern) return trimmed;
   const match = trimmed.match(pattern);
-  return match ? match[1] : trimmed;
+  if (!match) return trimmed;
+  // Steam URLs have two capture groups (profiles/ID or id/vanity)
+  if (platform === 'steam') return match[1] || match[2] || trimmed;
+  return match[1] || trimmed;
 }
 
 // ── YouTube identifier resolution ────────────────────────────────────────
@@ -103,6 +108,33 @@ async function resolveYouTubeIdentifier(identifier: string): Promise<string> {
   return identifier;
 }
 
+// ── Steam identifier resolution ─────────────────────────────────────────
+
+const STEAM64_ID_RE = /^7656119\d{10}$/;
+let steamAdapter: SteamAdapter | null = null;
+
+/**
+ * Resolves a Steam identifier (vanity name, profile URL, or Steam64 ID)
+ * to a Steam64 ID via the Steam API.
+ */
+async function resolveSteamIdentifier(identifier: string): Promise<string> {
+  // Already a Steam64 ID
+  if (STEAM64_ID_RE.test(identifier)) return identifier;
+
+  try {
+    if (!steamAdapter) steamAdapter = new SteamAdapter();
+    const resolved = await steamAdapter.resolveToSteam64(identifier);
+    if (resolved) {
+      logger.info(`Steam: resolved "${identifier}" → ${resolved}`);
+      return resolved;
+    }
+  } catch (err) {
+    logger.warn(`Steam: failed to resolve "${identifier}"`, { error: (err as Error).message });
+  }
+
+  return identifier;
+}
+
 // ── Helper: attach broadcast_day_ids to channel objects ──────────────────
 
 async function attachBroadcastDayIds<T extends { id: string }>(
@@ -156,7 +188,7 @@ router.get('/:seriesId/channels', async (req: Request, res: Response, next: Next
     };
 
     const { platform, tier, source, is_active } = req.query;
-    if (platform && ['twitch', 'youtube', 'kick', 'tiktok'].includes(platform as string)) {
+    if (platform && ['twitch', 'youtube', 'kick', 'tiktok', 'steam'].includes(platform as string)) {
       filters.platform = platform as ChannelModel.Platform;
     }
     if (tier && ['official', 'partner', 'community', 'player', 'watch_party'].includes(tier as string)) {
@@ -191,8 +223,8 @@ router.get('/:seriesId/channels', async (req: Request, res: Response, next: Next
 router.post('/:seriesId/channels', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { platform, channel_identifier, display_name, broadcast_day_ids } = req.body;
-    if (!platform || !['twitch', 'youtube', 'kick', 'tiktok'].includes(platform)) {
-      res.status(400).json({ error: 'platform must be one of: twitch, youtube, kick, tiktok' });
+    if (!platform || !['twitch', 'youtube', 'kick', 'tiktok', 'steam'].includes(platform)) {
+      res.status(400).json({ error: 'platform must be one of: twitch, youtube, kick, tiktok, steam' });
       return;
     }
     if (!channel_identifier || typeof channel_identifier !== 'string') {
@@ -221,10 +253,13 @@ router.post('/:seriesId/channels', requireRole('admin', 'editor'), async (req: R
       }
     }
 
-    // Strip platform URLs to just the username and resolve YouTube handles
+    // Strip platform URLs to just the username and resolve YouTube/Steam identifiers
     let resolvedIdentifier = extractIdentifierFromUrl(platform, channel_identifier);
     if (platform === 'youtube' && !YT_CHANNEL_ID_RE.test(resolvedIdentifier)) {
       resolvedIdentifier = await resolveYouTubeIdentifier(resolvedIdentifier);
+    }
+    if (platform === 'steam' && !STEAM64_ID_RE.test(resolvedIdentifier)) {
+      resolvedIdentifier = await resolveSteamIdentifier(resolvedIdentifier);
     }
 
     // Strip broadcast_day_ids from body before inserting (it's not a column on channels)
@@ -287,6 +322,9 @@ router.post('/:seriesId/channels/bulk', requireRole('admin', 'editor'), async (r
         let resolvedId = extractIdentifierFromUrl(ch.platform, ch.channel_identifier);
         if (ch.platform === 'youtube' && !YT_CHANNEL_ID_RE.test(resolvedId)) {
           resolvedId = await resolveYouTubeIdentifier(resolvedId);
+        }
+        if (ch.platform === 'steam' && !STEAM64_ID_RE.test(resolvedId)) {
+          resolvedId = await resolveSteamIdentifier(resolvedId);
         }
         // Strip broadcast_day_ids from individual channel objects (not a DB column)
         const { broadcast_day_ids: _bdi, ...chBody } = ch;

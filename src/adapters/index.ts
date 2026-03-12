@@ -3,6 +3,7 @@ export { TwitchAdapter } from './twitch';
 export { YouTubeAdapter } from './youtube';
 export { KickAdapter } from './kick';
 export { TikTokAdapter } from './tiktok';
+export { SteamAdapter } from './steam';
 export type { QuotaUsage } from './youtube';
 
 import logger from '../utils/logger';
@@ -11,10 +12,11 @@ import { TwitchAdapter } from './twitch';
 import { YouTubeAdapter } from './youtube';
 import { KickAdapter } from './kick';
 import { TikTokAdapter } from './tiktok';
+import { SteamAdapter } from './steam';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
-export type PlatformName = 'twitch' | 'youtube' | 'kick' | 'tiktok';
+export type PlatformName = 'twitch' | 'youtube' | 'kick' | 'tiktok' | 'steam';
 
 export interface MultiPlatformChannel {
   platform: PlatformName;
@@ -54,6 +56,8 @@ export class AdapterRegistry {
         return new KickAdapter();
       case 'tiktok':
         return new TikTokAdapter();
+      case 'steam':
+        return new SteamAdapter();
       default: {
         const _exhaustive: never = platform;
         throw new Error(`Unknown platform: ${_exhaustive}`);
@@ -143,7 +147,7 @@ export class AdapterRegistry {
    * getViewerCounts with a known channel to verify connectivity.
    */
   async healthCheck(): Promise<PlatformHealthStatus[]> {
-    const platforms: PlatformName[] = ['twitch', 'youtube', 'kick', 'tiktok'];
+    const platforms: PlatformName[] = ['twitch', 'youtube', 'kick', 'tiktok', 'steam'];
 
     const checks = platforms.map(async (platform): Promise<PlatformHealthStatus> => {
       try {
@@ -161,6 +165,7 @@ export class AdapterRegistry {
           youtube: 'UCYfdidRxbB8Qhf0Nx7ioOYw', // YouTube "NBC News" — always exists
           kick: '', // handled above
           tiktok: 'tiktok',
+          steam: '76561198082857351', // Valve employee — always exists
         };
 
         const results = await adapter.getViewerCounts([testChannels[platform]]);

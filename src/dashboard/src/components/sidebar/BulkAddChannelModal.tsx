@@ -19,6 +19,7 @@ const PLATFORM_OPTIONS = [
   { value: 'youtube', label: 'YouTube' },
   { value: 'kick', label: 'Kick' },
   { value: 'tiktok', label: 'TikTok' },
+  { value: 'steam', label: 'Steam' },
 ];
 
 const TIER_OPTIONS = [
@@ -72,6 +73,15 @@ function parseChannelLine(
     if (host.includes('tiktok.com') && path) {
       const name = path.split('/')[0] ?? '';
       return { platform: 'tiktok', identifier: name.startsWith('@') ? name : `@${name}` };
+    }
+    if (host.includes('steamcommunity.com') && path) {
+      const parts = path.split('/');
+      if (parts[0] === 'profiles' && parts[1]) {
+        return { platform: 'steam', identifier: parts[1] };
+      }
+      if (parts[0] === 'id' && parts[1]) {
+        return { platform: 'steam', identifier: parts[1] };
+      }
     }
   } catch {
     // Not a URL, treat as raw identifier
@@ -290,7 +300,7 @@ export function BulkAddChannelModal({
           )}
 
           <p className="text-[11px] text-gray-600">
-            URLs from Twitch, YouTube, Kick, and TikTok will auto-detect the platform.
+            URLs from Twitch, YouTube, Kick, TikTok, and Steam will auto-detect the platform.
             Raw identifiers use the default platform selected above.
           </p>
 

@@ -16,7 +16,7 @@ export interface AuthUser {
 
 export type TournamentStatus = 'draft' | 'active' | 'completed';
 export type BroadcastStatus = 'scheduled' | 'live' | 'completed';
-export type Platform = 'twitch' | 'youtube' | 'kick' | 'tiktok';
+export type Platform = 'twitch' | 'youtube' | 'kick' | 'tiktok' | 'steam';
 export type ChannelTier = 'official' | 'partner' | 'community' | 'player' | 'watch_party';
 export type ChannelSource = 'manual' | 'auto_discovered';
 export type ScopeLevel = 'day' | 'stage' | 'series';

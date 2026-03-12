@@ -297,6 +297,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   youtube: 'YouTube',
   kick: 'Kick',
   tiktok: 'TikTok',
+  steam: 'Steam',
 };
 
 const PLATFORM_COLORS: Record<string, string> = {
@@ -304,6 +305,7 @@ const PLATFORM_COLORS: Record<string, string> = {
   youtube: '#FF0000',
   kick: '#53FC18',
   tiktok: '#010101',
+  steam: '#1B2838',
 };
 
 export function platformLabel(platform: string): string {
@@ -367,6 +369,8 @@ export function getStreamUrl(platform: string | null, channelIdentifier: string)
       return `https://kick.com/${channelIdentifier}`;
     case 'tiktok':
       return `https://www.tiktok.com/@${channelIdentifier}/live`;
+    case 'steam':
+      return `https://steamcommunity.com/broadcast/watch/${channelIdentifier}`;
     default:
       return null;
   }

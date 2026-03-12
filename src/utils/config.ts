@@ -17,6 +17,9 @@ export const config = {
     clientId: process.env.KICK_CLIENT_ID || '',
     clientSecret: process.env.KICK_CLIENT_SECRET || '',
   },
+  steam: {
+    apiKey: process.env.STEAM_API_KEY || '',
+  },
   server: {
     port: parseInt(process.env.PORT || '3000', 10),
     wsPort: parseInt(process.env.WS_PORT || '3001', 10),

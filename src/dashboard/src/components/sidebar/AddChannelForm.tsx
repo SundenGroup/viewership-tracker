@@ -17,6 +17,7 @@ const PLATFORM_OPTIONS = [
   { value: 'youtube', label: 'YouTube' },
   { value: 'kick', label: 'Kick' },
   { value: 'tiktok', label: 'TikTok' },
+  { value: 'steam', label: 'Steam' },
 ];
 
 const TIER_OPTIONS = [
@@ -145,7 +146,7 @@ export function AddChannelForm({ seriesId, broadcastDays, onSuccess }: AddChanne
         />
       </FormField>
 
-      <FormField label={form.platform === 'youtube' ? 'Channel / Stream' : 'Channel ID'} required>
+      <FormField label={form.platform === 'youtube' ? 'Channel / Stream' : form.platform === 'steam' ? 'Steam ID / Profile' : 'Channel ID'} required>
         <TextInput
           value={form.channel_identifier}
           onChange={(e) => updateField('channel_identifier', e.target.value)}
@@ -156,13 +157,21 @@ export function AddChannelForm({ seriesId, broadcastDays, onSuccess }: AddChanne
                 ? 'e.g. shroud'
                 : form.platform === 'kick'
                   ? 'e.g. channel slug'
-                  : 'e.g. username'
+                  : form.platform === 'steam'
+                    ? 'e.g. 76561198082857351 or vanity name'
+                    : 'e.g. username'
           }
         />
         {form.platform === 'youtube' && (
           <p className="mt-1 text-[9px] leading-tight text-gray-600">
             Accepts: @handle, channel URL, or a specific live stream URL
             (youtube.com/watch?v=...)
+          </p>
+        )}
+        {form.platform === 'steam' && (
+          <p className="mt-1 text-[9px] leading-tight text-gray-600">
+            Accepts: Steam64 ID, vanity name, or profile URL
+            (steamcommunity.com/id/... or /profiles/...)
           </p>
         )}
       </FormField>
