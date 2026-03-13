@@ -42,6 +42,7 @@ export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: Ch
   const { hasRole } = useAuth();
   const canEdit = hasRole('editor');
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [expanded, setExpanded] = useLocalStorage<boolean>('cvt:channelListExpanded', false);
   const [sort, setSort] = useLocalStorage<SortState>('cvt:channelListSort', { field: 'display_name', dir: 'asc' });
 
   const handleSort = useCallback((field: SortField) => {
@@ -76,20 +77,37 @@ export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: Ch
   const dayLabelMap = new Map(broadcastDays.map((d) => [d.id, d.label]));
 
   const action = (
-    <div className="flex gap-1">
-      {(['all', 'active', 'inactive'] as const).map((f) => (
-        <button
-          key={f}
-          onClick={() => setFilter(f)}
-          className={`rounded px-2 py-0.5 text-xs capitalize transition-colors ${
-            filter === f
-              ? 'bg-clutch-red text-white'
-              : 'bg-navy-700 text-gray-400 hover:text-gray-200'
-          }`}
-        >
-          {f}
-        </button>
-      ))}
+    <div className="flex items-center gap-2">
+      <div className="flex gap-1">
+        {(['all', 'active', 'inactive'] as const).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`rounded px-2 py-0.5 text-xs capitalize transition-colors ${
+              filter === f
+                ? 'bg-clutch-red text-white'
+                : 'bg-navy-700 text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={() => setExpanded((prev) => !prev)}
+        className="rounded p-1 text-gray-500 transition-colors hover:bg-navy-700 hover:text-gray-300"
+        title={expanded ? 'Compact view' : 'Expanded view'}
+      >
+        {expanded ? (
+          <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M3.28 2.22a.75.75 0 00-1.06 1.06L5.44 6.5H3.75a.75.75 0 000 1.5h4a.75.75 0 00.75-.75v-4a.75.75 0 00-1.5 0v1.69L3.78 1.72a.75.75 0 00-.5-.5zM16.72 17.78a.75.75 0 001.06-1.06L14.56 13.5h1.69a.75.75 0 000-1.5h-4a.75.75 0 00-.75.75v4a.75.75 0 001.5 0v-1.69l3.22 3.22a.75.75 0 00.5.5z" clipRule="evenodd" />
+          </svg>
+        ) : (
+          <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M13.28 7.78a.75.75 0 001.06-1.06l-3.22-3.22h1.69a.75.75 0 000-1.5h-4a.75.75 0 00-.75.75v4a.75.75 0 001.5 0V5.06l3.22 3.22a.75.75 0 00.5.5zM6.72 12.22a.75.75 0 00-1.06 1.06l3.22 3.22H7.19a.75.75 0 000 1.5h4a.75.75 0 00.75-.75v-4a.75.75 0 00-1.5 0v1.69l-3.22-3.22a.75.75 0 00-.5-.5z" clipRule="evenodd" />
+          </svg>
+        )}
+      </button>
     </div>
   );
 
@@ -104,7 +122,7 @@ export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: Ch
           No channels found.
         </p>
       ) : (
-        <div className="max-h-96 overflow-y-auto">
+        <div className={`overflow-y-auto ${expanded ? 'max-h-[calc(100vh-12rem)]' : 'max-h-96'}`}>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-navy-700/50 text-xs text-gray-500">
