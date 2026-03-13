@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PollingOrchestrator } from '../../services/polling-orchestrator';
 import { DiscoveryService } from '../../services/discovery-service';
+import { requireRole } from '../middleware/auth';
 
 // The orchestrator and discovery instances are injected via factory functions
 let orchestrator: PollingOrchestrator | null = null;
@@ -149,6 +150,23 @@ router.post('/discovery/block', async (req: Request, res: Response, next: NextFu
     }
     await svc.blockChannel(seriesId, channelId);
     res.json({ blocked: true, seriesId, channelId });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/polling/discovery/clear — Clear all unapproved discovered channels (editor+)
+router.post('/discovery/clear', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const svc = ensureDiscovery(res);
+    if (!svc) return;
+    const { seriesId } = req.body;
+    if (!seriesId) {
+      res.status(400).json({ error: 'seriesId is required' });
+      return;
+    }
+    const count = await svc.purgeDiscoveredChannels(seriesId);
+    res.json({ cleared: true, seriesId, count });
   } catch (err) {
     next(err);
   }

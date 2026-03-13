@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { Card, Button, PlatformBadge, LoadingOverlay } from '@/components/common';
 import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/hooks/useAuth';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
 import * as api from '@/services/api';
 import { formatTimeAgo, getStreamUrl } from '@/utils/formatters';
 import type { Channel, DiscoveryResult } from '@/types/api';
@@ -33,6 +34,9 @@ export function DiscoveryFeedPanel({
 }: DiscoveryFeedPanelProps) {
   const { hasRole } = useAuth();
   const canEdit = hasRole('editor');
+  const [expanded, setExpanded] = useLocalStorage<boolean>('cvt:discoveryExpanded', false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const { data: channels, loading, refetch } = useApi(
     () =>
       seriesId
@@ -59,15 +63,64 @@ export function DiscoveryFeedPanel({
   // Take most recent 50
   const recent = sorted.slice(0, 50);
 
-  const action = lastDiscoveryResult ? (
-    <div className="flex items-center gap-2 text-xs text-gray-500">
-      <span>
-        +{lastDiscoveryResult.added} new
-      </span>
-      <span className="text-gray-700">|</span>
-      <span>{formatTimeAgo(lastDiscoveryResult.timestamp)}</span>
+  const handleClear = async () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      return;
+    }
+    if (!seriesId) return;
+    setClearing(true);
+    try {
+      await api.clearDiscoveryFeed(seriesId);
+      refetch();
+    } catch {
+      // Silently fail
+    } finally {
+      setClearing(false);
+      setConfirmClear(false);
+    }
+  };
+
+  const action = (
+    <div className="flex items-center gap-2">
+      {lastDiscoveryResult && (
+        <div className="flex items-center gap-2 text-xs text-gray-500">
+          <span>+{lastDiscoveryResult.added} new</span>
+          <span className="text-gray-700">|</span>
+          <span>{formatTimeAgo(lastDiscoveryResult.timestamp)}</span>
+        </div>
+      )}
+      {canEdit && sorted.length > 0 && (
+        <button
+          onClick={handleClear}
+          onBlur={() => setConfirmClear(false)}
+          disabled={clearing}
+          className={`rounded px-2 py-0.5 text-xs transition-colors ${
+            confirmClear
+              ? 'bg-accent-red text-white'
+              : 'bg-navy-700 text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          {clearing ? 'Clearing...' : confirmClear ? 'Confirm?' : 'Clear All'}
+        </button>
+      )}
+      <button
+        onClick={() => setExpanded((prev) => !prev)}
+        className="rounded p-1 text-gray-500 transition-colors hover:bg-navy-700 hover:text-gray-300"
+        title={expanded ? 'Compact view' : 'Expanded view'}
+      >
+        {expanded ? (
+          <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M3.28 2.22a.75.75 0 00-1.06 1.06L5.44 6.5H3.75a.75.75 0 000 1.5h4a.75.75 0 00.75-.75v-4a.75.75 0 00-1.5 0v1.69L3.78 1.72a.75.75 0 00-.5-.5zM16.72 17.78a.75.75 0 001.06-1.06L14.56 13.5h1.69a.75.75 0 000-1.5h-4a.75.75 0 00-.75.75v4a.75.75 0 001.5 0v-1.69l3.22 3.22a.75.75 0 00.5.5z" clipRule="evenodd" />
+          </svg>
+        ) : (
+          <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M13.28 7.78a.75.75 0 001.06-1.06l-3.22-3.22h1.69a.75.75 0 000-1.5h-4a.75.75 0 00-.75.75v4a.75.75 0 001.5 0V5.06l3.22 3.22a.75.75 0 00.5.5zM6.72 12.22a.75.75 0 00-1.06 1.06l3.22 3.22H7.19a.75.75 0 000 1.5h4a.75.75 0 00.75-.75v-4a.75.75 0 00-1.5 0v1.69l-3.22-3.22a.75.75 0 00-.5-.5z" clipRule="evenodd" />
+          </svg>
+        )}
+      </button>
     </div>
-  ) : null;
+  );
 
   return (
     <Card
@@ -84,7 +137,7 @@ export function DiscoveryFeedPanel({
           No discovered streams yet. Start discovery to find new channels.
         </p>
       ) : (
-        <div className="max-h-[400px] overflow-y-auto space-y-1.5">
+        <div className={`overflow-y-auto space-y-1.5 ${expanded ? 'max-h-[calc(100vh-12rem)]' : 'max-h-[400px]'}`}>
           {recent.map((ch) => (
             <DiscoveryRow
               key={ch.id}

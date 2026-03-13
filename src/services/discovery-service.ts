@@ -407,6 +407,25 @@ export class DiscoveryService {
     );
   }
 
+  /**
+   * Purge all unapproved auto-discovered channels for a series.
+   * Only deletes channels with source='auto_discovered' AND is_active=false
+   * (i.e. pending/unapproved). Approved channels are left intact.
+   */
+  async purgeDiscoveredChannels(seriesId: string): Promise<number> {
+    const count = await this.db('channels')
+      .where('series_id', seriesId)
+      .where('source', 'auto_discovered')
+      .where('is_active', false)
+      .delete();
+
+    if (count > 0) {
+      logger.info(`[Discovery] Purged ${count} unapproved auto-discovered channel(s) for series ${seriesId}`);
+    }
+
+    return count;
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────
 
   private getBlocklist(series: TournamentSeries): string[] {

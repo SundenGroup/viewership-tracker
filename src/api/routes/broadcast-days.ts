@@ -2,6 +2,14 @@ import { Router, Request, Response, NextFunction } from 'express';
 import * as BroadcastDayModel from '../../models/broadcast-day';
 import * as StageModel from '../../models/stage';
 import { requireRole } from '../middleware/auth';
+import type { DiscoveryService } from '../../services/discovery-service';
+import logger from '../../utils/logger';
+
+let discoveryService: DiscoveryService | null = null;
+
+export function setBroadcastDayDiscoveryService(svc: DiscoveryService): void {
+  discoveryService = svc;
+}
 
 const router = Router();
 
@@ -91,6 +99,19 @@ router.put('/days/:id/status', requireRole('admin'), async (req: Request, res: R
       return;
     }
     const updated = await BroadcastDayModel.update(req.params.id as string, { status });
+
+    // Auto-purge discovery feed when a broadcast day is manually set to live
+    if (status === 'live' && existing.status !== 'live' && discoveryService) {
+      try {
+        const purged = await discoveryService.purgeDiscoveredChannels(existing.series_id);
+        if (purged > 0) {
+          logger.info(`[BroadcastDay] Auto-purged ${purged} discovery channel(s) for series ${existing.series_id} (manual live transition)`);
+        }
+      } catch (err) {
+        logger.warn(`[BroadcastDay] Failed to auto-purge discovery feed`, { error: (err as Error).message });
+      }
+    }
+
     res.json(updated);
   } catch (err) {
     next(err);

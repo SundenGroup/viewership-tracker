@@ -17,7 +17,7 @@
 import { config } from './utils/config';
 import logger from './utils/logger';
 import db from './utils/db';
-import { createApp, setOrchestrator, setDiscoveryService, setReportAgent } from './api';
+import { createApp, setOrchestrator, setDiscoveryService, setBroadcastDayDiscoveryService, setReportAgent } from './api';
 import { AdapterRegistry } from './adapters';
 import { PollingOrchestrator } from './services/polling-orchestrator';
 import { DiscoveryService } from './services/discovery-service';
@@ -114,6 +114,7 @@ async function bootstrap(): Promise<void> {
   // (module-level singleton injection pattern)
   setOrchestrator(orchestrator);
   setDiscoveryService(discoveryService);
+  setBroadcastDayDiscoveryService(discoveryService);
   setReportAgent(reportAgent);
 
   // ── 8. Start Express API server ────────────────────────────────────────

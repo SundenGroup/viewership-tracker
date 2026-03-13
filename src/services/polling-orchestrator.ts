@@ -198,6 +198,23 @@ export class PollingOrchestrator {
         }
 
         // Discovery is user-initiated only — no auto-start here
+
+        // Auto-purge unapproved discovery feed for affected series (fresh slate for new broadcast day)
+        if (this.discoveryService) {
+          const affectedSeriesIds = [...new Set(goingLive.map((d) => d.series_id))];
+          for (const sid of affectedSeriesIds) {
+            try {
+              const purged = await this.discoveryService.purgeDiscoveredChannels(sid);
+              if (purged > 0) {
+                logger.info(`[Poll] Auto-purged discovery feed for series ${sid} (new broadcast day going live)`);
+              }
+            } catch (err) {
+              logger.warn(`[Poll] Failed to auto-purge discovery feed for series ${sid}`, {
+                error: (err as Error).message,
+              });
+            }
+          }
+        }
       }
 
       // Identify days about to complete (so we can check if all days for that series are done)

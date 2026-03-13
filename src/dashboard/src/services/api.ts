@@ -348,6 +348,13 @@ export function promoteChannel(channelId: string, tier: string) {
   );
 }
 
+export function clearDiscoveryFeed(seriesId: string) {
+  return request<{ cleared: boolean; seriesId: string; count: number }>(
+    '/api/polling/discovery/clear',
+    { method: 'POST', body: JSON.stringify({ seriesId }) },
+  );
+}
+
 // ── Export ──────────────────────────────────────────────────────────────────
 
 export function getExportCsvUrl(scope: ScopeLevel, id: string) {
