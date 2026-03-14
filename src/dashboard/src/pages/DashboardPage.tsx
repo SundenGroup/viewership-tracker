@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect, useRef } from 'react';
 import {
   TotalCCVPanel,
   PlatformBreakdownPanel,
@@ -12,6 +12,7 @@ import {
   ExportPanel,
   ChannelListPanel,
 } from '@/components/panels';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { usePollingApi } from '@/hooks/useApi';
@@ -37,10 +38,25 @@ export function DashboardPage({
   const { hasRole } = useAuth();
   const canManage = hasRole('editor');
 
-  // ── Scope state (persisted) ───────────────────────────────────────────
+  // ── Scope state (persisted in localStorage, synced to URL) ──────────
+  const [searchParams, setSearchParams] = useSearchParams();
   const [scopeLevel, setScopeLevel] = useLocalStorage<ScopeLevel>('cvt:dashboardScope', 'series');
   const [scopeDayId, setScopeDayId] = useLocalStorage<string>('cvt:dashboardScopeDay', '');
   const [scopeStageId, setScopeStageId] = useLocalStorage<string>('cvt:dashboardScopeStage', '');
+
+  // On mount: if URL has scope params, use them to override localStorage
+  const scopeInitialized = useRef(false);
+  useEffect(() => {
+    if (scopeInitialized.current) return;
+    scopeInitialized.current = true;
+    const urlScope = searchParams.get('scope') as ScopeLevel | null;
+    const urlId = searchParams.get('id');
+    if (urlScope && urlId) {
+      setScopeLevel(urlScope);
+      if (urlScope === 'day') setScopeDayId(urlId);
+      if (urlScope === 'stage') setScopeStageId(urlId);
+    }
+  }, [searchParams, setScopeLevel, setScopeDayId, setScopeStageId]);
 
   const hasMultipleStages = (seriesDetail?.stages.length ?? 0) >= 2;
 
@@ -79,6 +95,19 @@ export function DashboardPage({
 
     return { level: 'series', id: seriesId, label: 'Full Series' };
   }, [scopeLevel, scopeStageId, scopeDayId, seriesId, seriesDetail, allBroadcastDays]);
+
+  // ── Sync URL to reflect resolved scope ──────────────────────────────
+  useEffect(() => {
+    if (!dashboardScope) return;
+    if (dashboardScope.level === 'series') {
+      setSearchParams({}, { replace: true });
+    } else {
+      setSearchParams(
+        { scope: dashboardScope.level, id: dashboardScope.id },
+        { replace: true },
+      );
+    }
+  }, [dashboardScope?.level, dashboardScope?.id, setSearchParams]);
 
   // ── Scoped metrics fetch (only when scope ≠ series) ───────────────────
 

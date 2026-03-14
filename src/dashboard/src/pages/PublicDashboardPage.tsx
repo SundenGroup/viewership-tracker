@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import {
   TotalCCVPanel,
   PlatformBreakdownPanel,
@@ -50,11 +50,15 @@ export function PublicDashboardPage() {
 
   const pollingData = usePublicPollingData(shortName, seriesId);
 
-  // ── Scope state ────────────────────────────────────────────────────────
+  // ── Scope state (initialized from URL params for shareable links) ────
 
-  const [scopeLevel, setScopeLevel] = useState<ScopeLevel>('series');
-  const [scopeDayId, setScopeDayId] = useState('');
-  const [scopeStageId, setScopeStageId] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlScope = searchParams.get('scope') as ScopeLevel | null;
+  const urlId = searchParams.get('id') || '';
+
+  const [scopeLevel, setScopeLevel] = useState<ScopeLevel>(urlScope ?? 'series');
+  const [scopeDayId, setScopeDayId] = useState(urlScope === 'day' ? urlId : '');
+  const [scopeStageId, setScopeStageId] = useState(urlScope === 'stage' ? urlId : '');
 
   const hasMultipleStages = (seriesInfo?.stages.length ?? 0) >= 2;
 
@@ -89,6 +93,19 @@ export function PublicDashboardPage() {
 
     return { level: 'series', id: seriesId, label: 'Full Series' };
   }, [scopeLevel, scopeStageId, scopeDayId, seriesId, seriesInfo, allBroadcastDays]);
+
+  // ── Sync URL to reflect resolved scope ──────────────────────────────
+  useEffect(() => {
+    if (!dashboardScope) return;
+    if (dashboardScope.level === 'series') {
+      setSearchParams({}, { replace: true });
+    } else {
+      setSearchParams(
+        { scope: dashboardScope.level, id: dashboardScope.id },
+        { replace: true },
+      );
+    }
+  }, [dashboardScope?.level, dashboardScope?.id, setSearchParams]);
 
   // ── Scoped metrics (when scope ≠ series) ───────────────────────────────
 
