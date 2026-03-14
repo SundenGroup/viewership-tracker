@@ -3,7 +3,6 @@ import db from '../../utils/db';
 import * as TournamentSeriesModel from '../../models/tournament-series';
 import * as StageModel from '../../models/stage';
 import * as BroadcastDayModel from '../../models/broadcast-day';
-import * as ChannelModel from '../../models/channel';
 import * as ViewershipSnapshotModel from '../../models/viewership-snapshot';
 
 const router = Router();
@@ -133,7 +132,21 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       ? await db('broadcast_days').whereIn('id', broadcastDayIds).orderBy('date', 'asc')
       : [];
 
-    const channels = await ChannelModel.findAll({ series_id: seriesId });
+    // Only include channels that have viewership data within the resolved scope.
+    // e.g. a Broadcast Day 2 report won't list an inactive channel from BD 1.
+    const channelIdQuery = db('viewership_snapshots')
+      .where('series_id', seriesId)
+      .distinct('channel_id');
+    if (broadcastDayIds.length > 0 && scope !== 'series') {
+      channelIdQuery.whereIn('broadcast_day_id', broadcastDayIds);
+    }
+    const channelIdsWithData = await channelIdQuery;
+    const scopedChannelIds = channelIdsWithData.map(
+      (r: { channel_id: string }) => r.channel_id,
+    );
+    const channels = scopedChannelIds.length > 0
+      ? await db('channels').whereIn('id', scopedChannelIds)
+      : [];
 
     // ── Fetch snapshots for the resolved scope ──────────────────────
 
