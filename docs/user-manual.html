@@ -34,6 +34,7 @@
   .section-label td { background: #f1f3f4; font-weight: 600; padding: 8px 14px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: #555; }
   .tip { background: #fff8e1; border-left: 4px solid #ffc107; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 8px 0 16px; font-size: 14px; }
   .note { background: #f3e8fd; border-left: 4px solid #9c27b0; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 8px 0 16px; font-size: 14px; }
+  .warning { background: #fff3e0; border-left: 4px solid #ff9800; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 8px 0 16px; font-size: 14px; }
   hr { border: none; border-top: 1px solid #e0e0e0; margin: 32px 0; }
   .toc { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px 24px; margin-bottom: 32px; }
   .toc h3 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #888; }
@@ -90,13 +91,13 @@
 <ul>
   <li><strong>Summary Bar</strong> — Key metrics at a glance (peak CCV, total viewed hours, active channels)</li>
   <li><strong>Total CCV</strong> — Combined concurrent viewers across all platforms</li>
-  <li><strong>Platform Breakdown</strong> — Viewer split by Twitch, YouTube, Kick, etc.</li>
+  <li><strong>Platform Breakdown</strong> — Viewer split by Twitch, YouTube, Kick, TikTok, and Steam</li>
   <li><strong>Time Series Chart</strong> — Viewership over time (zoomable). When viewing multiple broadcast days, vertical dashed lines mark each day's boundary with a label.</li>
-  <li><strong>Channel Leaderboard</strong> — Top channels ranked by peak/average CCV</li>
+  <li><strong>Channel Leaderboard</strong> — Top channels ranked by peak/average CCV. Click the expand button to see detailed stats including tier, viewed hours, and live CCV.</li>
   <li><strong>Language Distribution</strong> — Viewer breakdown by stream language</li>
   <li><strong>Region Distribution</strong> — Viewer breakdown by region</li>
-  <li><strong>Channel List</strong> — All tracked channels with status and metadata</li>
-  <li><strong>Discovery Feed</strong> — Auto-discovered channels awaiting review</li>
+  <li><strong>Channel List</strong> — All tracked channels with status and metadata. Expandable for large broadcasts (100+ channels). Defaults to showing active channels only — use filter buttons to see all or inactive.</li>
+  <li><strong>Discovery Feed</strong> — Auto-discovered channels awaiting review. Expandable, with a "Clear All" button. Automatically purged when a broadcast day goes live.</li>
   <li><strong>Export</strong> — Download data as CSV, JSON, or interactive HTML reports</li>
 </ul>
 
@@ -164,52 +165,86 @@
 
 <h2 id="channels">3. Channel Management</h2>
 
+<h3>Supported Platforms</h3>
+<p>Channels can be tracked on five platforms: <strong>Twitch</strong>, <strong>YouTube</strong>, <strong>Kick</strong>, <strong>TikTok</strong>, and <strong>Steam</strong>.</p>
+
 <h3>Adding Channels</h3>
 <p><strong>Single channel</strong> — Use the form in the left sidebar:</p>
 <ol>
   <li>Enter the channel URL or identifier</li>
-  <li>Select the platform</li>
+  <li>Select the platform (auto-detected from URLs)</li>
   <li>Click <strong>Add</strong></li>
 </ol>
 
 <p><strong>Bulk add</strong> — For adding multiple channels at once:</p>
 <ol>
   <li>Click the bulk add button in the sidebar</li>
-  <li>Paste channel URLs or identifiers (one per line)</li>
+  <li>Paste channel URLs or identifiers (one per line) — platforms are auto-detected from URLs</li>
   <li>Submit</li>
 </ol>
 
 <h3>Editing Channels</h3>
-<p>In the <strong>Channel List</strong> panel, click the edit icon on any channel row to update the display name, language, region, or tier.</p>
+<p>In the <strong>Channel List</strong> panel, click the edit icon on any channel row to update the display name, language, region, tier, or assigned broadcast days.</p>
 
 <h3>Channel Tiers</h3>
 <div class="tier-grid">
   <div class="tier-item"><strong>Official</strong><span>Primary tournament broadcast channels</span></div>
   <div class="tier-item"><strong>Partner</strong><span>Officially partnered co-streamers</span></div>
+  <div class="tier-item"><strong>Player</strong><span>Player POV streams</span></div>
   <div class="tier-item"><strong>Community</strong><span>Community co-streamers</span></div>
   <div class="tier-item"><strong>Watch Party</strong><span>Watch party streams</span></div>
 </div>
 
-<h3>Toggling &amp; Removing</h3>
+<h3>Channel List Features</h3>
 <ul>
-  <li>Click <strong>Disable</strong> to stop tracking a channel (it stays in the list but won't be polled)</li>
-  <li>Click <strong>Enable</strong> to resume tracking</li>
-  <li>Click the delete icon to permanently remove a channel from the series</li>
+  <li><strong>Sorting</strong> — Click any column header to sort (Streamer, Platform, Category, Language, Days, etc.)</li>
+  <li><strong>Filtering</strong> — Toggle between Active, Inactive, or All channels using the filter buttons</li>
+  <li><strong>Expand</strong> — Click the expand button in the panel header for more vertical space (useful for 100+ channel broadcasts)</li>
 </ul>
+
+<h3>Disable / Block / Delete</h3>
+<p>Three ways to handle a channel you no longer want actively tracked:</p>
+
+<table>
+  <tr><th>Action</th><th style="text-align:center">Stops Polling</th><th style="text-align:center">Blocks Re-discovery</th><th style="text-align:center">Preserves Data</th><th>Who Can Do It</th></tr>
+  <tr><td><strong>Disable</strong></td><td class="check">&check;</td><td class="dash">&mdash;</td><td class="check">&check;</td><td>Editor, Admin</td></tr>
+  <tr><td><strong>Block</strong></td><td class="check">&check;</td><td class="check">&check;</td><td class="check">&check;</td><td>Editor, Admin</td></tr>
+  <tr><td><strong>Delete</strong></td><td class="check">&check;</td><td class="dash">N/A</td><td style="color:#c62828;font-weight:700;text-align:center">No</td><td><strong>Admin only</strong></td></tr>
+</table>
+
+<ul>
+  <li><strong>Disable</strong> — Stops polling. The channel stays in the list (hidden by default under the "inactive" filter) and all historical viewership data is preserved. Use Enable to resume.</li>
+  <li><strong>Block</strong> — Available on auto-discovered channels. Stops polling, adds the channel to the series blocklist so it won't reappear in Discovery, and preserves historical data.</li>
+  <li><strong>Delete</strong> — Permanently removes the channel <strong>and all its viewership data</strong> (cascade delete). A warning is shown before confirmation. <strong>Admin only.</strong></li>
+</ul>
+
+<div class="warning"><strong>Delete is destructive.</strong> Deleting a channel removes all historical viewership data. Consider using Disable to preserve historical data.</div>
+
+<h3>Reports &amp; Disabled/Blocked Channels</h3>
+<p>Reports are scope-aware: a channel only appears in a report if it has viewership data within that report's scope. For example, a channel disabled after Broadcast Day 1 will appear in BD 1 reports (where it has data) but not in BD 2 reports (where it has none). This applies regardless of the channel's current active/inactive status.</p>
 
 <!-- ─── DISCOVERY ─────────────────────────── -->
 
 <h2 id="discovery">4. Discovery Feed</h2>
 
-<p>The Discovery Feed shows channels that were automatically found by the system based on the series' discovery keywords and game IDs.</p>
+<p>The Discovery Feed shows channels that were automatically found by the system based on the series' discovery keywords and game IDs. It searches across all five platforms (Twitch, YouTube, Kick, TikTok, Steam).</p>
 
 <h3>Reviewing Discovered Channels</h3>
 <p>Each entry shows the channel name, platform, current stream title, viewer count, language, and when it was discovered.</p>
 
 <ul>
   <li>Click <strong>Approve</strong> to add a channel to the tracked list (assigned the series' configured default tier, which defaults to "Community")</li>
-  <li>Click <strong>Block</strong> to reject a channel — it won't appear in future results</li>
+  <li>Click <strong>Block</strong> to reject a channel — it's added to the series blocklist and won't appear in future discovery results. If the channel had already collected data, that data is preserved.</li>
 </ul>
+
+<h3>Auto-Purge</h3>
+<p>When a broadcast day goes <strong>live</strong>, the Discovery Feed is automatically purged. Only pending channels with no viewership data are removed — channels that have already collected data are preserved.</p>
+
+<h3>Clear All</h3>
+<p>Click the <strong>Clear All</strong> button in the Discovery Feed header to manually flush all pending channels. Same rules as auto-purge: channels with historical data are preserved.</p>
+
+<h3>Expanding the Feed</h3>
+<p>Click the expand button in the Discovery Feed header to see more channels at once.</p>
 
 <h3>Discovery Controls</h3>
 <p>In the left sidebar under <strong>Discovery</strong>, you can:</p>
@@ -314,18 +349,28 @@
   <tr><td>Change broadcast day status (Go Live / Complete)</td><td class="check">&check;</td><td class="dash">&mdash;</td><td class="dash">&mdash;</td></tr>
   <tr class="section-label"><td colspan="4">Channel Management</td></tr>
   <tr><td>Add channels (single or bulk)</td><td class="check">&check;</td><td class="check">&check;</td><td class="dash">&mdash;</td></tr>
-  <tr><td>Edit channel metadata</td><td class="check">&check;</td><td class="check">&check;</td><td class="dash">&mdash;</td></tr>
-  <tr><td>Toggle channel active / inactive</td><td class="check">&check;</td><td class="check">&check;</td><td class="dash">&mdash;</td></tr>
-  <tr><td>Remove channels</td><td class="check">&check;</td><td class="check">&check;</td><td class="dash">&mdash;</td></tr>
+  <tr><td>Edit channel metadata (name, language, region, tier, days)</td><td class="check">&check;</td><td class="check">&check;</td><td class="dash">&mdash;</td></tr>
+  <tr><td>Disable / enable channel</td><td class="check">&check;</td><td class="check">&check;</td><td class="dash">&mdash;</td></tr>
+  <tr><td>Delete channel (removes all data)</td><td class="check">&check;</td><td class="dash">&mdash;</td><td class="dash">&mdash;</td></tr>
   <tr class="section-label"><td colspan="4">Discovery</td></tr>
   <tr><td>Approve discovered channels</td><td class="check">&check;</td><td class="check">&check;</td><td class="dash">&mdash;</td></tr>
   <tr><td>Block discovered channels</td><td class="check">&check;</td><td class="check">&check;</td><td class="dash">&mdash;</td></tr>
+  <tr><td>Clear discovery feed</td><td class="check">&check;</td><td class="check">&check;</td><td class="dash">&mdash;</td></tr>
   <tr><td>Start / stop / trigger discovery</td><td class="check">&check;</td><td class="dash">&mdash;</td><td class="dash">&mdash;</td></tr>
   <tr class="section-label"><td colspan="4">Polling</td></tr>
   <tr><td>Start / stop live polling</td><td class="check">&check;</td><td class="dash">&mdash;</td><td class="dash">&mdash;</td></tr>
   <tr><td>Trigger manual poll cycle</td><td class="check">&check;</td><td class="dash">&mdash;</td><td class="dash">&mdash;</td></tr>
   <tr class="section-label"><td colspan="4">User Management</td></tr>
   <tr><td>View / create / edit / delete users</td><td class="check">&check;</td><td class="dash">&mdash;</td><td class="dash">&mdash;</td></tr>
+</table>
+
+<h3>Channel Actions by Role</h3>
+
+<table>
+  <tr><th>Action</th><th>Effect</th><th>Data</th><th style="text-align:center">Admin</th><th style="text-align:center">Editor</th></tr>
+  <tr><td><strong>Disable</strong></td><td>Stops polling</td><td>Preserved</td><td class="check">&check;</td><td class="check">&check;</td></tr>
+  <tr><td><strong>Block</strong></td><td>Stops polling + blocks re-discovery</td><td>Preserved</td><td class="check">&check;</td><td class="check">&check;</td></tr>
+  <tr><td><strong>Delete</strong></td><td>Removes channel entirely</td><td style="color:#c62828;font-weight:600">Deleted</td><td class="check">&check;</td><td class="dash">&mdash;</td></tr>
 </table>
 
 <div class="note">
@@ -340,9 +385,15 @@
 
 <div class="tip"><strong>Review discovery regularly</strong> — New channels appear as streams go live; approve or block them promptly to keep the feed clean.</div>
 
+<div class="tip"><strong>Disable instead of delete</strong> — If you no longer want to track a channel, use Disable (or Block for discovery channels) to preserve historical data. Only use Delete if you truly want to erase all viewership records.</div>
+
 <div class="tip"><strong>Export before a broadcast ends</strong> — Run an export while data is fresh for the most accurate reporting.</div>
 
-<div class="tip"><strong>Check channel tiers</strong> — Properly categorized channels help produce cleaner reports.</div>
+<div class="tip"><strong>Check channel tiers</strong> — Properly categorized channels (Official, Partner, Player, Community, Watch Party) help produce cleaner reports.</div>
+
+<div class="tip"><strong>Use the expand buttons</strong> — Both the Channel List and Discovery Feed panels can be expanded for better visibility when managing large broadcasts.</div>
+
+<div class="tip"><strong>Filter active channels</strong> — The channel list defaults to showing only active channels. Switch to "All" to see disabled/blocked channels when needed.</div>
 
 <hr>
 <p style="font-size:12px;color:#999;text-align:center;margin-top:24px;">Clutch Viewership Tracker &mdash; User Manual &mdash; March 2026</p>
