@@ -81,6 +81,8 @@ export interface ChannelLeaderboardEntry {
   channelId: string;
   displayName: string;
   platform: string;
+  tier?: string;
+  language?: string | null;
   peakCCV: number;
   avgCCV: number;
   totalViewedMinutes: number;

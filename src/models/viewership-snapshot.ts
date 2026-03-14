@@ -48,6 +48,7 @@ export interface LeaderboardEntry {
   display_name: string;
   platform: string;
   tier: string;
+  language: string | null;
   peak_ccv: string;
   avg_ccv: string;
   total_viewed_minutes: string;
@@ -242,6 +243,7 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25): Promise<L
       'viewership_snapshots.channel_id',
       'channels.display_name',
       'channels.tier',
+      'channels.language',
       'viewership_snapshots.platform',
     )
     .max('concurrent_viewers as peak_ccv')
@@ -251,6 +253,7 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25): Promise<L
       'viewership_snapshots.channel_id',
       'channels.display_name',
       'channels.tier',
+      'channels.language',
       'viewership_snapshots.platform',
     )
     .orderBy('peak_ccv', 'desc')

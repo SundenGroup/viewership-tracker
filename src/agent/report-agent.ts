@@ -29,7 +29,7 @@ import db from '../utils/db';
 import * as TournamentSeriesModel from '../models/tournament-series';
 import * as StageModel from '../models/stage';
 import * as BroadcastDayModel from '../models/broadcast-day';
-import * as ChannelModel from '../models/channel';
+// ChannelModel import removed — channels are now fetched scope-aware via db()
 import * as ViewershipSnapshotModel from '../models/viewership-snapshot';
 import {
   ChartGenerator,
@@ -492,7 +492,21 @@ export class ReportAgent {
       ? await db('broadcast_days').whereIn('id', broadcastDayIds).orderBy('date', 'asc')
       : [];
 
-    const channels = await ChannelModel.findAll({ series_id: seriesId, is_active: true });
+    // Only include channels that have viewership data within the resolved scope.
+    // e.g. a Broadcast Day 2 report won't list an inactive channel from BD 1.
+    const channelIdQuery = db('viewership_snapshots')
+      .where('series_id', seriesId)
+      .distinct('channel_id');
+    if (broadcastDayIds.length > 0 && scope !== 'series') {
+      channelIdQuery.whereIn('broadcast_day_id', broadcastDayIds);
+    }
+    const channelIdsWithData = await channelIdQuery;
+    const scopedChannelIds = channelIdsWithData.map(
+      (r: { channel_id: string }) => r.channel_id,
+    );
+    const channels = scopedChannelIds.length > 0
+      ? await db('channels').whereIn('id', scopedChannelIds)
+      : [];
 
     // Compute per-day metrics
     const dayMetrics = await Promise.all(
@@ -542,6 +556,8 @@ export class ReportAgent {
             channelId: e.channel_id,
             displayName: e.display_name,
             platform: e.platform,
+            tier: e.tier ?? 'community',
+            language: e.language ?? null,
             peakCCV: parseInt(e.peak_ccv, 10),
             avgCCV: parseFloat(e.avg_ccv),
             totalViewedMinutes: parseInt(e.total_viewed_minutes, 10),
@@ -949,6 +965,8 @@ export class ReportAgent {
             channelId: ch.channelId,
             displayName: ch.displayName,
             platform: ch.platform,
+            tier: ch.tier,
+            language: ch.language,
             peakCCV: ch.peakCCV,
             avgCCV: ch.avgCCV,
             totalViewedMinutes: ch.totalViewedMinutes ?? 0,

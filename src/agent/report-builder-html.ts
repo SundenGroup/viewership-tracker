@@ -264,8 +264,8 @@ export function buildHTMLReport(data: HTMLReportData): string {
     return {
       name: ch.displayName,
       platform: ch.platform.toLowerCase(),
-      tier: tierLabel(channel?.tier),
-      lang: capitalize(channel?.language ?? 'Unknown'),
+      tier: tierLabel(ch.tier || channel?.tier),
+      lang: capitalize(ch.language || channel?.language || 'Unknown'),
       avg: Math.round(ch.avgCCV),
       peak: ch.peakCCV,
       vh: Math.round((ch.totalViewedMinutes ?? 0) / 60),

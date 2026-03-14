@@ -212,6 +212,8 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
             channelId: e.channel_id,
             displayName: e.display_name,
             platform: e.platform,
+            tier: e.tier ?? 'community',
+            language: e.language ?? null,
             peakCCV: parseInt(e.peak_ccv, 10),
             avgCCV: parseFloat(e.avg_ccv),
             totalViewedMinutes: parseInt(e.total_viewed_minutes, 10),
