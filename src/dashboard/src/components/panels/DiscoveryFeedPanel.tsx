@@ -25,12 +25,14 @@ interface DiscoveryFeedPanelProps {
   seriesId: string | undefined;
   lastDiscoveryResult: DiscoveryResult | null;
   defaultTier?: string;
+  blocklist?: string[];
 }
 
 export function DiscoveryFeedPanel({
   seriesId,
   lastDiscoveryResult,
   defaultTier = 'watch_party',
+  blocklist = [],
 }: DiscoveryFeedPanelProps) {
   const { hasRole } = useAuth();
   const canEdit = hasRole('editor');
@@ -146,6 +148,7 @@ export function DiscoveryFeedPanel({
               onRefresh={refetch}
               canEdit={canEdit}
               defaultTier={defaultTier}
+              blocklist={blocklist}
             />
           ))}
         </div>
@@ -162,12 +165,14 @@ function DiscoveryRow({
   onRefresh,
   canEdit,
   defaultTier,
+  blocklist,
 }: {
   channel: Channel;
   seriesId: string;
   onRefresh: () => void;
   canEdit: boolean;
   defaultTier: string;
+  blocklist: string[];
 }) {
   const [acting, setActing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -205,6 +210,23 @@ function DiscoveryRow({
     }
   }, [channel.id, seriesId, onRefresh]);
 
+  // Re-enable a disabled channel at its existing tier
+  const handleReEnable = useCallback(async () => {
+    setActing(true);
+    setActionError(null);
+    try {
+      await api.promoteChannel(channel.id, channel.tier);
+      setActionDone('approved');
+      onRefresh();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to re-enable';
+      setActionError(msg);
+      console.error('[Discovery] Re-enable failed:', msg);
+    } finally {
+      setActing(false);
+    }
+  }, [channel.id, channel.tier, onRefresh]);
+
   const streamUrl = getStreamUrl(channel.platform, channel.channel_identifier);
   const streamTitle = (channel.metadata?.stream_title as string) ?? null;
   const discoveredCCV = (channel.metadata?.discovered_ccv as number) ?? null;
@@ -212,8 +234,10 @@ function DiscoveryRow({
   // Channels are now inserted as inactive (pending approval).
   // Show Approve/Block when: not yet acted on AND still in community tier (pending).
   const isPending = !actionDone && channel.tier === 'community';
-  // A channel that was previously blocked shows as inactive + blocked in blocklist
-  const wasBlocked = !actionDone && !channel.is_active && channel.tier !== 'community';
+  // Distinguish between blocked (in blocklist) and disabled (just deactivated)
+  const inBlocklist = blocklist.includes(channel.channel_identifier);
+  const isBlocked = !actionDone && !channel.is_active && inBlocklist;
+  const isDisabled = !actionDone && !channel.is_active && channel.tier !== 'community' && !inBlocklist;
 
   return (
     <div className="rounded-lg bg-navy-800/40 px-3 py-2 hover:bg-navy-800/60 transition-colors">
@@ -281,7 +305,17 @@ function DiscoveryRow({
               </Button>
             </>
           )}
-          {wasBlocked && (
+          {canEdit && isDisabled && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleReEnable}
+              loading={acting}
+            >
+              Re-enable
+            </Button>
+          )}
+          {isBlocked && (
             <span className="text-[10px] font-bold uppercase text-accent-red">
               Blocked
             </span>

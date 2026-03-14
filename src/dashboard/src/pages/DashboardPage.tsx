@@ -201,6 +201,7 @@ export function DashboardPage({
           seriesId={seriesId}
           lastDiscoveryResult={pollingData.lastDiscoveryResult}
           defaultTier={seriesDetail?.discovery_default_tier}
+          blocklist={(seriesDetail?.metadata?.blocklist as string[]) ?? []}
         />
       )}
 
