@@ -133,7 +133,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       ? await db('broadcast_days').whereIn('id', broadcastDayIds).orderBy('date', 'asc')
       : [];
 
-    const channels = await ChannelModel.findAll({ series_id: seriesId, is_active: true });
+    const channels = await ChannelModel.findAll({ series_id: seriesId });
 
     // ── Fetch snapshots for the resolved scope ──────────────────────
 

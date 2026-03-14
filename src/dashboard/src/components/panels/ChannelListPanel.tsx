@@ -9,7 +9,7 @@ import type { Channel, BroadcastDay } from '@/types/api';
 
 // ── Sort types & helpers ────────────────────────────────────────────────
 
-type SortField = 'display_name' | 'platform' | 'tier' | 'source' | 'is_active' | 'added_at';
+type SortField = 'display_name' | 'platform' | 'tier' | 'days' | 'source' | 'is_active' | 'added_at';
 type SortDir = 'asc' | 'desc';
 interface SortState { field: SortField; dir: SortDir }
 
@@ -23,6 +23,12 @@ function sortChannels(channels: Channel[], { field, dir }: SortState): Channel[]
       case 'platform': return d * a.platform.localeCompare(b.platform);
       case 'tier': return d * ((TIER_ORDER[a.tier] ?? 99) - (TIER_ORDER[b.tier] ?? 99));
       case 'source': return d * (a.source ?? '').localeCompare(b.source ?? '');
+      case 'days': {
+        // 0 assigned days = "All Days" → treat as highest count for sorting
+        const aLen = (a.broadcast_day_ids ?? []).length || 999;
+        const bLen = (b.broadcast_day_ids ?? []).length || 999;
+        return d * (aLen - bLen);
+      }
       case 'is_active': return d * (Number(b.is_active) - Number(a.is_active));
       case 'added_at': return d * (new Date(a.added_at).getTime() - new Date(b.added_at).getTime());
       default: return 0;
@@ -41,7 +47,7 @@ interface ChannelListPanelProps {
 export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: ChannelListPanelProps) {
   const { hasRole } = useAuth();
   const canEdit = hasRole('editor');
-  const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('active');
   const [expanded, setExpanded] = useLocalStorage<boolean>('cvt:channelListExpanded', false);
   const [sort, setSort] = useLocalStorage<SortState>('cvt:channelListSort', { field: 'display_name', dir: 'asc' });
 
@@ -142,7 +148,15 @@ export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: Ch
                     )}
                   </th>
                 ))}
-                <th className="pb-2 text-left font-medium">Days</th>
+                <th
+                  className="pb-2 text-left font-medium cursor-pointer select-none hover:text-gray-300 transition-colors"
+                  onClick={() => handleSort('days')}
+                >
+                  Days
+                  {sort.field === 'days' && (
+                    <span className="ml-1 text-clutch-red">{sort.dir === 'asc' ? '▲' : '▼'}</span>
+                  )}
+                </th>
                 {([
                   ['source', 'Source'],
                   ['is_active', 'Status'],

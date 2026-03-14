@@ -411,8 +411,8 @@ router.delete('/channels/:id', requireRole('admin', 'editor'), async (req: Reque
   }
 });
 
-// PUT /api/channels/:id/active — Toggle active status
-router.put('/channels/:id/active', async (req: Request, res: Response, next: NextFunction) => {
+// PUT /api/channels/:id/active — Toggle active status (editor+)
+router.put('/channels/:id/active', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { is_active } = req.body;
     if (typeof is_active !== 'boolean') {
