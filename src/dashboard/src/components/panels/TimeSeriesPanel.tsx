@@ -13,7 +13,7 @@ import {
   ReferenceLine,
 } from 'recharts';
 import { Card, LoadingOverlay } from '@/components/common';
-import { useApi } from '@/hooks/useApi';
+import { usePollingApi } from '@/hooks/useApi';
 import * as api from '@/services/api';
 import { formatCompact, platformColor, platformLabel } from '@/utils/formatters';
 import type { TimeSeriesBucket, GroupedTimeSeriesBucket, TimeSeriesGroupBy, ScopeLevel } from '@/types/api';
@@ -127,7 +127,7 @@ export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName, b
 
   const effectiveScope = scopeProp ?? { level: 'series' as ScopeLevel, id: seriesId! };
 
-  const { data, loading, error } = useApi(
+  const { data, loading, error } = usePollingApi(
     () => {
       if (publicShortName) {
         return api.getPublicTimeSeries(publicShortName, {
@@ -147,6 +147,7 @@ export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName, b
         : Promise.resolve(null);
     },
     [effectiveScope.level, effectiveScope.id, interval, groupBy, publicShortName],
+    { intervalMs: 30_000 },
   );
 
   // ── Transform data for charts ──────────────────────────────────────────
