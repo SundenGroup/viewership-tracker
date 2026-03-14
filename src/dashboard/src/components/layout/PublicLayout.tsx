@@ -14,9 +14,11 @@ export function PublicLayout({ seriesName, wsStatus, children }: PublicLayoutPro
       <header className="sticky top-0 z-40 bg-navy-900/95 backdrop-blur-sm border-b border-navy-800">
         <div className="flex h-14 items-center justify-between px-4 md:px-6">
           <div className="flex items-center gap-3">
-            <span className="text-lg font-bold tracking-tight text-white">
-              Clutch
-            </span>
+            <img
+              src="/assets/clutch-logo-white.png"
+              alt="Clutch Group"
+              className="h-6"
+            />
             <span className="text-gray-600">|</span>
             <span className="text-sm font-medium text-gray-300">{seriesName}</span>
           </div>

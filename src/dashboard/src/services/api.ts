@@ -536,8 +536,14 @@ export function getPublicSeries(shortName: string) {
   return publicRequest<PublicSeriesInfo>(`/api/public/${shortName}`);
 }
 
-export function getPublicLiveCCV(shortName: string) {
-  return publicRequest<LiveCCVResponse>(`/api/public/${shortName}/live-ccv`);
+export function getPublicLiveCCV(shortName: string, scope?: string, scopeId?: string) {
+  const params = new URLSearchParams();
+  if (scope && scopeId) {
+    params.set('scope', scope);
+    params.set('id', scopeId);
+  }
+  const qs = params.toString();
+  return publicRequest<LiveCCVResponse>(`/api/public/${shortName}/live-ccv${qs ? `?${qs}` : ''}`);
 }
 
 export function getPublicMetrics(shortName: string, scope?: ScopeLevel, id?: string) {

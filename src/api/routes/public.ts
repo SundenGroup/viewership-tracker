@@ -88,7 +88,9 @@ router.get('/:shortName', async (req: Request, res: Response, next: NextFunction
 router.get('/:shortName/live-ccv', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const series = getPublicSeries(req);
-    const snapshots = await ViewershipSnapshotModel.getLatestSnapshot(series.id);
+    const scope = parseScope(req.query as Record<string, unknown>, series.id);
+    const scopeArg = scope && scope.level !== 'series' ? scope : undefined;
+    const snapshots = await ViewershipSnapshotModel.getLatestSnapshot(series.id, scopeArg);
 
     const totalCCV = snapshots.reduce((sum, s) => sum + s.concurrent_viewers, 0);
     const liveCount = snapshots.filter((s) => s.concurrent_viewers > 0).length;
