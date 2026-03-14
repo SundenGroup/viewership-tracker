@@ -397,8 +397,8 @@ router.put('/channels/:id/days', requireRole('admin', 'editor'), async (req: Req
   }
 });
 
-// DELETE /api/channels/:id — Remove a channel (editor+)
-router.delete('/channels/:id', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
+// DELETE /api/channels/:id — Remove a channel and all its data (admin only)
+router.delete('/channels/:id', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const deleted = await ChannelModel.remove(req.params.id as string);
     if (!deleted) {

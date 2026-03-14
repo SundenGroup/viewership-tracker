@@ -138,8 +138,8 @@ router.post('/discovery/stop/:seriesId', (_req: Request, res: Response, next: Ne
   }
 });
 
-// POST /api/polling/discovery/block — Block a channel for a series
-router.post('/discovery/block', async (req: Request, res: Response, next: NextFunction) => {
+// POST /api/polling/discovery/block — Block a channel for a series (editor+)
+router.post('/discovery/block', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const svc = ensureDiscovery(res);
     if (!svc) return;
@@ -172,8 +172,8 @@ router.post('/discovery/clear', requireRole('admin', 'editor'), async (req: Requ
   }
 });
 
-// POST /api/polling/discovery/promote — Promote a channel to a new tier
-router.post('/discovery/promote', async (req: Request, res: Response, next: NextFunction) => {
+// POST /api/polling/discovery/promote — Promote a channel to a new tier (editor+)
+router.post('/discovery/promote', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const svc = ensureDiscovery(res);
     if (!svc) return;

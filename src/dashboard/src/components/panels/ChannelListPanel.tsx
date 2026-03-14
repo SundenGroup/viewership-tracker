@@ -47,6 +47,7 @@ interface ChannelListPanelProps {
 export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: ChannelListPanelProps) {
   const { hasRole } = useAuth();
   const canEdit = hasRole('editor');
+  const canDelete = hasRole('admin');
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('active');
   const [expanded, setExpanded] = useLocalStorage<boolean>('cvt:channelListExpanded', false);
   const [sort, setSort] = useLocalStorage<SortState>('cvt:channelListSort', { field: 'display_name', dir: 'asc' });
@@ -186,6 +187,7 @@ export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: Ch
                   dayLabelMap={dayLabelMap}
                   onRefresh={refetch}
                   canEdit={canEdit}
+                  canDelete={canDelete}
                 />
               ))}
             </tbody>
@@ -203,6 +205,7 @@ function ChannelRow({
   dayLabelMap,
   onRefresh,
   canEdit,
+  canDelete,
 }: {
   channel: Channel;
   seriesId: string;
@@ -210,6 +213,7 @@ function ChannelRow({
   dayLabelMap: Map<string, string>;
   onRefresh: () => void;
   canEdit: boolean;
+  canDelete: boolean;
 }) {
   const [acting, setActing] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -499,7 +503,7 @@ function ChannelRow({
                 Block
               </Button>
             )}
-            {confirmRemove ? (
+            {canDelete && (confirmRemove ? (
               <div className="flex flex-col items-end gap-1">
                 <p className="text-[10px] leading-tight text-amber-400">
                   Deleting removes all historical data.
@@ -538,7 +542,7 @@ function ChannelRow({
                   />
                 </svg>
               </button>
-            )}
+            ))}
           </div>
         </td>
       )}
