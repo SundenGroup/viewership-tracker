@@ -126,8 +126,8 @@ export async function getSnapshotsForScope(scope: Scope): Promise<ViewershipSnap
   return applyScope(db(TABLE), scope).orderBy('timestamp', 'asc');
 }
 
-export async function getLatestSnapshot(seriesId: string): Promise<Array<ViewershipSnapshot & { display_name: string; channel_identifier: string }>> {
-  return db(TABLE)
+export async function getLatestSnapshot(seriesId: string, scope?: Scope): Promise<Array<ViewershipSnapshot & { display_name: string; channel_identifier: string }>> {
+  const query = db(TABLE)
     .distinctOn('viewership_snapshots.channel_id')
     .join('channels', 'channels.id', 'viewership_snapshots.channel_id')
     .where('viewership_snapshots.series_id', seriesId)
@@ -136,6 +136,14 @@ export async function getLatestSnapshot(seriesId: string): Promise<Array<Viewers
       { column: 'viewership_snapshots.timestamp', order: 'desc' },
     ])
     .select('viewership_snapshots.*', 'channels.display_name', 'channels.channel_identifier');
+
+  // When scoped to a day or stage, filter to only channels with snapshots in that scope
+  if (scope && scope.level !== 'series') {
+    const col = scopeColumn(scope);
+    query.where(col, scope.id);
+  }
+
+  return query;
 }
 
 export async function getPeakCCV(scope: Scope): Promise<PeakCCVResult | null> {

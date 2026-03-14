@@ -17,7 +17,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { usePollingApi } from '@/hooks/useApi';
 import * as api from '@/services/api';
-import type { SeriesWithStages, ScopeLevel, MetricsResponse } from '@/types/api';
+import type { SeriesWithStages, ScopeLevel, MetricsResponse, LiveCCVResponse } from '@/types/api';
 import type { PollingDataState } from '@/hooks/usePollingData';
 
 interface DashboardPageProps {
@@ -122,6 +122,16 @@ export function DashboardPage({
     { intervalMs: 30_000, enabled: !!dashboardScope && dashboardScope.level !== 'series' },
   );
 
+  // ── Scoped live CCV fetch (only when scope ≠ series) ───────────────
+  const { data: scopedLiveCCV, loading: scopedLiveCCVLoading } = usePollingApi<LiveCCVResponse>(
+    () =>
+      seriesId && dashboardScope && dashboardScope.level !== 'series'
+        ? api.getLiveCCV(seriesId, dashboardScope.level, dashboardScope.id)
+        : Promise.resolve(null as unknown as LiveCCVResponse),
+    [scopeKey],
+    { intervalMs: 30_000, enabled: !!seriesId && !!dashboardScope && dashboardScope.level !== 'series' },
+  );
+
   // Use scoped metrics when available, otherwise series-level from pollingData
   const activeMetrics = dashboardScope?.level !== 'series' && scopedMetrics
     ? scopedMetrics
@@ -129,6 +139,14 @@ export function DashboardPage({
   const activeMetricsLoading = dashboardScope?.level !== 'series'
     ? scopedMetricsLoading
     : pollingData.metricsLoading;
+
+  // Use scoped live CCV when available, otherwise series-level from pollingData
+  const activeLiveCCV = dashboardScope?.level !== 'series' && scopedLiveCCV
+    ? scopedLiveCCV
+    : pollingData.liveCCV;
+  const activeLiveCCVLoading = dashboardScope?.level !== 'series'
+    ? scopedLiveCCVLoading
+    : pollingData.liveCCVLoading;
 
   // ── Render ────────────────────────────────────────────────────────────
 
@@ -160,7 +178,7 @@ export function DashboardPage({
       {/* Row 0: Summary bar — full width */}
       <SummaryBarPanel
         metrics={activeMetrics}
-        liveCCV={pollingData.liveCCV}
+        liveCCV={activeLiveCCV}
         broadcastStart={broadcastStart}
         loading={activeMetricsLoading}
       />
@@ -181,11 +199,11 @@ export function DashboardPage({
       {/* Row 1: Total CCV + Platform Breakdown — side by side */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <TotalCCVPanel
-          data={pollingData.liveCCV}
-          loading={pollingData.liveCCVLoading}
+          data={activeLiveCCV}
+          loading={activeLiveCCVLoading}
         />
         <PlatformBreakdownPanel
-          liveCCV={pollingData.liveCCV}
+          liveCCV={activeLiveCCV}
           metrics={activeMetrics}
           scopeLevel={resolvedScope.level}
           loading={activeMetricsLoading}
@@ -203,8 +221,8 @@ export function DashboardPage({
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <ChannelLeaderboardPanel
           seriesId={seriesId}
-          liveCCV={pollingData.liveCCV}
-          loading={pollingData.liveCCVLoading}
+          liveCCV={activeLiveCCV}
+          loading={activeLiveCCVLoading}
           scope={{ level: resolvedScope.level, id: resolvedScope.id }}
         />
         <div className="space-y-6">

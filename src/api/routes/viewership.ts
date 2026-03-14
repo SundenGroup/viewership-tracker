@@ -21,13 +21,15 @@ function isValidUUID(val: unknown): boolean {
 // ── Routes ──────────────────────────────────────────────────────────────
 
 // GET /api/viewership/live/:seriesId — Current live CCV (latest snapshot per channel)
+// Optional query params: ?scope=day|stage&id=<uuid> to filter by scope
 router.get('/live/:seriesId', async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (!isValidUUID(req.params.seriesId)) {
       res.status(400).json({ error: 'Invalid seriesId format' });
       return;
     }
-    const snapshots = await ViewershipSnapshotModel.getLatestSnapshot(req.params.seriesId as string);
+    const scope = parseScope(req.query) ?? undefined;
+    const snapshots = await ViewershipSnapshotModel.getLatestSnapshot(req.params.seriesId as string, scope);
 
     const totalCCV = snapshots.reduce((sum, s) => sum + s.concurrent_viewers, 0);
     const liveCount = snapshots.filter((s) => s.concurrent_viewers > 0).length;

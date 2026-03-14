@@ -235,8 +235,14 @@ export function updateChannelDays(channelId: string, broadcastDayIds: string[]) 
 
 // ── Viewership ────────────────────────────────────────────────────────────
 
-export function getLiveCCV(seriesId: string) {
-  return request<LiveCCVResponse>(`/api/viewership/live/${seriesId}`);
+export function getLiveCCV(seriesId: string, scope?: string, scopeId?: string) {
+  const params = new URLSearchParams();
+  if (scope && scopeId) {
+    params.set('scope', scope);
+    params.set('id', scopeId);
+  }
+  const qs = params.toString();
+  return request<LiveCCVResponse>(`/api/viewership/live/${seriesId}${qs ? `?${qs}` : ''}`);
 }
 
 export function getChannelLeaderboard(seriesId: string, scope?: string, scopeEntityId?: string) {
