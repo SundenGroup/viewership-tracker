@@ -500,22 +500,29 @@ function ChannelRow({
               </Button>
             )}
             {confirmRemove ? (
-              <div className="flex gap-1">
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={handleRemove}
-                  loading={acting}
-                >
-                  Confirm
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setConfirmRemove(false)}
-                >
-                  Cancel
-                </Button>
+              <div className="flex flex-col items-end gap-1">
+                <p className="text-[10px] leading-tight text-amber-400">
+                  Deleting removes all historical data.
+                  <br />
+                  Consider disabling instead to preserve it.
+                </p>
+                <div className="flex gap-1">
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={handleRemove}
+                    loading={acting}
+                  >
+                    Delete permanently
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setConfirmRemove(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
               </div>
             ) : (
               <button

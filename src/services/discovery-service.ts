@@ -408,19 +408,40 @@ export class DiscoveryService {
   }
 
   /**
-   * Purge all unapproved auto-discovered channels for a series.
+   * Purge unapproved auto-discovered channels for a series.
    * Only deletes channels with source='auto_discovered' AND is_active=false
-   * (i.e. pending/unapproved). Approved channels are left intact.
+   * that have NO viewership snapshots (i.e. truly pending/unapproved).
+   * Channels with historical data (blocked after collecting data) are preserved.
    */
   async purgeDiscoveredChannels(seriesId: string): Promise<number> {
-    const count = await this.db('channels')
+    // Find channels that have viewership data — these must be preserved
+    const channelsWithData = await this.db('viewership_snapshots')
+      .where('series_id', seriesId)
+      .distinct('channel_id');
+    const protectedIds = new Set(
+      channelsWithData.map((r: { channel_id: string }) => r.channel_id),
+    );
+
+    // Get candidates for purge
+    const candidates = await this.db('channels')
       .where('series_id', seriesId)
       .where('source', 'auto_discovered')
       .where('is_active', false)
+      .select('id');
+
+    // Only purge channels that have NO historical data
+    const toPurge = candidates
+      .filter((c: { id: string }) => !protectedIds.has(c.id))
+      .map((c: { id: string }) => c.id);
+
+    if (toPurge.length === 0) return 0;
+
+    const count = await this.db('channels')
+      .whereIn('id', toPurge)
       .delete();
 
     if (count > 0) {
-      logger.info(`[Discovery] Purged ${count} unapproved auto-discovered channel(s) for series ${seriesId}`);
+      logger.info(`[Discovery] Purged ${count} unapproved auto-discovered channel(s) for series ${seriesId} (${protectedIds.size} with data preserved)`);
     }
 
     return count;
