@@ -50,7 +50,7 @@ export function TotalCCVPanel({ data, loading }: TotalCCVPanelProps) {
   const totalCCV = data?.totalCCV ?? 0;
   const animatedCCV = useAnimatedCounter(totalCCV);
 
-  const channelCount = data?.channelCount ?? 0;
+  const channelCount = data?.liveChannels ?? 0;
 
   // Count unique platforms
   const platforms = new Set(

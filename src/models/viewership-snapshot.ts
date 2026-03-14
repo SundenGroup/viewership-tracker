@@ -152,7 +152,7 @@ export async function getPeakCCV(scope: Scope): Promise<PeakCCVResult | null> {
        GROUP BY "timestamp", channel_id
      ) per_channel
      GROUP BY "timestamp"
-     ORDER BY total_ccv DESC
+     ORDER BY SUM(max_viewers) DESC
      LIMIT 1`,
     { id: scope.id },
   ).then((r: { rows: PeakCCVResult[] }) => r.rows[0] ?? null);
@@ -226,7 +226,7 @@ async function getBreakdown(scope: Scope, dimension: string): Promise<BreakdownR
        GROUP BY "timestamp", group_key
      ) per_ts
      GROUP BY group_key
-     ORDER BY total_ccv DESC`,
+     ORDER BY SUM(ts_total) DESC`,
     { id: scope.id },
   ).then((r: { rows: BreakdownResult[] }) => r.rows);
 }
@@ -269,7 +269,7 @@ export async function getTierBreakdown(scope: Scope): Promise<BreakdownResult[]>
        GROUP BY "timestamp", group_key
      ) per_ts
      GROUP BY group_key
-     ORDER BY total_ccv DESC`,
+     ORDER BY SUM(ts_total) DESC`,
     { id: scope.id },
   ).then((r: { rows: BreakdownResult[] }) => r.rows);
 }
@@ -297,7 +297,7 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25): Promise<L
      ) pc
      JOIN channels c ON c.id = pc.channel_id
      GROUP BY pc.channel_id, c.display_name, c.tier, c.language, pc.platform
-     ORDER BY peak_ccv DESC
+     ORDER BY MAX(pc.max_viewers) DESC
      LIMIT :limit`,
     { id: scope.id, limit },
   ).then((r: { rows: LeaderboardEntry[] }) => r.rows);
