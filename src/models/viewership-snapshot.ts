@@ -139,27 +139,44 @@ export async function getLatestSnapshot(seriesId: string): Promise<Array<Viewers
 }
 
 export async function getPeakCCV(scope: Scope): Promise<PeakCCVResult | null> {
-  // Find the timestamp with the highest total CCV across all channels
-  const result = await applyScope(db(TABLE), scope)
-    .select('timestamp')
-    .sum('concurrent_viewers as total_ccv')
-    .groupBy('timestamp')
-    .orderBy('total_ccv', 'desc')
-    .first();
-  return result ?? null;
+  // Find the timestamp with the highest total CCV across all channels.
+  // Deduplicates per (timestamp, channel_id) using MAX to avoid double-counting
+  // when a channel has rows under multiple broadcast days or duplicate poll cycles.
+  const col = scopeColumnBare(scope);
+  const result = await db.raw(
+    `SELECT "timestamp", SUM(max_viewers)::text AS total_ccv
+     FROM (
+       SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS max_viewers
+       FROM viewership_snapshots
+       WHERE "${col}" = :id
+       GROUP BY "timestamp", channel_id
+     ) per_channel
+     GROUP BY "timestamp"
+     ORDER BY total_ccv DESC
+     LIMIT 1`,
+    { id: scope.id },
+  ).then((r: { rows: PeakCCVResult[] }) => r.rows[0] ?? null);
+  return result;
 }
 
 export async function getAverageCCV(scope: Scope): Promise<string> {
-  // Average of per-timestamp total CCV
-  const sub = applyScope(db(TABLE), scope)
-    .select('timestamp')
-    .sum('concurrent_viewers as ts_total')
-    .groupBy('timestamp')
-    .as('per_ts');
-
-  const result = await db.from(sub)
-    .avg('ts_total as avg_ccv')
-    .first<{ avg_ccv: string | null }>();
+  // Average of per-timestamp total CCV.
+  // Deduplicates per (timestamp, channel_id) using MAX first.
+  const col = scopeColumnBare(scope);
+  const result = await db.raw(
+    `SELECT ROUND(AVG(ts_total))::text AS avg_ccv
+     FROM (
+       SELECT "timestamp", SUM(max_viewers) AS ts_total
+       FROM (
+         SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS max_viewers
+         FROM viewership_snapshots
+         WHERE "${col}" = :id
+         GROUP BY "timestamp", channel_id
+       ) per_channel
+       GROUP BY "timestamp"
+     ) per_ts`,
+    { id: scope.id },
+  ).then((r: { rows: Array<{ avg_ccv: string | null }> }) => r.rows[0]);
   return result?.avg_ccv ?? '0';
 }
 
@@ -167,9 +184,18 @@ export async function getTotalViewedHours(scope: Scope): Promise<string> {
   // Each snapshot represents one polling interval of viewers.
   // SUM(concurrent_viewers) gives total viewer-minutes if interval is 1 min.
   // Divide by 60 for hours.
-  const result = await applyScope(db(TABLE), scope)
-    .sum('concurrent_viewers as total_viewer_minutes')
-    .first();
+  // Deduplicates per (timestamp, channel_id) using MAX first.
+  const col = scopeColumnBare(scope);
+  const result = await db.raw(
+    `SELECT SUM(max_viewers) AS total_viewer_minutes
+     FROM (
+       SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS max_viewers
+       FROM viewership_snapshots
+       WHERE "${col}" = :id
+       GROUP BY "timestamp", channel_id
+     ) per_channel`,
+    { id: scope.id },
+  ).then((r: { rows: Array<{ total_viewer_minutes: string | null }> }) => r.rows[0]);
   const minutes = parseFloat(result?.total_viewer_minutes ?? '0');
   return (minutes / 60).toFixed(2);
 }
@@ -181,17 +207,23 @@ export async function getTotalViewedHours(scope: Scope): Promise<string> {
  */
 async function getBreakdown(scope: Scope, dimension: string): Promise<BreakdownResult[]> {
   const col = scopeColumnBare(scope);
+  // Three-level query: deduplicate per (timestamp, channel_id, dimension) using MAX,
+  // then sum per (timestamp, dimension), then aggregate per dimension.
   return db.raw(
     `SELECT group_key AS key,
        SUM(ts_total)::text AS total_ccv,
        ROUND(AVG(ts_total))::text AS avg_ccv,
        MAX(ts_total)::text AS peak_ccv
      FROM (
-       SELECT "timestamp", "${dimension}" AS group_key,
-         SUM(concurrent_viewers) AS ts_total
-       FROM viewership_snapshots
-       WHERE "${col}" = :id
-       GROUP BY "timestamp", "${dimension}"
+       SELECT "timestamp", group_key, SUM(max_viewers) AS ts_total
+       FROM (
+         SELECT "timestamp", channel_id, "${dimension}" AS group_key,
+           MAX(concurrent_viewers) AS max_viewers
+         FROM viewership_snapshots
+         WHERE "${col}" = :id
+         GROUP BY "timestamp", channel_id, "${dimension}"
+       ) per_channel
+       GROUP BY "timestamp", group_key
      ) per_ts
      GROUP BY group_key
      ORDER BY total_ccv DESC`,
@@ -217,18 +249,24 @@ export async function getRegionBreakdown(scope: Scope): Promise<BreakdownResult[
  */
 export async function getTierBreakdown(scope: Scope): Promise<BreakdownResult[]> {
   const col = scopeColumnBare(scope);
+  // Three-level query: deduplicate per (timestamp, channel_id) using MAX,
+  // then sum per (timestamp, tier), then aggregate per tier.
   return db.raw(
     `SELECT group_key AS key,
        SUM(ts_total)::text AS total_ccv,
        ROUND(AVG(ts_total))::text AS avg_ccv,
        MAX(ts_total)::text AS peak_ccv
      FROM (
-       SELECT vs."timestamp", c.tier AS group_key,
-         SUM(vs.concurrent_viewers) AS ts_total
-       FROM viewership_snapshots vs
-       JOIN channels c ON c.id = vs.channel_id
-       WHERE vs."${col}" = :id
-       GROUP BY vs."timestamp", c.tier
+       SELECT "timestamp", group_key, SUM(max_viewers) AS ts_total
+       FROM (
+         SELECT vs."timestamp", vs.channel_id, c.tier AS group_key,
+           MAX(vs.concurrent_viewers) AS max_viewers
+         FROM viewership_snapshots vs
+         JOIN channels c ON c.id = vs.channel_id
+         WHERE vs."${col}" = :id
+         GROUP BY vs."timestamp", vs.channel_id, c.tier
+       ) per_channel
+       GROUP BY "timestamp", group_key
      ) per_ts
      GROUP BY group_key
      ORDER BY total_ccv DESC`,
@@ -237,27 +275,32 @@ export async function getTierBreakdown(scope: Scope): Promise<BreakdownResult[]>
 }
 
 export async function getChannelLeaderboard(scope: Scope, limit = 25): Promise<LeaderboardEntry[]> {
-  return applyScope(db(TABLE), scope)
-    .join('channels', 'channels.id', 'viewership_snapshots.channel_id')
-    .select(
-      'viewership_snapshots.channel_id',
-      'channels.display_name',
-      'channels.tier',
-      'channels.language',
-      'viewership_snapshots.platform',
-    )
-    .max('concurrent_viewers as peak_ccv')
-    .avg('concurrent_viewers as avg_ccv')
-    .sum('concurrent_viewers as total_viewed_minutes')
-    .groupBy(
-      'viewership_snapshots.channel_id',
-      'channels.display_name',
-      'channels.tier',
-      'channels.language',
-      'viewership_snapshots.platform',
-    )
-    .orderBy('peak_ccv', 'desc')
-    .limit(limit);
+  // Deduplicate per (timestamp, channel_id) using MAX first, then aggregate per channel.
+  // This avoids inflated totals when a channel has rows under multiple broadcast days.
+  const col = scopeColumnBare(scope);
+  return db.raw(
+    `SELECT
+       pc.channel_id,
+       c.display_name,
+       c.tier,
+       c.language,
+       pc.platform,
+       MAX(pc.max_viewers)::text AS peak_ccv,
+       ROUND(AVG(pc.max_viewers))::text AS avg_ccv,
+       SUM(pc.max_viewers)::text AS total_viewed_minutes
+     FROM (
+       SELECT "timestamp", channel_id, platform,
+         MAX(concurrent_viewers) AS max_viewers
+       FROM viewership_snapshots
+       WHERE "${col}" = :id
+       GROUP BY "timestamp", channel_id, platform
+     ) pc
+     JOIN channels c ON c.id = pc.channel_id
+     GROUP BY pc.channel_id, c.display_name, c.tier, c.language, pc.platform
+     ORDER BY peak_ccv DESC
+     LIMIT :limit`,
+    { id: scope.id, limit },
+  ).then((r: { rows: LeaderboardEntry[] }) => r.rows);
 }
 
 export async function getTimeSeriesData(scope: Scope, intervalSeconds = 60): Promise<TimeSeriesBucket[]> {
