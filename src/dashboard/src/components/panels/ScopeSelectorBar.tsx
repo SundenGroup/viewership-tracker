@@ -47,7 +47,10 @@ export function ScopeSelectorBar({
         {levels.map((l) => (
           <button
             key={l.value}
-            onClick={() => onScopeLevelChange(l.value)}
+            onClick={() => {
+              onScopeLevelChange(l.value);
+              window.umami?.track('scope-change', { level: l.value });
+            }}
             className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
               scopeLevel === l.value
                 ? 'bg-clutch-red text-white'
@@ -63,7 +66,11 @@ export function ScopeSelectorBar({
       {scopeLevel === 'stage' && stages.length > 0 && (
         <select
           value={selectedStageId}
-          onChange={(e) => onStageIdChange(e.target.value)}
+          onChange={(e) => {
+            const stage = stages.find((s) => s.id === e.target.value);
+            onStageIdChange(e.target.value);
+            window.umami?.track('scope-stage-select', { stageName: stage?.name ?? 'unknown' });
+          }}
           className="rounded-md border border-navy-700 bg-navy-800 px-2.5 py-1 text-xs text-gray-200 outline-none focus:border-clutch-red/50"
         >
           {stages.map((s) => (
@@ -78,7 +85,11 @@ export function ScopeSelectorBar({
       {scopeLevel === 'day' && allDays.length > 0 && (
         <select
           value={selectedDayId}
-          onChange={(e) => onDayIdChange(e.target.value)}
+          onChange={(e) => {
+            const day = allDays.find((d) => d.id === e.target.value);
+            onDayIdChange(e.target.value);
+            window.umami?.track('scope-day-select', { dayLabel: day?.label ?? 'unknown' });
+          }}
           className="rounded-md border border-navy-700 bg-navy-800 px-2.5 py-1 text-xs text-gray-200 outline-none focus:border-clutch-red/50"
         >
           {hasMultipleStages

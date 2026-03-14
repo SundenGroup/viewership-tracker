@@ -46,6 +46,16 @@ export function PublicDashboardPage() {
 
   const seriesId = seriesInfo?.id;
 
+  // ── Track public dashboard view ──────────────────────────────────────
+  useEffect(() => {
+    if (seriesInfo && shortName) {
+      window.umami?.track('public-dashboard-view', {
+        series: seriesInfo.name,
+        shortName,
+      });
+    }
+  }, [seriesInfo?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Live data via WS + REST polling ────────────────────────────────────
 
   const pollingData = usePublicPollingData(shortName, seriesId);
