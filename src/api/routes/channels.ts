@@ -265,6 +265,10 @@ router.post('/:seriesId/channels', requireRole('admin', 'editor'), async (req: R
 
     // Strip broadcast_day_ids from body before inserting (it's not a column on channels)
     const { broadcast_day_ids: _dayIds, ...channelBody } = req.body;
+    // Normalize language to base code (e.g. en-US → en)
+    if (channelBody.language && typeof channelBody.language === 'string') {
+      channelBody.language = channelBody.language.split('-')[0].toLowerCase();
+    }
     const channel = await ChannelModel.create({
       ...channelBody,
       channel_identifier: resolvedIdentifier,
@@ -329,6 +333,10 @@ router.post('/:seriesId/channels/bulk', requireRole('admin', 'editor'), async (r
         }
         // Strip broadcast_day_ids from individual channel objects (not a DB column)
         const { broadcast_day_ids: _bdi, ...chBody } = ch;
+        // Normalize language to base code (e.g. en-US → en)
+        if (chBody.language && typeof chBody.language === 'string') {
+          chBody.language = chBody.language.split('-')[0].toLowerCase();
+        }
         const created = await ChannelModel.create({
           ...chBody,
           channel_identifier: resolvedId,
@@ -361,6 +369,10 @@ router.put('/channels/:id', requireRole('admin', 'editor'), async (req: Request,
     if (!existing) {
       res.status(404).json({ error: 'Channel not found' });
       return;
+    }
+    // Normalize language to base code (e.g. en-US → en)
+    if (req.body.language && typeof req.body.language === 'string') {
+      req.body.language = req.body.language.split('-')[0].toLowerCase();
     }
     const updated = await ChannelModel.update(req.params.id as string, req.body);
 

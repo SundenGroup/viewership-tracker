@@ -42,7 +42,7 @@ export function buildFilterClauses(filter?: ViewFilter): { sql: string; bindings
   const parts: string[] = [];
   const bindings: Record<string, unknown> = {};
   if (filter?.languages?.length) {
-    parts.push('AND language = ANY(:filterLanguages)');
+    parts.push("AND SPLIT_PART(language, '-', 1) = ANY(:filterLanguages)");
     bindings.filterLanguages = filter.languages;
   }
   if (filter?.platforms?.length) {
@@ -165,7 +165,9 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
   }
 
   // View Group filter (language / platform)
-  if (filter?.languages?.length) query.whereIn('viewership_snapshots.language', filter.languages);
+  if (filter?.languages?.length) {
+    query.whereRaw("SPLIT_PART(viewership_snapshots.language, '-', 1) = ANY(?)", [filter.languages]);
+  }
   if (filter?.platforms?.length) query.whereIn('viewership_snapshots.platform', filter.platforms);
 
   return query;
@@ -277,7 +279,7 @@ export async function getTierBreakdown(scope: Scope, filter?: ViewFilter): Promi
   const col = scopeColumnBare(scope);
   const f = buildFilterClauses(filter);
   // Tier filter clauses need vs. prefix — rewrite filter SQL with alias
-  const fSql = f.sql.replace(/\bAND language\b/g, 'AND vs.language').replace(/\bAND platform\b/g, 'AND vs.platform');
+  const fSql = f.sql.replace(/\blanguage\b/g, 'vs.language').replace(/\bplatform\b/g, 'vs.platform');
   // Three-level query: deduplicate per (timestamp, channel_id) using MAX,
   // then sum per (timestamp, tier), then aggregate per tier.
   return db.raw(

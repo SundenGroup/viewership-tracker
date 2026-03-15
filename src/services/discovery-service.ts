@@ -269,7 +269,7 @@ export class DiscoveryService {
             platform,
             channel_identifier: stream.channelIdentifier,
             display_name: stream.displayName,
-            language: stream.language,
+            language: stream.language ? stream.language.split('-')[0].toLowerCase() : null,
             tier: 'community',
             source: 'auto_discovered',
             is_active: false,
