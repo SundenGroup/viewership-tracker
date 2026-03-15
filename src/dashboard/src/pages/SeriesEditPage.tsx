@@ -715,11 +715,11 @@ export function SeriesEditPage({
                   placeholder="e.g. 493057"
                 />
               </FormField>
-              <FormField label="YouTube Game ID">
+              <FormField label="YouTube Game Name">
                 <TextInput
                   value={form.discovery_game_ids_youtube}
                   onChange={(e) => updateField('discovery_game_ids_youtube', e.target.value)}
-                  placeholder="e.g. PUBG"
+                  placeholder="e.g. GeoGuessr"
                 />
               </FormField>
               <FormField label="Kick Category ID">

@@ -845,32 +845,49 @@ export class YouTubeAdapter implements PlatformAdapter {
    * However, discovery runs less frequently than polling, so the quota impact is manageable.
    */
   async searchLiveStreams(
-    _gameId?: string,
+    gameId?: string,
     keywords?: string[],
   ): Promise<DiscoveredStream[]> {
-    if (!keywords || keywords.length === 0) return [];
+    // Build effective search terms by combining game name + keywords
+    // This mirrors Twitch's game-scoped discovery: filter by game, then by keyword
+    const searchTerms: string[] = [];
+    if (keywords && keywords.length > 0) {
+      if (gameId) {
+        // Combine game name with each keyword (e.g., "GeoGuessr watch party")
+        for (const kw of keywords) searchTerms.push(`${gameId} ${kw}`);
+      } else {
+        searchTerms.push(...keywords);
+      }
+    } else if (gameId) {
+      // Game name only — find all live streams for this game
+      searchTerms.push(gameId);
+    } else {
+      return [];
+    }
 
-    // Search for each keyword, collect unique video IDs
+    // Search for each term, collect unique video IDs
     const seenVideoIds = new Set<string>();
     const searchResults: Array<{ videoId: string; snippet: YouTubeSearchItem['snippet'] }> = [];
 
-    for (const keyword of keywords) {
-      if (!this.consumeQuota(QUOTA_COST.search, `searchLiveStreams("${keyword}")`)) {
+    for (const searchTerm of searchTerms) {
+      if (!this.consumeQuota(QUOTA_COST.search, `searchLiveStreams("${searchTerm}")`)) {
         break;
       }
 
       let nextPageToken: string | undefined;
-      const maxPages = 2; // 2 pages × 50 results = up to 100 per keyword
+      const maxPages = 2; // 2 pages × 50 results = up to 100 per term
 
       for (let page = 0; page < maxPages; page++) {
         const result = await this.requestWithRetry(async () => {
           const params: Record<string, string | number> = {
-            q: keyword,
+            q: searchTerm,
             eventType: 'live',
             type: 'video',
             part: 'id,snippet',
             maxResults: 50,
           };
+          // Scope to Gaming category when a game name is configured
+          if (gameId) params.videoCategoryId = '20';
           if (nextPageToken) params.pageToken = nextPageToken;
 
           const { data } = await this.client.get<YouTubeListResponse<YouTubeSearchItem>>(
@@ -878,7 +895,7 @@ export class YouTubeAdapter implements PlatformAdapter {
             { params },
           );
           return data;
-        }, `searchLiveStreams("${keyword}")`);
+        }, `searchLiveStreams("${searchTerm}")`);
 
         if (!result || result.items.length === 0) break;
 
@@ -893,7 +910,7 @@ export class YouTubeAdapter implements PlatformAdapter {
         if (!nextPageToken) break;
 
         // Additional pages cost quota too
-        if (page < maxPages - 1 && !this.consumeQuota(QUOTA_COST.search, `searchLiveStreams("${keyword}") page ${page + 2}`)) {
+        if (page < maxPages - 1 && !this.consumeQuota(QUOTA_COST.search, `searchLiveStreams("${searchTerm}") page ${page + 2}`)) {
           break;
         }
       }
@@ -948,6 +965,7 @@ export class YouTubeAdapter implements PlatformAdapter {
     }
 
     logger.debug(`YouTube searchLiveStreams: found ${streams.length} streams (after keyword filter)`, {
+      gameId,
       keywords,
       quotaUsed: this.quotaUsed,
     });
