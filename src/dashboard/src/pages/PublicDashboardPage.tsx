@@ -9,6 +9,7 @@ import {
   RegionDistPanel,
   SummaryBarPanel,
   ScopeSelectorBar,
+  ViewGroupFilter,
 } from '@/components/panels';
 import { PublicLayout } from '@/components/layout/PublicLayout';
 import { Spinner } from '@/components/common/Loader';
@@ -16,7 +17,7 @@ import { usePublicPollingData } from '@/hooks/usePublicPollingData';
 import { usePollingApi } from '@/hooks/useApi';
 import * as api from '@/services/api';
 import type { PublicSeriesInfo } from '@/services/api';
-import type { ScopeLevel, MetricsResponse, LiveCCVResponse } from '@/types/api';
+import type { ScopeLevel, MetricsResponse, LiveCCVResponse, ViewGroup } from '@/types/api';
 import type { ConnectionStatus } from '@/hooks/useWebSocket';
 
 export function PublicDashboardPage() {
@@ -70,6 +71,22 @@ export function PublicDashboardPage() {
   const [scopeDayId, setScopeDayId] = useState(urlScope === 'day' ? urlId : '');
   const [scopeStageId, setScopeStageId] = useState(urlScope === 'stage' ? urlId : '');
 
+  // ── View Group filter state (from URL for shareable links) ──────────
+  const urlGroup = searchParams.get('group');
+  const [activeGroupName, setActiveGroupName] = useState<string | null>(urlGroup);
+
+  const viewGroups = useMemo<ViewGroup[]>(() => {
+    return (seriesInfo?.viewGroups as ViewGroup[]) ?? [];
+  }, [seriesInfo]);
+
+  const activeGroup = useMemo(() => {
+    return viewGroups.find((g) => g.name === activeGroupName) ?? null;
+  }, [viewGroups, activeGroupName]);
+
+  const filterLanguages = activeGroup?.languages;
+  const filterPlatforms = activeGroup?.platforms;
+  const filterKey = activeGroupName ?? '';
+
   const hasMultipleStages = (seriesInfo?.stages.length ?? 0) >= 2;
 
   const allBroadcastDays = useMemo(() => {
@@ -104,53 +121,58 @@ export function PublicDashboardPage() {
     return { level: 'series', id: seriesId, label: 'Full Series' };
   }, [scopeLevel, scopeStageId, scopeDayId, seriesId, seriesInfo, allBroadcastDays]);
 
-  // ── Sync URL to reflect resolved scope ──────────────────────────────
+  // ── Sync URL to reflect resolved scope + group ──────────────────────
   useEffect(() => {
     if (!dashboardScope) return;
-    if (dashboardScope.level === 'series') {
-      setSearchParams({}, { replace: true });
-    } else {
-      setSearchParams(
-        { scope: dashboardScope.level, id: dashboardScope.id },
-        { replace: true },
-      );
+    const params: Record<string, string> = {};
+    if (dashboardScope.level !== 'series') {
+      params.scope = dashboardScope.level;
+      params.id = dashboardScope.id;
     }
-  }, [dashboardScope?.level, dashboardScope?.id, setSearchParams]);
+    if (activeGroupName) {
+      params.group = activeGroupName;
+    }
+    setSearchParams(params, { replace: true });
+  }, [dashboardScope?.level, dashboardScope?.id, activeGroupName, setSearchParams]);
 
-  // ── Scoped metrics (when scope ≠ series) ───────────────────────────────
+  // ── Scoped metrics (when scope ≠ series OR view group active) ──────────
 
   const scopeKey = dashboardScope ? `${dashboardScope.level}:${dashboardScope.id}` : '';
 
+  const needsScopedFetch = !!dashboardScope && (
+    dashboardScope.level !== 'series' || !!activeGroup
+  );
+
   const { data: scopedMetrics, loading: scopedMetricsLoading } = usePollingApi<MetricsResponse>(
     () =>
-      dashboardScope && dashboardScope.level !== 'series' && shortName
-        ? api.getPublicMetrics(shortName, dashboardScope.level, dashboardScope.id)
+      needsScopedFetch && shortName && dashboardScope
+        ? api.getPublicMetrics(shortName, dashboardScope.level, dashboardScope.id, filterLanguages, filterPlatforms)
         : Promise.resolve(null as unknown as MetricsResponse),
-    [scopeKey, shortName],
-    { intervalMs: 30_000, enabled: !!dashboardScope && dashboardScope.level !== 'series' },
+    [scopeKey, shortName, filterKey],
+    { intervalMs: 30_000, enabled: needsScopedFetch && !!shortName },
   );
 
-  // ── Scoped live CCV (when scope ≠ series) ─────────────────────────────
+  // ── Scoped live CCV (when scope ≠ series OR view group active) ─────
   const { data: scopedLiveCCV, loading: scopedLiveCCVLoading } = usePollingApi<LiveCCVResponse>(
     () =>
-      shortName && dashboardScope && dashboardScope.level !== 'series'
-        ? api.getPublicLiveCCV(shortName, dashboardScope.level, dashboardScope.id)
+      shortName && needsScopedFetch && dashboardScope
+        ? api.getPublicLiveCCV(shortName, dashboardScope.level, dashboardScope.id, filterLanguages, filterPlatforms)
         : Promise.resolve(null as unknown as LiveCCVResponse),
-    [scopeKey, shortName],
-    { intervalMs: 30_000, enabled: !!shortName && !!dashboardScope && dashboardScope.level !== 'series' },
+    [scopeKey, shortName, filterKey],
+    { intervalMs: 30_000, enabled: !!shortName && needsScopedFetch },
   );
 
-  const activeMetrics = dashboardScope?.level !== 'series' && scopedMetrics
+  const activeMetrics = needsScopedFetch && scopedMetrics
     ? scopedMetrics
     : pollingData.metrics;
-  const activeMetricsLoading = dashboardScope?.level !== 'series'
+  const activeMetricsLoading = needsScopedFetch
     ? scopedMetricsLoading
     : pollingData.metricsLoading;
 
-  const activeLiveCCV = dashboardScope?.level !== 'series' && scopedLiveCCV
+  const activeLiveCCV = needsScopedFetch && scopedLiveCCV
     ? scopedLiveCCV
     : pollingData.liveCCV;
-  const activeLiveCCVLoading = dashboardScope?.level !== 'series'
+  const activeLiveCCVLoading = needsScopedFetch
     ? scopedLiveCCVLoading
     : pollingData.liveCCVLoading;
 
@@ -206,18 +228,27 @@ export function PublicDashboardPage() {
           loading={activeMetricsLoading}
         />
 
-        {/* Scope selector */}
-        <ScopeSelectorBar
-          scopeLevel={scopeLevel}
-          onScopeLevelChange={setScopeLevel}
-          selectedDayId={scopeDayId}
-          onDayIdChange={setScopeDayId}
-          selectedStageId={scopeStageId}
-          onStageIdChange={setScopeStageId}
-          stages={seriesInfo.stages as any}
-          hasMultipleStages={hasMultipleStages}
-          activeLabel={resolvedScope.label}
-        />
+        {/* Scope selector + View Group filter */}
+        <div className="flex flex-wrap items-center gap-3">
+          <ScopeSelectorBar
+            scopeLevel={scopeLevel}
+            onScopeLevelChange={setScopeLevel}
+            selectedDayId={scopeDayId}
+            onDayIdChange={setScopeDayId}
+            selectedStageId={scopeStageId}
+            onStageIdChange={setScopeStageId}
+            stages={seriesInfo.stages as any}
+            hasMultipleStages={hasMultipleStages}
+            activeLabel={resolvedScope.label}
+          />
+          {viewGroups.length > 0 && (
+            <ViewGroupFilter
+              groups={viewGroups}
+              active={activeGroupName}
+              onChange={setActiveGroupName}
+            />
+          )}
+        </div>
 
         {/* Total CCV + Platform Breakdown */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -239,6 +270,8 @@ export function PublicDashboardPage() {
           scope={{ level: resolvedScope.level, id: resolvedScope.id }}
           publicShortName={shortName}
           broadcastDays={allBroadcastDays}
+          languages={filterLanguages}
+          platforms={filterPlatforms}
         />
 
         {/* Channel Leaderboard + Language/Region */}
@@ -249,6 +282,8 @@ export function PublicDashboardPage() {
             loading={activeLiveCCVLoading}
             scope={{ level: resolvedScope.level, id: resolvedScope.id }}
             publicShortName={shortName}
+            languages={filterLanguages}
+            platforms={filterPlatforms}
           />
           <div className="space-y-6">
             <LanguageDistPanel

@@ -41,6 +41,13 @@ interface StageForm {
   _deleted?: boolean;
 }
 
+interface ViewGroupForm {
+  tempId: string;
+  name: string;
+  languages: string; // comma-separated
+  platforms: string; // comma-separated
+}
+
 interface SeriesForm {
   name: string;
   short_name: string;
@@ -59,6 +66,7 @@ interface SeriesForm {
   status: TournamentStatus;
   min_role: UserRole;
   stages: StageForm[];
+  viewGroups: ViewGroupForm[];
 }
 
 interface SeriesEditPageProps {
@@ -94,6 +102,15 @@ function makeDay(): DayForm {
     date: '',
     broadcast_start_time: '',
     broadcast_end_time: '',
+  };
+}
+
+function makeViewGroup(): ViewGroupForm {
+  return {
+    tempId: tempId(),
+    name: '',
+    languages: '',
+    platforms: '',
   };
 }
 
@@ -157,6 +174,12 @@ function seriesDetailToForm(detail: SeriesWithStages): SeriesForm {
           broadcast_end_time: endParts.time,
         };
       }),
+    })),
+    viewGroups: ((detail.metadata?.viewGroups as Array<{ name: string; languages?: string[]; platforms?: string[] }>) ?? []).map((g) => ({
+      tempId: tempId(),
+      name: g.name ?? '',
+      languages: (g.languages ?? []).join(', '),
+      platforms: (g.platforms ?? []).join(', '),
     })),
   };
 }
@@ -286,6 +309,32 @@ export function SeriesEditPage({
     });
   };
 
+  // ── View Group updaters ──────────────────────────────────────────────
+
+  const addViewGroup = () => {
+    setForm((prev) => ({
+      ...prev,
+      viewGroups: [...prev.viewGroups, makeViewGroup()],
+    }));
+  };
+
+  const removeViewGroup = (idx: number) => {
+    setForm((prev) => ({
+      ...prev,
+      viewGroups: prev.viewGroups.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const updateViewGroup = (idx: number, key: keyof ViewGroupForm, value: string) => {
+    setForm((prev) => {
+      const groups = [...prev.viewGroups];
+      const group = groups[idx];
+      if (!group) return prev;
+      groups[idx] = { ...group, [key]: value };
+      return { ...prev, viewGroups: groups };
+    });
+  };
+
   // ── Game ID Lookup ─────────────────────────────────────────────────
 
   const handleLookupGameIds = async () => {
@@ -345,6 +394,23 @@ export function SeriesEditPage({
       if (form.discovery_game_ids_youtube.trim()) gameIds.youtube = form.discovery_game_ids_youtube.trim();
       if (form.discovery_game_ids_kick.trim()) gameIds.kick = form.discovery_game_ids_kick.trim();
 
+      // Build viewGroups for metadata (filter out empty groups)
+      const viewGroups = form.viewGroups
+        .filter((g) => g.name.trim())
+        .map((g) => {
+          const langs = g.languages.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+          const plats = g.platforms.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+          return {
+            name: g.name.trim(),
+            ...(langs.length > 0 ? { languages: langs } : {}),
+            ...(plats.length > 0 ? { platforms: plats } : {}),
+          };
+        });
+
+      // Merge with existing metadata (preserve autoReports, blocklist, etc.)
+      const existingMetadata = (seriesDetail.metadata ?? {}) as Record<string, unknown>;
+      const updatedMetadata = { ...existingMetadata, viewGroups };
+
       await api.updateSeries(seriesId, {
         name: form.name.trim(),
         short_name: form.short_name.trim() || undefined,
@@ -360,6 +426,7 @@ export function SeriesEditPage({
         discovery_keywords: keywords.length > 0 ? keywords : [],
         discovery_game_ids: gameIds,
         discovery_default_tier: form.discovery_default_tier,
+        metadata: updatedMetadata,
       });
 
       // 2. Process stages
@@ -924,6 +991,70 @@ export function SeriesEditPage({
           );
         })}
       </div>
+
+      {/* View Groups */}
+      <Card
+        title="View Groups"
+        subtitle="Named filter presets for language and platform breakdowns (e.g. Western, Asian)"
+      >
+        <div className="space-y-3">
+          {form.viewGroups.length === 0 && (
+            <p className="py-2 text-center text-xs text-gray-600">
+              No view groups configured. Add groups to filter dashboard data by language and platform.
+            </p>
+          )}
+
+          {form.viewGroups.map((group, gi) => (
+            <div
+              key={group.tempId}
+              className="flex items-start gap-2 rounded-lg bg-navy-800/40 p-3"
+            >
+              <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-3">
+                <FormField label="Group Name" required>
+                  <TextInput
+                    value={group.name}
+                    onChange={(e) => updateViewGroup(gi, 'name', e.target.value)}
+                    placeholder="e.g. Western"
+                  />
+                </FormField>
+                <FormField label="Languages">
+                  <TextInput
+                    value={group.languages}
+                    onChange={(e) => updateViewGroup(gi, 'languages', e.target.value)}
+                    placeholder="en, es, pt, de, fr"
+                  />
+                  <p className="mt-0.5 text-[10px] text-gray-600">Comma-separated language codes</p>
+                </FormField>
+                <FormField label="Platforms">
+                  <TextInput
+                    value={group.platforms}
+                    onChange={(e) => updateViewGroup(gi, 'platforms', e.target.value)}
+                    placeholder="twitch, youtube, kick"
+                  />
+                  <p className="mt-0.5 text-[10px] text-gray-600">Comma-separated platform names</p>
+                </FormField>
+              </div>
+              <button
+                onClick={() => removeViewGroup(gi)}
+                className="mt-5 flex-shrink-0 text-gray-600 transition-colors hover:text-accent-red"
+                title="Remove group"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path
+                    fillRule="evenodd"
+                    d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </button>
+            </div>
+          ))}
+
+          <Button variant="ghost" size="sm" onClick={addViewGroup}>
+            + Add View Group
+          </Button>
+        </div>
+      </Card>
 
       {/* Submit */}
       <div className="flex items-center justify-between rounded-xl border border-navy-700/50 bg-navy-850 px-6 py-4">

@@ -40,6 +40,16 @@ function parseScope(
   return { level: scope as 'day' | 'stage', id };
 }
 
+function parseViewFilter(query: Record<string, unknown>): ViewershipSnapshotModel.ViewFilter | undefined {
+  const languages = (query.languages as string)?.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  const platforms = (query.platforms as string)?.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (!languages?.length && !platforms?.length) return undefined;
+  return {
+    ...(languages?.length ? { languages } : {}),
+    ...(platforms?.length ? { platforms } : {}),
+  };
+}
+
 // Apply requirePublicSeries to all routes under /:shortName
 router.use('/:shortName', requirePublicSeries('shortName'));
 
@@ -49,6 +59,9 @@ router.get('/:shortName', async (req: Request, res: Response, next: NextFunction
   try {
     const series = getPublicSeries(req);
     const detail = await TournamentSeriesModel.findWithStages(series.id);
+
+    // Extract view groups from metadata
+    const viewGroups = (series.metadata as Record<string, unknown>)?.viewGroups ?? [];
 
     res.json({
       id: series.id,
@@ -60,6 +73,7 @@ router.get('/:shortName', async (req: Request, res: Response, next: NextFunction
       timezone: series.timezone,
       startDate: series.start_date,
       endDate: series.end_date,
+      viewGroups,
       stages: detail
         ? detail.stages.map((s) => ({
             id: s.id,
@@ -90,7 +104,8 @@ router.get('/:shortName/live-ccv', async (req: Request, res: Response, next: Nex
     const series = getPublicSeries(req);
     const scope = parseScope(req.query as Record<string, unknown>, series.id);
     const scopeArg = scope && scope.level !== 'series' ? scope : undefined;
-    const snapshots = await ViewershipSnapshotModel.getLatestSnapshot(series.id, scopeArg);
+    const filter = parseViewFilter(req.query as Record<string, unknown>);
+    const snapshots = await ViewershipSnapshotModel.getLatestSnapshot(series.id, scopeArg, filter);
 
     const totalCCV = snapshots.reduce((sum, s) => sum + s.concurrent_viewers, 0);
     const liveCount = snapshots.filter((s) => s.concurrent_viewers > 0).length;
@@ -128,6 +143,8 @@ router.get('/:shortName/metrics', async (req: Request, res: Response, next: Next
       return;
     }
 
+    const filter = parseViewFilter(req.query as Record<string, unknown>);
+
     const [
       peakCCV,
       avgCCV,
@@ -137,13 +154,13 @@ router.get('/:shortName/metrics', async (req: Request, res: Response, next: Next
       regionBreakdown,
       channelLeaderboard,
     ] = await Promise.all([
-      ViewershipSnapshotModel.getPeakCCV(scopeObj),
-      ViewershipSnapshotModel.getAverageCCV(scopeObj),
-      ViewershipSnapshotModel.getTotalViewedHours(scopeObj),
-      ViewershipSnapshotModel.getPlatformBreakdown(scopeObj),
-      ViewershipSnapshotModel.getLanguageBreakdown(scopeObj),
-      ViewershipSnapshotModel.getRegionBreakdown(scopeObj),
-      ViewershipSnapshotModel.getChannelLeaderboard(scopeObj),
+      ViewershipSnapshotModel.getPeakCCV(scopeObj, filter),
+      ViewershipSnapshotModel.getAverageCCV(scopeObj, filter),
+      ViewershipSnapshotModel.getTotalViewedHours(scopeObj, filter),
+      ViewershipSnapshotModel.getPlatformBreakdown(scopeObj, filter),
+      ViewershipSnapshotModel.getLanguageBreakdown(scopeObj, filter),
+      ViewershipSnapshotModel.getRegionBreakdown(scopeObj, filter),
+      ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, 25, filter),
     ]);
 
     res.json({
@@ -210,8 +227,10 @@ router.get('/:shortName/timeseries', async (req: Request, res: Response, next: N
       return;
     }
 
+    const filter = parseViewFilter(req.query as Record<string, unknown>);
+
     if (groupBy === 'total') {
-      const buckets = await ViewershipSnapshotModel.getTimeSeriesData(scopeObj, interval);
+      const buckets = await ViewershipSnapshotModel.getTimeSeriesData(scopeObj, interval, filter);
       res.json({
         scope: scopeObj,
         interval,
@@ -235,6 +254,7 @@ router.get('/:shortName/timeseries', async (req: Request, res: Response, next: N
 
     const groupColumn = groupBy === 'channel' ? 'channel_id' : groupBy;
 
+    const fClauses = filter ? ViewershipSnapshotModel.buildFilterClauses(filter) : { sql: '', bindings: {} };
     const rows: Array<{
       bucket: Date;
       group_key: string;
@@ -254,12 +274,12 @@ router.get('/:shortName/timeseries', async (req: Request, res: Response, next: N
              "${groupColumn}" AS group_key,
              MAX(concurrent_viewers) AS max_viewers
            FROM viewership_snapshots
-           WHERE "${scopeColumn}" = :id
+           WHERE "${scopeColumn}" = :id ${fClauses.sql}
            GROUP BY bucket, channel_id, group_key
          ) per_channel
          GROUP BY bucket, group_key
          ORDER BY bucket ASC, total_ccv DESC`,
-        { interval, id: scopeObj.id },
+        { interval, id: scopeObj.id, ...fClauses.bindings },
       )
       .then(
         (r: {
@@ -334,7 +354,8 @@ router.get('/:shortName/leaderboard', async (req: Request, res: Response, next: 
       }
     }
 
-    const leaderboard = await ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, 9999);
+    const filter = parseViewFilter(req.query as Record<string, unknown>);
+    const leaderboard = await ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, 9999, filter);
 
     res.json({
       scope: scopeObj,

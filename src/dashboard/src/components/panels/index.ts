@@ -8,6 +8,7 @@ export { DiscoveryFeedPanel } from './DiscoveryFeedPanel';
 export { SummaryBarPanel } from './SummaryBarPanel';
 export { ScopeSelectorBar } from './ScopeSelectorBar';
 export { ExportPanel } from './ExportPanel';
+export { ViewGroupFilter } from './ViewGroupFilter';
 
 // Legacy panels kept for reference
 export { LiveCCVPanel } from './LiveCCVPanel';

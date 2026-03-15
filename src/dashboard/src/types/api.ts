@@ -12,6 +12,14 @@ export interface AuthUser {
   created_at: string;
 }
 
+// ── View Groups ──────────────────────────────────────────────────────────
+
+export interface ViewGroup {
+  name: string;
+  languages?: string[];
+  platforms?: string[];
+}
+
 // ── Enums / Literals ──────────────────────────────────────────────────────
 
 export type TournamentStatus = 'draft' | 'active' | 'completed';

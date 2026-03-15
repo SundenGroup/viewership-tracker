@@ -25,6 +25,10 @@ interface TimeSeriesPanelProps {
   publicShortName?: string;
   /** Broadcast days for drawing day boundary markers on multi-day charts. */
   broadcastDays?: Array<{ label: string; broadcast_start: string | null }>;
+  /** View Group filter: language codes. */
+  languages?: string[];
+  /** View Group filter: platform identifiers. */
+  platforms?: string[];
 }
 
 type ViewMode = 'total' | 'platform' | 'language';
@@ -119,13 +123,15 @@ function snapToDataPoint(target: number, sortedTs: number[]): number | null {
 
 // ── Main Panel ─────────────────────────────────────────────────────────
 
-export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName, broadcastDays }: TimeSeriesPanelProps) {
+export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName, broadcastDays, languages, platforms }: TimeSeriesPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('total');
   const [interval, setInterval] = useState<IntervalOption>(60);
 
   const groupBy: TimeSeriesGroupBy = viewMode === 'total' ? 'total' : viewMode;
 
   const effectiveScope = scopeProp ?? { level: 'series' as ScopeLevel, id: seriesId! };
+
+  const filterKey = [languages?.join(','), platforms?.join(',')].filter(Boolean).join('|');
 
   const { data, loading, error } = usePollingApi(
     () => {
@@ -135,6 +141,8 @@ export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName, b
           id: effectiveScope.id,
           interval,
           groupBy,
+          languages,
+          platforms,
         });
       }
       return seriesId
@@ -143,10 +151,12 @@ export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName, b
             id: effectiveScope.id,
             interval,
             groupBy,
+            languages,
+            platforms,
           })
         : Promise.resolve(null);
     },
-    [effectiveScope.level, effectiveScope.id, interval, groupBy, publicShortName],
+    [effectiveScope.level, effectiveScope.id, interval, groupBy, publicShortName, filterKey],
     { intervalMs: 30_000 },
   );
 

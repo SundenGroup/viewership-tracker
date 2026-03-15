@@ -235,21 +235,29 @@ export function updateChannelDays(channelId: string, broadcastDayIds: string[]) 
 
 // ── Viewership ────────────────────────────────────────────────────────────
 
-export function getLiveCCV(seriesId: string, scope?: string, scopeId?: string) {
+/** Append comma-separated filter arrays to URL params when present. */
+function appendFilterParams(params: URLSearchParams, languages?: string[], platforms?: string[]) {
+  if (languages?.length) params.set('languages', languages.join(','));
+  if (platforms?.length) params.set('platforms', platforms.join(','));
+}
+
+export function getLiveCCV(seriesId: string, scope?: string, scopeId?: string, languages?: string[], platforms?: string[]) {
   const params = new URLSearchParams();
   if (scope && scopeId) {
     params.set('scope', scope);
     params.set('id', scopeId);
   }
+  appendFilterParams(params, languages, platforms);
   const qs = params.toString();
   return request<LiveCCVResponse>(`/api/viewership/live/${seriesId}${qs ? `?${qs}` : ''}`);
 }
 
-export function getChannelLeaderboard(seriesId: string, scope?: string, scopeEntityId?: string) {
+export function getChannelLeaderboard(seriesId: string, scope?: string, scopeEntityId?: string, languages?: string[], platforms?: string[]) {
   const params = new URLSearchParams();
   if (scope) params.set('scope', scope);
   if (scope === 'day' && scopeEntityId) params.set('dayId', scopeEntityId);
   if (scope === 'stage' && scopeEntityId) params.set('stageId', scopeEntityId);
+  appendFilterParams(params, languages, platforms);
   const qs = params.toString();
   return request<LeaderboardResponse>(`/api/viewership/leaderboard/${seriesId}${qs ? `?${qs}` : ''}`);
 }
@@ -278,8 +286,10 @@ export function getSnapshots(query: SnapshotQuery) {
   return request<PaginatedSnapshots>(`/api/viewership/snapshots?${params}`);
 }
 
-export function getMetrics(scope: ScopeLevel, id: string) {
-  return request<MetricsResponse>(`/api/viewership/metrics?scope=${scope}&id=${id}`);
+export function getMetrics(scope: ScopeLevel, id: string, languages?: string[], platforms?: string[]) {
+  const params = new URLSearchParams({ scope, id });
+  appendFilterParams(params, languages, platforms);
+  return request<MetricsResponse>(`/api/viewership/metrics?${params}`);
 }
 
 export interface TimeSeriesQuery {
@@ -289,10 +299,11 @@ export interface TimeSeriesQuery {
   groupBy?: TimeSeriesGroupBy;
 }
 
-export function getTimeSeries(query: TimeSeriesQuery) {
+export function getTimeSeries(query: TimeSeriesQuery & { languages?: string[]; platforms?: string[] }) {
   const params = new URLSearchParams({ scope: query.scope, id: query.id });
   if (query.interval) params.set('interval', String(query.interval));
   if (query.groupBy) params.set('groupBy', query.groupBy);
+  appendFilterParams(params, query.languages, query.platforms);
   return request<TimeSeriesResponse>(`/api/viewership/timeseries?${params}`);
 }
 
@@ -505,6 +516,12 @@ async function publicRequest<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface ViewGroup {
+  name: string;
+  languages?: string[];
+  platforms?: string[];
+}
+
 export interface PublicSeriesInfo {
   id: string;
   name: string;
@@ -515,6 +532,7 @@ export interface PublicSeriesInfo {
   timezone: string;
   startDate: string | null;
   endDate: string | null;
+  viewGroups: ViewGroup[];
   stages: Array<{
     id: string;
     name: string;
@@ -536,38 +554,42 @@ export function getPublicSeries(shortName: string) {
   return publicRequest<PublicSeriesInfo>(`/api/public/${shortName}`);
 }
 
-export function getPublicLiveCCV(shortName: string, scope?: string, scopeId?: string) {
+export function getPublicLiveCCV(shortName: string, scope?: string, scopeId?: string, languages?: string[], platforms?: string[]) {
   const params = new URLSearchParams();
   if (scope && scopeId) {
     params.set('scope', scope);
     params.set('id', scopeId);
   }
+  appendFilterParams(params, languages, platforms);
   const qs = params.toString();
   return publicRequest<LiveCCVResponse>(`/api/public/${shortName}/live-ccv${qs ? `?${qs}` : ''}`);
 }
 
-export function getPublicMetrics(shortName: string, scope?: ScopeLevel, id?: string) {
+export function getPublicMetrics(shortName: string, scope?: ScopeLevel, id?: string, languages?: string[], platforms?: string[]) {
   const params = new URLSearchParams();
   if (scope) params.set('scope', scope);
   if (id) params.set('id', id);
+  appendFilterParams(params, languages, platforms);
   const qs = params.toString() ? `?${params}` : '';
   return publicRequest<MetricsResponse>(`/api/public/${shortName}/metrics${qs}`);
 }
 
-export function getPublicTimeSeries(shortName: string, query: Omit<TimeSeriesQuery, 'scope' | 'id'> & { scope?: ScopeLevel; id?: string }) {
+export function getPublicTimeSeries(shortName: string, query: Omit<TimeSeriesQuery, 'scope' | 'id'> & { scope?: ScopeLevel; id?: string; languages?: string[]; platforms?: string[] }) {
   const params = new URLSearchParams();
   if (query.scope) params.set('scope', query.scope);
   if (query.id) params.set('id', query.id);
   if (query.interval) params.set('interval', String(query.interval));
   if (query.groupBy) params.set('groupBy', query.groupBy);
+  appendFilterParams(params, query.languages, query.platforms);
   return publicRequest<TimeSeriesResponse>(`/api/public/${shortName}/timeseries?${params}`);
 }
 
-export function getPublicLeaderboard(shortName: string, scope?: string, scopeEntityId?: string) {
+export function getPublicLeaderboard(shortName: string, scope?: string, scopeEntityId?: string, languages?: string[], platforms?: string[]) {
   const params = new URLSearchParams();
   if (scope) params.set('scope', scope);
   if (scope === 'day' && scopeEntityId) params.set('dayId', scopeEntityId);
   if (scope === 'stage' && scopeEntityId) params.set('stageId', scopeEntityId);
+  appendFilterParams(params, languages, platforms);
   const qs = params.toString();
   return publicRequest<LeaderboardResponse>(`/api/public/${shortName}/leaderboard${qs ? `?${qs}` : ''}`);
 }

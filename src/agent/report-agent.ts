@@ -65,6 +65,13 @@ export type ReportTemplate = 'daily_recap' | 'partner_full' | 'series_retrospect
 /** Delivery method for generated reports. */
 export type DeliveryMethod = 'local' | 'email' | 'storage';
 
+/** View Group definition stored in series metadata. */
+export interface ViewGroup {
+  name: string;
+  languages?: string[];
+  platforms?: string[];
+}
+
 /** Input to generateReport(). */
 export interface ReportRequest {
   scope: ReportScope;
@@ -80,6 +87,10 @@ export interface ReportRequest {
   skipNarratives?: boolean;
   /** Report detail level: 'simple' (top 10-20 channels) or 'detailed' (all channels). */
   detail?: 'simple' | 'detailed';
+  /** Optional view filter for language/platform filtering. */
+  filter?: ViewershipSnapshotModel.ViewFilter;
+  /** View group name (used in filename). */
+  groupName?: string;
 }
 
 /** Input to generateExport(). */
@@ -163,7 +174,7 @@ export class ReportAgent {
     const isDetailed = request.detail === 'detailed';
 
     // 1. Fetch the report payload
-    const payload = await this.fetchReportPayload(scope, request.id, request.ids, isDetailed);
+    const payload = await this.fetchReportPayload(scope, request.id, request.ids, isDetailed, request.filter);
 
     // 2. Validate minimum data quality
     this.validatePayload(payload);
@@ -208,7 +219,7 @@ export class ReportAgent {
       const tmpPath = await builder.buildHTML(htmlData);
 
       // 6. Handle delivery
-      finalPath = await this.handleDelivery(tmpPath, payload, scope, format, deliveryMethod);
+      finalPath = await this.handleDelivery(tmpPath, payload, scope, format, deliveryMethod, request.groupName);
     } else {
       // ── PDF / DOCX: Python subprocess with matplotlib charts ──────────
       // 3. Generate charts
@@ -243,7 +254,7 @@ export class ReportAgent {
       });
 
       // 6. Handle delivery
-      finalPath = await this.handleDelivery(tmpPath, payload, scope, format, deliveryMethod);
+      finalPath = await this.handleDelivery(tmpPath, payload, scope, format, deliveryMethod, request.groupName);
 
       // 7. Cleanup temp files
       await chartGenerator.cleanup();
@@ -358,12 +369,52 @@ export class ReportAgent {
     }
 
     logger.info('[ReportAgent] Auto-triggering daily recap', { broadcastDayId, seriesId });
+
+    // Generate unfiltered "All" report
     try {
       const result = await this.generateDailyRecap(broadcastDayId);
       this.reportGeneratedCallback?.(result);
     } catch (err) {
       logger.error('[ReportAgent] Auto daily recap failed', {
         broadcastDayId,
+        error: (err as Error).message,
+      });
+    }
+
+    // Generate one report per configured view group
+    try {
+      const series = await TournamentSeriesModel.findById(seriesId);
+      const viewGroups = ((series?.metadata as Record<string, unknown>)?.viewGroups as ViewGroup[]) ?? [];
+      for (const group of viewGroups) {
+        try {
+          const result = await this.generateReport({
+            scope: 'day',
+            id: broadcastDayId,
+            template: 'daily_recap',
+            format: autoConfig.format ?? 'html',
+            filter: {
+              ...(group.languages?.length ? { languages: group.languages } : {}),
+              ...(group.platforms?.length ? { platforms: group.platforms } : {}),
+            },
+            groupName: group.name,
+          });
+          this.reportGeneratedCallback?.(result);
+          logger.info('[ReportAgent] Generated view group report', {
+            broadcastDayId,
+            groupName: group.name,
+            filePath: result.filePath,
+          });
+        } catch (err) {
+          logger.error('[ReportAgent] View group daily recap failed', {
+            broadcastDayId,
+            groupName: group.name,
+            error: (err as Error).message,
+          });
+        }
+      }
+    } catch (err) {
+      logger.error('[ReportAgent] Failed to fetch view groups for auto-reports', {
+        seriesId,
         error: (err as Error).message,
       });
     }
@@ -426,6 +477,7 @@ export class ReportAgent {
     id?: string,
     ids?: string[],
     isDetailed = false,
+    filter?: ViewershipSnapshotModel.ViewFilter,
   ): Promise<ReportPayload> {
     let seriesId: string | undefined;
     let stageIds: string[] = [];
@@ -500,6 +552,13 @@ export class ReportAgent {
     if (broadcastDayIds.length > 0 && scope !== 'series') {
       channelIdQuery.whereIn('broadcast_day_id', broadcastDayIds);
     }
+    // Apply view filter to channel query
+    if (filter?.languages?.length) {
+      channelIdQuery.whereIn('language', filter.languages);
+    }
+    if (filter?.platforms?.length) {
+      channelIdQuery.whereIn('platform', filter.platforms);
+    }
     const channelIdsWithData = await channelIdQuery;
     const scopedChannelIds = channelIdsWithData.map(
       (r: { channel_id: string }) => r.channel_id,
@@ -513,14 +572,14 @@ export class ReportAgent {
       broadcastDayIds.map(async (dayId) => {
         const scopeObj: ViewershipSnapshotModel.Scope = { level: 'day', id: dayId };
         const [peak, avg, hours, platforms, languages, regions, tiers, leaderboard] = await Promise.all([
-          ViewershipSnapshotModel.getPeakCCV(scopeObj),
-          ViewershipSnapshotModel.getAverageCCV(scopeObj),
-          ViewershipSnapshotModel.getTotalViewedHours(scopeObj),
-          ViewershipSnapshotModel.getPlatformBreakdown(scopeObj),
-          ViewershipSnapshotModel.getLanguageBreakdown(scopeObj),
-          ViewershipSnapshotModel.getRegionBreakdown(scopeObj),
-          ViewershipSnapshotModel.getTierBreakdown(scopeObj),
-          ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, isDetailed ? 9999 : 10),
+          ViewershipSnapshotModel.getPeakCCV(scopeObj, filter),
+          ViewershipSnapshotModel.getAverageCCV(scopeObj, filter),
+          ViewershipSnapshotModel.getTotalViewedHours(scopeObj, filter),
+          ViewershipSnapshotModel.getPlatformBreakdown(scopeObj, filter),
+          ViewershipSnapshotModel.getLanguageBreakdown(scopeObj, filter),
+          ViewershipSnapshotModel.getRegionBreakdown(scopeObj, filter),
+          ViewershipSnapshotModel.getTierBreakdown(scopeObj, filter),
+          ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, isDetailed ? 9999 : 10, filter),
         ]);
         return {
           broadcastDayId: dayId,
@@ -1167,6 +1226,7 @@ Respond with ONLY the JSON object, no markdown code blocks.`;
     scope: ReportScope,
     format: string,
     method: DeliveryMethod,
+    groupName?: string,
   ): Promise<string> {
     const shortName = (payload.series.shortName ?? payload.series.name)
       .replace(/[^a-zA-Z0-9_-]/g, '_')
@@ -1182,7 +1242,10 @@ Respond with ONLY the JSON object, no markdown code blocks.`;
     } else {
       dateSuffix = new Date().toISOString().split('T')[0];         // fallback: today
     }
-    const filename = `${scope}_${dateSuffix}.${format}`;
+    const groupSuffix = groupName
+      ? `_${groupName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase()}`
+      : '';
+    const filename = `${scope}_${dateSuffix}${groupSuffix}.${format}`;
 
     switch (method) {
       case 'local': {

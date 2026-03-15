@@ -5,6 +5,7 @@ import * as ChannelBroadcastDayModel from '../../models/channel-broadcast-day';
 import * as BroadcastDayModel from '../../models/broadcast-day';
 import * as TournamentSeriesModel from '../../models/tournament-series';
 import { SteamAdapter } from '../../adapters/steam';
+import db from '../../utils/db';
 import logger from '../../utils/logger';
 import { requireRole } from '../middleware/auth';
 
@@ -362,6 +363,15 @@ router.put('/channels/:id', requireRole('admin', 'editor'), async (req: Request,
       return;
     }
     const updated = await ChannelModel.update(req.params.id as string, req.body);
+
+    // Retroactively update snapshot language if changed
+    if (req.body.language !== undefined && req.body.language !== existing.language) {
+      const count = await db('viewership_snapshots')
+        .where('channel_id', req.params.id as string)
+        .update({ language: req.body.language || null });
+      logger.info(`Retroactively updated language on ${count} snapshots for channel ${req.params.id} (${existing.language} → ${req.body.language})`);
+    }
+
     res.json(updated);
   } catch (err) {
     next(err);

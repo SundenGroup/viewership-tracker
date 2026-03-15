@@ -7,11 +7,22 @@ import * as ViewershipSnapshotModel from '../../models/viewership-snapshot';
 
 const router = Router();
 
-// GET /api/report-payload?scope={day|stage|multi_stage|series|custom}&id={uuid}&ids={csv}&startDate=&endDate=
+function parseViewFilter(query: Record<string, unknown>): ViewershipSnapshotModel.ViewFilter | undefined {
+  const languages = (query.languages as string)?.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  const platforms = (query.platforms as string)?.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (!languages?.length && !platforms?.length) return undefined;
+  return {
+    ...(languages?.length ? { languages } : {}),
+    ...(platforms?.length ? { platforms } : {}),
+  };
+}
+
+// GET /api/report-payload?scope={day|stage|multi_stage|series|custom}&id={uuid}&ids={csv}&startDate=&endDate=&languages=&platforms=
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { scope, id, ids, startDate, endDate, detail } = req.query;
     const isDetailed = detail === 'detailed';
+    const filter = parseViewFilter(req.query as Record<string, unknown>);
 
     if (!scope) {
       res.status(400).json({ error: 'scope is required (day|stage|multi_stage|series|custom)' });
@@ -140,6 +151,13 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     if (broadcastDayIds.length > 0 && scope !== 'series') {
       channelIdQuery.whereIn('broadcast_day_id', broadcastDayIds);
     }
+    // Apply view filter to channel query
+    if (filter?.languages?.length) {
+      channelIdQuery.whereIn('language', filter.languages);
+    }
+    if (filter?.platforms?.length) {
+      channelIdQuery.whereIn('platform', filter.platforms);
+    }
     const channelIdsWithData = await channelIdQuery;
     const scopedChannelIds = channelIdsWithData.map(
       (r: { channel_id: string }) => r.channel_id,
@@ -169,14 +187,14 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       broadcastDayIds.map(async (dayId) => {
         const scopeObj: ViewershipSnapshotModel.Scope = { level: 'day', id: dayId };
         const [peak, avg, hours, platforms, languages, regions, tiers, leaderboard] = await Promise.all([
-          ViewershipSnapshotModel.getPeakCCV(scopeObj),
-          ViewershipSnapshotModel.getAverageCCV(scopeObj),
-          ViewershipSnapshotModel.getTotalViewedHours(scopeObj),
-          ViewershipSnapshotModel.getPlatformBreakdown(scopeObj),
-          ViewershipSnapshotModel.getLanguageBreakdown(scopeObj),
-          ViewershipSnapshotModel.getRegionBreakdown(scopeObj),
-          ViewershipSnapshotModel.getTierBreakdown(scopeObj),
-          ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, isDetailed ? 9999 : 10),
+          ViewershipSnapshotModel.getPeakCCV(scopeObj, filter),
+          ViewershipSnapshotModel.getAverageCCV(scopeObj, filter),
+          ViewershipSnapshotModel.getTotalViewedHours(scopeObj, filter),
+          ViewershipSnapshotModel.getPlatformBreakdown(scopeObj, filter),
+          ViewershipSnapshotModel.getLanguageBreakdown(scopeObj, filter),
+          ViewershipSnapshotModel.getRegionBreakdown(scopeObj, filter),
+          ViewershipSnapshotModel.getTierBreakdown(scopeObj, filter),
+          ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, isDetailed ? 9999 : 10, filter),
         ]);
         return {
           broadcastDayId: dayId,
@@ -227,6 +245,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     res.json({
       generatedAt: new Date().toISOString(),
       scope,
+      filter: filter ?? null,
       series: {
         id: series.id,
         name: series.name,

@@ -12,6 +12,10 @@ interface ChannelLeaderboardPanelProps {
   scope: { level: ScopeLevel; id: string };
   /** When set, calls public API instead of authenticated API. */
   publicShortName?: string;
+  /** View Group filter: language codes. */
+  languages?: string[];
+  /** View Group filter: platform identifiers. */
+  platforms?: string[];
 }
 
 // ── Tier badge colors ────────────────────────────────────────────────────
@@ -59,7 +63,7 @@ function languageBadge(lang: string | null): string {
 
 // ── Component ────────────────────────────────────────────────────────────
 
-export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, publicShortName }: ChannelLeaderboardPanelProps) {
+export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, publicShortName, languages, platforms }: ChannelLeaderboardPanelProps) {
   const [expanded, setExpanded] = useLocalStorage<boolean>('cvt:leaderboardExpanded', false);
   const [sort, setSort] = useLocalStorage<LeaderboardSortState>('cvt:leaderboardSort', { field: 'peakCCV', dir: 'desc' });
   const [stats, setStats] = useState<LeaderboardStats[] | null>(null);
@@ -79,15 +83,15 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
     try {
       const scopeEntityId = scope.level !== 'series' ? scope.id : undefined;
       const result = publicShortName
-        ? await api.getPublicLeaderboard(publicShortName, scope.level, scopeEntityId)
-        : await api.getChannelLeaderboard(seriesId, scope.level, scopeEntityId);
+        ? await api.getPublicLeaderboard(publicShortName, scope.level, scopeEntityId, languages, platforms)
+        : await api.getChannelLeaderboard(seriesId, scope.level, scopeEntityId, languages, platforms);
       setStats(result.channels);
     } catch {
       // Silently handle — expanded view will just show live data
     } finally {
       setStatsLoading(false);
     }
-  }, [seriesId, scope.level, scope.id, publicShortName]);
+  }, [seriesId, scope.level, scope.id, publicShortName, languages, platforms]);
 
   useEffect(() => {
     if (expanded && seriesId) {

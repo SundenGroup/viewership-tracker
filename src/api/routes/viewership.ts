@@ -13,6 +13,16 @@ function parseScope(query: Record<string, unknown>): ViewershipSnapshotModel.Sco
   return { level: scope as 'day' | 'stage' | 'series', id: id as string };
 }
 
+function parseViewFilter(query: Record<string, unknown>): ViewershipSnapshotModel.ViewFilter | undefined {
+  const languages = (query.languages as string)?.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  const platforms = (query.platforms as string)?.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (!languages?.length && !platforms?.length) return undefined;
+  return {
+    ...(languages?.length ? { languages } : {}),
+    ...(platforms?.length ? { platforms } : {}),
+  };
+}
+
 function isValidUUID(val: unknown): boolean {
   if (typeof val !== 'string') return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
@@ -29,7 +39,8 @@ router.get('/live/:seriesId', async (req: Request, res: Response, next: NextFunc
       return;
     }
     const scope = parseScope(req.query) ?? undefined;
-    const snapshots = await ViewershipSnapshotModel.getLatestSnapshot(req.params.seriesId as string, scope);
+    const filter = parseViewFilter(req.query as Record<string, unknown>);
+    const snapshots = await ViewershipSnapshotModel.getLatestSnapshot(req.params.seriesId as string, scope, filter);
 
     const totalCCV = snapshots.reduce((sum, s) => sum + s.concurrent_viewers, 0);
     const liveCount = snapshots.filter((s) => s.concurrent_viewers > 0).length;
@@ -117,6 +128,8 @@ router.get('/metrics', async (req: Request, res: Response, next: NextFunction) =
       return;
     }
 
+    const filter = parseViewFilter(req.query as Record<string, unknown>);
+
     const [
       peakCCV,
       avgCCV,
@@ -126,13 +139,13 @@ router.get('/metrics', async (req: Request, res: Response, next: NextFunction) =
       regionBreakdown,
       channelLeaderboard,
     ] = await Promise.all([
-      ViewershipSnapshotModel.getPeakCCV(scopeObj),
-      ViewershipSnapshotModel.getAverageCCV(scopeObj),
-      ViewershipSnapshotModel.getTotalViewedHours(scopeObj),
-      ViewershipSnapshotModel.getPlatformBreakdown(scopeObj),
-      ViewershipSnapshotModel.getLanguageBreakdown(scopeObj),
-      ViewershipSnapshotModel.getRegionBreakdown(scopeObj),
-      ViewershipSnapshotModel.getChannelLeaderboard(scopeObj),
+      ViewershipSnapshotModel.getPeakCCV(scopeObj, filter),
+      ViewershipSnapshotModel.getAverageCCV(scopeObj, filter),
+      ViewershipSnapshotModel.getTotalViewedHours(scopeObj, filter),
+      ViewershipSnapshotModel.getPlatformBreakdown(scopeObj, filter),
+      ViewershipSnapshotModel.getLanguageBreakdown(scopeObj, filter),
+      ViewershipSnapshotModel.getRegionBreakdown(scopeObj, filter),
+      ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, 25, filter),
     ]);
 
     res.json({
@@ -198,8 +211,10 @@ router.get('/timeseries', async (req: Request, res: Response, next: NextFunction
       return;
     }
 
+    const filter = parseViewFilter(req.query as Record<string, unknown>);
+
     if (groupBy === 'total') {
-      const buckets = await ViewershipSnapshotModel.getTimeSeriesData(scopeObj, interval);
+      const buckets = await ViewershipSnapshotModel.getTimeSeriesData(scopeObj, interval, filter);
       res.json({
         scope: scopeObj,
         interval,
@@ -222,6 +237,7 @@ router.get('/timeseries', async (req: Request, res: Response, next: NextFunction
 
     // Subquery deduplicates per channel within each bucket (MAX) to avoid
     // double-counting when multiple poll cycles land in the same time bucket.
+    const fClauses = filter ? ViewershipSnapshotModel.buildFilterClauses(filter) : { sql: '', bindings: {} };
     const rows: Array<{ bucket: Date; group_key: string; total_ccv: string; channel_count: string }> = await db.raw(
       `SELECT bucket, group_key,
          SUM(max_viewers)::text AS total_ccv,
@@ -235,12 +251,12 @@ router.get('/timeseries', async (req: Request, res: Response, next: NextFunction
            "${groupColumn}" AS group_key,
            MAX(concurrent_viewers) AS max_viewers
          FROM viewership_snapshots
-         WHERE "${scopeColumn}" = :id
+         WHERE "${scopeColumn}" = :id ${fClauses.sql}
          GROUP BY bucket, channel_id, group_key
        ) per_channel
        GROUP BY bucket, group_key
        ORDER BY bucket ASC, total_ccv DESC`,
-      { interval, id: scopeObj.id },
+      { interval, id: scopeObj.id, ...fClauses.bindings },
     ).then((r: { rows: Array<{ bucket: Date; group_key: string; total_ccv: string; channel_count: string }> }) => r.rows);
 
     res.json({
@@ -315,7 +331,8 @@ router.get('/leaderboard/:seriesId', async (req: Request, res: Response, next: N
       }
     }
 
-    const leaderboard = await ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, 9999);
+    const filter = parseViewFilter(req.query as Record<string, unknown>);
+    const leaderboard = await ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, 9999, filter);
 
     res.json({
       scope: scopeObj,
