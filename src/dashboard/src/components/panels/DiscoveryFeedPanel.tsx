@@ -57,10 +57,18 @@ export function DiscoveryFeedPanel({
     );
   }
 
-  // Sort by added_at descending (most recent first)
-  const sorted = [...(channels ?? [])].sort(
-    (a, b) => new Date(b.added_at).getTime() - new Date(a.added_at).getTime(),
-  );
+  // Sort by added_at descending (most recent first), filter out stale disabled channels
+  const sorted = [...(channels ?? [])]
+    .filter((ch) => {
+      // Hide disabled/promoted channels unless they were recently re-discovered streaming
+      if (!ch.is_active && ch.tier !== 'community' && !blocklist.includes(ch.channel_identifier)) {
+        return !!ch.metadata?.last_seen_at;
+      }
+      return true;
+    })
+    .sort(
+      (a, b) => new Date(b.added_at).getTime() - new Date(a.added_at).getTime(),
+    );
 
   // Take most recent 50
   const recent = sorted.slice(0, 50);
@@ -237,7 +245,8 @@ function DiscoveryRow({
   // Distinguish between blocked (in blocklist) and disabled (just deactivated)
   const inBlocklist = blocklist.includes(channel.channel_identifier);
   const isBlocked = !actionDone && !channel.is_active && inBlocklist;
-  const isDisabled = !actionDone && !channel.is_active && channel.tier !== 'community' && !inBlocklist;
+  const isDisabled = !actionDone && !channel.is_active && channel.tier !== 'community' && !inBlocklist
+    && !!channel.metadata?.last_seen_at;
 
   return (
     <div className="rounded-lg bg-navy-800/40 px-3 py-2 hover:bg-navy-800/60 transition-colors">

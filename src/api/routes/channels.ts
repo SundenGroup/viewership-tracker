@@ -269,13 +269,23 @@ router.post('/:seriesId/channels', requireRole('admin', 'editor'), async (req: R
     if (channelBody.language && typeof channelBody.language === 'string') {
       channelBody.language = channelBody.language.split('-')[0].toLowerCase();
     }
-    const channel = await ChannelModel.create({
-      ...channelBody,
-      channel_identifier: resolvedIdentifier,
-      series_id: seriesId,
-      source: channelBody.source || 'manual',
-      is_active: channelBody.is_active !== undefined ? channelBody.is_active : true,
-    });
+    let channel;
+    try {
+      channel = await ChannelModel.create({
+        ...channelBody,
+        channel_identifier: resolvedIdentifier,
+        series_id: seriesId,
+        source: channelBody.source || 'manual',
+        is_active: channelBody.is_active !== undefined ? channelBody.is_active : true,
+      });
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes('unique') || msg.includes('duplicate')) {
+        res.status(409).json({ error: `Channel ${resolvedIdentifier} on ${platform} already exists in this series` });
+        return;
+      }
+      throw err;
+    }
 
     // Assign to specific broadcast days if provided
     if (dayIds.length > 0) {

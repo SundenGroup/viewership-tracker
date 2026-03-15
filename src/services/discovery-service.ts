@@ -192,14 +192,27 @@ export class DiscoveryService {
       };
     }
 
-    // 2. Load existing channels for this series (for dedup check)
+    // 2. Load existing ACTIVE channels for this series (for dedup check)
     const existingChannels = await this.db<Channel>('channels')
       .where('series_id', seriesId)
+      .where('is_active', true)
       .select('platform', 'channel_identifier');
 
     const trackedSet = new Set<string>(
       existingChannels.map((ch) => `${ch.platform}:${ch.channel_identifier.toLowerCase()}`),
     );
+
+    // Also load disabled auto-discovered channels so we can re-surface them
+    const disabledChannels = await this.db<Channel>('channels')
+      .where('series_id', seriesId)
+      .where('source', 'auto_discovered')
+      .where('is_active', false)
+      .select('id', 'platform', 'channel_identifier');
+
+    const disabledMap = new Map<string, string>();
+    for (const ch of disabledChannels) {
+      disabledMap.set(`${ch.platform}:${ch.channel_identifier.toLowerCase()}`, ch.id);
+    }
 
     // 3. Load blocklist from series metadata
     const blocklist = this.getBlocklist(series);
@@ -255,6 +268,25 @@ export class DiscoveryService {
         // Below minimum viewer threshold?
         if (stream.concurrentViewers < this.minViewerThreshold) {
           belowThreshold++;
+          continue;
+        }
+
+        // Check if this is a disabled channel that's streaming again
+        const disabledId = disabledMap.get(lookupKey);
+        if (disabledId) {
+          try {
+            const freshMeta: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
+            if (stream.title) freshMeta.stream_title = stream.title;
+            if (stream.concurrentViewers > 0) freshMeta.discovered_ccv = stream.concurrentViewers;
+            await this.db('channels').where('id', disabledId)
+              .update({ metadata: this.db.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [JSON.stringify(freshMeta)]) });
+            trackedSet.add(lookupKey);
+            logger.info(
+              `[Discovery] Re-surfaced disabled channel ${stream.displayName} [${platform}] (${stream.concurrentViewers} viewers)`,
+            );
+          } catch (err) {
+            logger.warn(`[Discovery] Failed to re-surface ${stream.channelIdentifier}`, { error: (err as Error).message });
+          }
           continue;
         }
 
@@ -434,17 +466,29 @@ export class DiscoveryService {
       .filter((c: { id: string }) => !protectedIds.has(c.id))
       .map((c: { id: string }) => c.id);
 
-    if (toPurge.length === 0) return 0;
-
-    const count = await this.db('channels')
-      .whereIn('id', toPurge)
-      .delete();
-
-    if (count > 0) {
-      logger.info(`[Discovery] Purged ${count} unapproved auto-discovered channel(s) for series ${seriesId} (${protectedIds.size} with data preserved)`);
+    let count = 0;
+    if (toPurge.length > 0) {
+      count = await this.db('channels')
+        .whereIn('id', toPurge)
+        .delete();
     }
 
-    return count;
+    // For protected channels (have viewership data), clear last_seen_at so
+    // they disappear from the discovery feed until re-discovered streaming
+    const toHide = candidates
+      .filter((c: { id: string }) => protectedIds.has(c.id))
+      .map((c: { id: string }) => c.id);
+    if (toHide.length > 0) {
+      await this.db('channels')
+        .whereIn('id', toHide)
+        .update({ metadata: this.db.raw("metadata - 'last_seen_at'") });
+    }
+
+    if (count > 0 || toHide.length > 0) {
+      logger.info(`[Discovery] Purged ${count} channel(s), hid ${toHide.length} with data for series ${seriesId}`);
+    }
+
+    return count + toHide.length;
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────
