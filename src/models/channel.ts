@@ -1,6 +1,6 @@
 import db from '../utils/db';
 
-export type Platform = 'twitch' | 'youtube' | 'kick' | 'tiktok' | 'steam';
+export type Platform = 'twitch' | 'youtube' | 'kick' | 'tiktok' | 'steam' | 'trovo' | 'chzzk' | 'soop';
 export type ChannelTier = 'official' | 'partner' | 'community' | 'player' | 'watch_party';
 export type ChannelSource = 'manual' | 'auto_discovered';
 

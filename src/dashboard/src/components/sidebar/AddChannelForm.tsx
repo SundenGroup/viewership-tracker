@@ -18,6 +18,9 @@ const PLATFORM_OPTIONS = [
   { value: 'kick', label: 'Kick' },
   { value: 'tiktok', label: 'TikTok' },
   { value: 'steam', label: 'Steam' },
+  { value: 'trovo', label: 'Trovo' },
+  { value: 'chzzk', label: 'CHZZK' },
+  { value: 'soop', label: 'SOOP' },
 ];
 
 const TIER_OPTIONS = [

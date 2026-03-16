@@ -32,7 +32,7 @@ export type DiscoveryBroadcastFn = (result: DiscoveryResult) => void;
 // ── Constants ───────────────────────────────────────────────────────────
 
 const DEFAULT_MIN_VIEWER_THRESHOLD = 5;
-const PLATFORMS: PlatformName[] = ['twitch', 'youtube', 'kick', 'tiktok', 'steam'];
+const PLATFORMS: PlatformName[] = ['twitch', 'youtube', 'kick', 'tiktok', 'steam', 'trovo', 'chzzk', 'soop'];
 
 // ── DiscoveryService ────────────────────────────────────────────────────
 

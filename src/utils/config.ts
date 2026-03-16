@@ -20,6 +20,10 @@ export const config = {
   steam: {
     apiKey: process.env.STEAM_API_KEY || '',
   },
+  trovo: {
+    clientId: process.env.TROVO_CLIENT_ID || '',
+    clientSecret: process.env.TROVO_CLIENT_SECRET || '',
+  },
   server: {
     port: parseInt(process.env.PORT || '3000', 10),
     wsPort: parseInt(process.env.WS_PORT || '3001', 10),

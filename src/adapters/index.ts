@@ -4,6 +4,9 @@ export { YouTubeAdapter } from './youtube';
 export { KickAdapter } from './kick';
 export { TikTokAdapter } from './tiktok';
 export { SteamAdapter } from './steam';
+export { TrovoAdapter } from './trovo';
+export { ChzzkAdapter } from './chzzk';
+export { SoopAdapter } from './soop';
 export type { QuotaUsage } from './youtube';
 
 import logger from '../utils/logger';
@@ -13,10 +16,13 @@ import { YouTubeAdapter } from './youtube';
 import { KickAdapter } from './kick';
 import { TikTokAdapter } from './tiktok';
 import { SteamAdapter } from './steam';
+import { TrovoAdapter } from './trovo';
+import { ChzzkAdapter } from './chzzk';
+import { SoopAdapter } from './soop';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
-export type PlatformName = 'twitch' | 'youtube' | 'kick' | 'tiktok' | 'steam';
+export type PlatformName = 'twitch' | 'youtube' | 'kick' | 'tiktok' | 'steam' | 'trovo' | 'chzzk' | 'soop';
 
 export interface MultiPlatformChannel {
   platform: PlatformName;
@@ -58,6 +64,12 @@ export class AdapterRegistry {
         return new TikTokAdapter();
       case 'steam':
         return new SteamAdapter();
+      case 'trovo':
+        return new TrovoAdapter();
+      case 'chzzk':
+        return new ChzzkAdapter();
+      case 'soop':
+        return new SoopAdapter();
       default: {
         const _exhaustive: never = platform;
         throw new Error(`Unknown platform: ${_exhaustive}`);
@@ -147,7 +159,7 @@ export class AdapterRegistry {
    * getViewerCounts with a known channel to verify connectivity.
    */
   async healthCheck(): Promise<PlatformHealthStatus[]> {
-    const platforms: PlatformName[] = ['twitch', 'youtube', 'kick', 'tiktok', 'steam'];
+    const platforms: PlatformName[] = ['twitch', 'youtube', 'kick', 'tiktok', 'steam', 'trovo', 'chzzk', 'soop'];
 
     const checks = platforms.map(async (platform): Promise<PlatformHealthStatus> => {
       try {
@@ -166,6 +178,9 @@ export class AdapterRegistry {
           kick: '', // handled above
           tiktok: 'tiktok',
           steam: '76561198082857351', // Valve employee — always exists
+          trovo: 'trovo',
+          chzzk: 'cbd4d0e5c29062fdd4cfb2e8e3475dde', // Known Chzzk channel
+          soop: 'aflol',  // Known Soop BJ
         };
 
         const results = await adapter.getViewerCounts([testChannels[platform]]);

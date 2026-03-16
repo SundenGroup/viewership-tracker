@@ -298,6 +298,9 @@ const PLATFORM_LABELS: Record<string, string> = {
   kick: 'Kick',
   tiktok: 'TikTok',
   steam: 'Steam',
+  trovo: 'Trovo',
+  chzzk: 'CHZZK',
+  soop: 'SOOP',
 };
 
 const PLATFORM_COLORS: Record<string, string> = {
@@ -306,6 +309,9 @@ const PLATFORM_COLORS: Record<string, string> = {
   kick: '#53FC18',
   tiktok: '#010101',
   steam: '#1B2838',
+  trovo: '#30C67C',
+  chzzk: '#00FFA3',
+  soop: '#0066FF',
 };
 
 export function platformLabel(platform: string): string {
@@ -371,6 +377,12 @@ export function getStreamUrl(platform: string | null, channelIdentifier: string)
       return `https://www.tiktok.com/@${channelIdentifier}/live`;
     case 'steam':
       return `https://steamcommunity.com/broadcast/watch/${channelIdentifier}`;
+    case 'trovo':
+      return `https://trovo.live/${channelIdentifier}`;
+    case 'chzzk':
+      return `https://chzzk.naver.com/live/${channelIdentifier}`;
+    case 'soop':
+      return `https://play.sooplive.co.kr/${channelIdentifier}`;
     default:
       return null;
   }
