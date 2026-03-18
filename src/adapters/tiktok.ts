@@ -29,16 +29,16 @@ export class TikTokAdapter implements PlatformAdapter {
       const { WebcastPushConnection } = await import('tiktok-live-connector');
 
       const connection = new WebcastPushConnection(username.replace(/^@/, ''), {
-        fetchRoomInfoOnConnect: true,
+        fetchRoomInfoOnConnect: false,
         enableExtendedGiftInfo: false,
       });
 
-      const state = await connection.connect();
+      // Only fetch room info via HTTP — no WebSocket needed for viewer counts
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const data = state.roomInfo?.data as Record<string, any> | undefined;
+      const roomInfo = await connection.fetchRoomInfo() as Record<string, any>;
+      const data = roomInfo?.data;
 
       if (!data) {
-        connection.disconnect();
         return offlineResult;
       }
 
@@ -46,8 +46,6 @@ export class TikTokAdapter implements PlatformAdapter {
       const title = data.title || null;
       const displayName = data.owner?.nickname || username;
       const createTime = data.create_time ? new Date(data.create_time * 1000).toISOString() : null;
-
-      connection.disconnect();
 
       return {
         channelIdentifier: username,
