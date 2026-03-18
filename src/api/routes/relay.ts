@@ -47,7 +47,18 @@ router.post('/tiktok', requireRelayToken, async (req: Request, res: Response, ne
       return;
     }
 
-    const timestamp = new Date();
+    // Snap to the most recent bulk poll timestamp (within the last 2 minutes)
+    // so relay data joins the same time bucket as the main poll cycle.
+    const recentBulk = await db('viewership_snapshots')
+      .where('timestamp', '>', db.raw("NOW() - INTERVAL '2 minutes'"))
+      .groupBy('timestamp')
+      .having(db.raw('COUNT(*) > 1'))
+      .orderBy('timestamp', 'desc')
+      .limit(1)
+      .select('timestamp')
+      .first();
+
+    const timestamp = recentBulk ? new Date(recentBulk.timestamp) : new Date();
     const insertRows: Record<string, unknown>[] = [];
     let matched = 0;
 
