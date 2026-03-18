@@ -86,7 +86,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
   // View group options from series metadata
   const viewGroupOptions = useMemo(() => {
     const groups: { value: string; label: string }[] = [{ value: '', label: 'Global (All Data)' }];
-    const vg = (seriesDetail?.viewGroups ?? []) as ViewGroup[];
+    const vg = ((seriesDetail?.metadata?.viewGroups as ViewGroup[] | undefined) ?? []) as ViewGroup[];
     for (const g of vg) {
       groups.push({ value: g.name, label: g.name });
     }
@@ -95,7 +95,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
 
   const resolvedViewGroup = useMemo(() => {
     if (!selectedViewGroup) return undefined;
-    const vg = (seriesDetail?.viewGroups ?? []) as ViewGroup[];
+    const vg = ((seriesDetail?.metadata?.viewGroups as ViewGroup[] | undefined) ?? []) as ViewGroup[];
     return vg.find((g) => g.name === selectedViewGroup);
   }, [selectedViewGroup, seriesDetail]);
 
