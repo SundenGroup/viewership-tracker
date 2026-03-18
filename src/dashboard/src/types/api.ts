@@ -192,6 +192,8 @@ export interface LiveCCVResponse {
     language: string | null;
     region: string | null;
     timestamp: string;
+    streamId: string | null;
+    streamTitle: string | null;
   }>;
 }
 

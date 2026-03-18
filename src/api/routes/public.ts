@@ -108,14 +108,15 @@ router.get('/:shortName/live-ccv', async (req: Request, res: Response, next: Nex
     const snapshots = await ViewershipSnapshotModel.getLatestSnapshot(series.id, scopeArg, filter);
 
     const totalCCV = snapshots.reduce((sum, s) => sum + s.concurrent_viewers, 0);
-    const liveCount = snapshots.filter((s) => s.concurrent_viewers > 0).length;
+    const uniqueChannelIds = new Set(snapshots.map((s) => s.channel_id));
+    const liveChannelIds = new Set(snapshots.filter((s) => s.concurrent_viewers > 0).map((s) => s.channel_id));
 
     res.json({
       seriesId: series.id,
       timestamp: snapshots.length > 0 ? snapshots[0].timestamp : null,
       totalCCV,
-      channelCount: snapshots.length,
-      liveChannels: liveCount,
+      channelCount: uniqueChannelIds.size,
+      liveChannels: liveChannelIds.size,
       channels: snapshots.map((s) => ({
         channelId: s.channel_id,
         displayName: s.display_name,
@@ -125,6 +126,8 @@ router.get('/:shortName/live-ccv', async (req: Request, res: Response, next: Nex
         language: s.language,
         region: s.region,
         timestamp: s.timestamp,
+        streamId: s.stream_id ?? null,
+        streamTitle: s.stream_title ?? null,
       })),
     });
   } catch (err) {

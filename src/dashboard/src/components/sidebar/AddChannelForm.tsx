@@ -38,6 +38,7 @@ const INITIAL_FORM = {
   language: '',
   region: '',
   tier: 'community' as ChannelTier,
+  multi_stream: false,
 };
 
 export function AddChannelForm({ seriesId, broadcastDays, onSuccess }: AddChannelFormProps) {
@@ -70,6 +71,7 @@ export function AddChannelForm({ seriesId, broadcastDays, onSuccess }: AddChanne
         tier: data.tier,
         is_active: true,
         broadcast_day_ids: selectedDayIds.size > 0 ? Array.from(selectedDayIds) : undefined,
+        ...(data.platform === 'youtube' && data.multi_stream ? { metadata: { multi_stream: true } } : {}),
       }),
     [seriesId, selectedDayIds],
   );
@@ -178,6 +180,20 @@ export function AddChannelForm({ seriesId, broadcastDays, onSuccess }: AddChanne
           </p>
         )}
       </FormField>
+
+      {/* Multi-stream toggle — YouTube only */}
+      {form.platform === 'youtube' && (
+        <label className="flex items-center gap-2 py-0.5 text-xs text-gray-400 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={form.multi_stream}
+            onChange={(e) => updateField('multi_stream', e.target.checked)}
+            className="h-3.5 w-3.5 rounded border-navy-600 bg-navy-800 text-clutch-red accent-clutch-red"
+          />
+          <span>Multi-stream channel</span>
+          <span className="text-[9px] text-gray-600">(tracks all simultaneous live streams)</span>
+        </label>
+      )}
 
       <FormField label="Display Name">
         <TextInput

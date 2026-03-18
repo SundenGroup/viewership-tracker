@@ -62,6 +62,11 @@ interface CachedLiveVideo {
   cachedAt: number;
 }
 
+interface CachedMultiStreamVideoIds {
+  videoIds: string[];
+  cachedAt: number;
+}
+
 /**
  * Rich data extracted from scraping a YouTube channel's /live page.
  * This gives us everything we need without consuming API quota.
@@ -87,6 +92,8 @@ export class YouTubeAdapter implements PlatformAdapter {
   private readonly client: AxiosInstance;
   private readonly scraper: AxiosInstance;
   private readonly liveVideoCache = new Map<string, CachedLiveVideo>();
+  private readonly multiStreamCache = new Map<string, CachedMultiStreamVideoIds>();
+  private multiStreamChannels = new Set<string>();
   private quotaUsed = 0;
   private quotaResetDate: string = todayDateString();
   private readonly quotaLimit: number;
@@ -144,6 +151,114 @@ export class YouTubeAdapter implements PlatformAdapter {
     }
 
     return true;
+  }
+
+  // ── Multi-stream management ──────────────────────────────────────────
+
+  /**
+   * Called by the polling orchestrator before each poll cycle to identify
+   * which YouTube channels should be checked for multiple simultaneous streams.
+   * Only channels with metadata.multi_stream = true are passed here.
+   */
+  setMultiStreamChannels(channelIds: string[]): void {
+    this.multiStreamChannels = new Set(channelIds.map((id) => id.toLowerCase()));
+    if (channelIds.length > 0) {
+      logger.debug(`YouTube: multi-stream detection enabled for ${channelIds.length} channel(s)`);
+    }
+  }
+
+  /**
+   * Scrapes the channel's /streams tab to find ALL currently-live video IDs.
+   * This allows detection of multiple simultaneous live streams on one channel.
+   * Costs ZERO API quota.
+   *
+   * How it works:
+   * - Fetches /channel/{id}/streams (the "Live" tab on YouTube)
+   * - Parses ytInitialData JSON from the page
+   * - Finds videoIds with LIVE badges in thumbnail overlays
+   * - Returns array of currently-live video IDs
+   */
+  private async scrapeChannelLiveVideoIds(channelId: string): Promise<string[]> {
+    // Check cache first (5-minute TTL)
+    const cached = this.multiStreamCache.get(channelId);
+    if (cached && Date.now() - cached.cachedAt < LIVE_VIDEO_CACHE_TTL_MS) {
+      return cached.videoIds;
+    }
+
+    try {
+      const url = `https://www.youtube.com/channel/${channelId}/streams`;
+      const { data: html } = await this.scraper.get<string>(url, {
+        responseType: 'text',
+        validateStatus: (s) => s < 500,
+      });
+
+      if (typeof html !== 'string') return [];
+
+      const liveVideoIds: string[] = [];
+      const seenIds = new Set<string>();
+
+      // Strategy 1: Look for videoRenderer items with LIVE overlay badges
+      // YouTube marks live streams with thumbnailOverlays containing "LIVE" style
+      // Pattern: "videoId":"XXX"...followed by..."style":"LIVE" within the same renderer block
+      const videoRendererRegex = /"videoRenderer":\{"videoId":"([a-zA-Z0-9_-]{11})"[^}]*?"thumbnailOverlays":\[.*?"style":"LIVE"/g;
+      let match;
+      while ((match = videoRendererRegex.exec(html)) !== null) {
+        if (!seenIds.has(match[1])) {
+          seenIds.add(match[1]);
+          liveVideoIds.push(match[1]);
+        }
+      }
+
+      // Strategy 2: Look for "LIVE_NOW" badges near videoIds
+      if (liveVideoIds.length === 0) {
+        const liveNowRegex = /"videoId":"([a-zA-Z0-9_-]{11})"[\s\S]*?"BADGE_STYLE_TYPE_LIVE_NOW"/g;
+        while ((match = liveNowRegex.exec(html)) !== null) {
+          if (!seenIds.has(match[1])) {
+            seenIds.add(match[1]);
+            liveVideoIds.push(match[1]);
+          }
+        }
+      }
+
+      // Strategy 3: Broader pattern — look for richItemRenderer with live indicators
+      if (liveVideoIds.length === 0) {
+        // Find all videoIds on the page, then check if they have live indicators nearby
+        const allVideoIds = [...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)];
+        for (const vidMatch of allVideoIds) {
+          const pos = vidMatch.index!;
+          // Check 2000 chars after the videoId for LIVE indicators
+          const context = html.substring(pos, pos + 2000);
+          const hasLiveIndicator =
+            context.includes('"style":"LIVE"') ||
+            context.includes('BADGE_STYLE_TYPE_LIVE_NOW') ||
+            context.includes('"iconType":"LIVE"');
+          if (hasLiveIndicator && !seenIds.has(vidMatch[1])) {
+            seenIds.add(vidMatch[1]);
+            liveVideoIds.push(vidMatch[1]);
+          }
+        }
+      }
+
+      // Cache the result
+      this.multiStreamCache.set(channelId, {
+        videoIds: liveVideoIds,
+        cachedAt: Date.now(),
+      });
+
+      if (liveVideoIds.length > 0) {
+        logger.info(`YouTube: found ${liveVideoIds.length} live stream(s) on channel ${channelId}: ${liveVideoIds.join(', ')}`);
+      }
+
+      return liveVideoIds;
+    } catch (err) {
+      const errMsg = (err as Error).message;
+      if (errMsg.includes('timeout') || errMsg.includes('ECONNRESET')) {
+        logger.debug(`YouTube: multi-stream scrape for ${channelId} timed out`);
+      } else {
+        logger.warn(`YouTube: multi-stream scrape failed for ${channelId}`, { error: errMsg });
+      }
+      return [];
+    }
   }
 
   // ── Retry wrapper ─────────────────────────────────────────────────────
@@ -530,6 +645,32 @@ export class YouTubeAdapter implements PlatformAdapter {
     return allItems;
   }
 
+  // ── Viewer count resolution ──────────────────────────────────────────
+
+  /**
+   * Resolves the final viewer count by preferring scraped data (validated via
+   * "watching now" text) and falling back to API data when scraper returns 0.
+   */
+  private resolveViewerCount(
+    scraped: ScrapedLiveData,
+    apiVideo: YouTubeVideoItem | undefined,
+    identifier: string,
+  ): number {
+    const scrapedViewers = scraped.concurrentViewers;
+    const apiViewers = apiVideo?.liveStreamingDetails?.concurrentViewers
+      ? parseInt(apiVideo.liveStreamingDetails.concurrentViewers, 10)
+      : null;
+
+    if (scrapedViewers === 0 && apiViewers !== null) {
+      logger.debug(`YouTube: scraper returned 0 for ${identifier}, using API value: ${apiViewers}`);
+      return apiViewers;
+    }
+    if (apiViewers !== null && apiViewers !== scrapedViewers) {
+      logger.debug(`YouTube: scraper=${scrapedViewers}, API=${apiViewers} for ${identifier} — using scraper (validated)`);
+    }
+    return scrapedViewers;
+  }
+
   // ── Handle / custom-URL → channel ID resolution ─────────────────────
 
   /** Cache of resolved handles → channel IDs (persists for adapter lifetime) */
@@ -796,25 +937,55 @@ export class YouTubeAdapter implements PlatformAdapter {
         continue;
       }
 
-      // Channel is live — prefer scraped viewer count (validated via "watching now"
-      // text), use API only as fallback when scraper returns 0.
-      // The YouTube Data API's liveStreamingDetails.concurrentViewers sometimes
-      // returns total view counts instead of concurrent viewers, so we can't blindly
-      // trust it. The scraper's value is validated against the "watching now" context.
-      const apiVideo = videoMap.get(scraped.videoId);
-      const scrapedViewers = scraped.concurrentViewers;
-      const apiViewers = apiVideo?.liveStreamingDetails?.concurrentViewers
-        ? parseInt(apiVideo.liveStreamingDetails.concurrentViewers, 10)
-        : null;
+      // Channel is live — check if this is a multi-stream channel
+      const isMultiStream = this.multiStreamChannels.has(resolvedId.toLowerCase()) ||
+        this.multiStreamChannels.has(originalId.toLowerCase());
 
-      // Use scraped value if available; fall back to API only when scraper returned 0
-      let finalViewers = scrapedViewers;
-      if (scrapedViewers === 0 && apiViewers !== null) {
-        finalViewers = apiViewers;
-        logger.debug(`YouTube: scraper returned 0 for ${originalId}, using API value: ${apiViewers}`);
-      } else if (apiViewers !== null && apiViewers !== scrapedViewers) {
-        logger.debug(`YouTube: scraper=${scrapedViewers}, API=${apiViewers} for ${originalId} — using scraper (validated)`);
+      if (isMultiStream) {
+        // Multi-stream: detect ALL live streams on this channel
+        const allLiveVideoIds = await this.scrapeChannelLiveVideoIds(resolvedId);
+
+        if (allLiveVideoIds.length > 1) {
+          // Multiple simultaneous streams detected — scrape each one individually
+          logger.info(`YouTube: multi-stream channel ${originalId} has ${allLiveVideoIds.length} live streams`);
+
+          for (const liveVideoId of allLiveVideoIds) {
+            // Reuse existing scraped data if we already have it for the primary stream
+            let streamData: ScrapedLiveData | null = null;
+            if (liveVideoId === scraped.videoId) {
+              streamData = scraped;
+            } else {
+              // Scrape the additional stream
+              streamData = await this.scrapeVideoLiveData(liveVideoId);
+            }
+
+            if (!streamData) continue;
+
+            // Try API enrichment for this video
+            const apiVideo = videoMap.get(liveVideoId);
+            const viewers = this.resolveViewerCount(streamData, apiVideo, originalId);
+
+            results.push({
+              channelIdentifier: originalId,
+              displayName: apiVideo?.snippet.channelTitle ?? scraped.channelName ?? originalId,
+              concurrentViewers: viewers,
+              isLive: true,
+              language: apiVideo?.snippet.defaultAudioLanguage ?? streamData.language,
+              gameName: null,
+              title: apiVideo?.snippet.title ?? streamData.title,
+              startedAt: apiVideo?.liveStreamingDetails?.actualStartTime ?? streamData.startedAt,
+              streamId: liveVideoId,
+              streamTitle: apiVideo?.snippet.title ?? streamData.title ?? undefined,
+            });
+          }
+          continue; // Skip the single-stream path below
+        }
+        // If only 1 or 0 live videos found, fall through to single-stream path
       }
+
+      // Single-stream path (default for all channels, and multi-stream with only 1 live stream)
+      const apiVideo = videoMap.get(scraped.videoId);
+      const finalViewers = this.resolveViewerCount(scraped, apiVideo, originalId);
 
       results.push({
         channelIdentifier: originalId,
@@ -825,11 +996,14 @@ export class YouTubeAdapter implements PlatformAdapter {
         gameName: null,
         title: apiVideo?.snippet.title ?? scraped.title,
         startedAt: apiVideo?.liveStreamingDetails?.actualStartTime ?? scraped.startedAt,
+        streamId: scraped.videoId.startsWith('unknown-') ? undefined : scraped.videoId,
+        streamTitle: apiVideo?.snippet.title ?? scraped.title ?? undefined,
       });
     }
 
     const liveCount = results.filter((r) => r.isLive).length;
-    logger.debug(`YouTube getViewerCounts: ${liveCount}/${channelIdentifiers.length} live`, {
+    const multiStreamCount = results.length - channelIdentifiers.length;
+    logger.debug(`YouTube getViewerCounts: ${liveCount} live snapshots from ${channelIdentifiers.length} channels${multiStreamCount > 0 ? ` (${multiStreamCount} extra from multi-stream)` : ''}`, {
       quotaUsed: this.quotaUsed,
       apiEnriched: videoDetails.length,
       scrapedLive: scrapedData.size,

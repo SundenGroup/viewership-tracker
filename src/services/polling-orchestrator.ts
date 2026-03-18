@@ -4,6 +4,7 @@ import { config } from '../utils/config';
 import { AdapterRegistry } from '../adapters';
 import type { MultiPlatformChannel } from '../adapters';
 import type { ChannelSnapshot } from '../adapters/types';
+import { YouTubeAdapter } from '../adapters/youtube';
 import type { BroadcastDay } from '../models/broadcast-day';
 import type { Channel } from '../models/channel';
 import type { DiscoveryService } from './discovery-service';
@@ -411,6 +412,17 @@ export class PollingOrchestrator {
       channelIdentifier: ch.channel_identifier,
     }));
 
+    // 3b. Pass multi-stream flags to YouTube adapter (channels with metadata.multi_stream)
+    try {
+      const ytAdapter = this.registry.getAdapter('youtube') as YouTubeAdapter;
+      const multiStreamIds = channelList
+        .filter((ch) => ch.platform === 'youtube' && (ch.metadata as Record<string, unknown>)?.multi_stream === true)
+        .map((ch) => ch.channel_identifier);
+      ytAdapter.setMultiStreamChannels(multiStreamIds);
+    } catch {
+      // YouTube adapter not available — no multi-stream detection
+    }
+
     // 4. Fetch viewer counts from all platforms in parallel
     let snapshots: ChannelSnapshot[];
     try {
@@ -442,10 +454,9 @@ export class PollingOrchestrator {
     }
 
     // 6. Build snapshot insert rows
-    //    Each channel gets one snapshot per active broadcast day in its series
-    //    NOTE: snapshots[] is in the exact same order as channelList[] (guaranteed
-    //    by getViewerCountsMultiPlatform), so we use index-based matching to avoid
-    //    cross-platform identifier collisions that a Map<identifier> would cause.
+    //    Each channel gets one or more snapshots (multi-stream YouTube channels
+    //    produce multiple ChannelSnapshot entries with different streamId values).
+    //    We use identifier-based matching via a multimap to support this 1-to-many mapping.
     interface SnapshotInsertRow {
       channel_id: string;
       broadcast_day_id: string;
@@ -456,40 +467,76 @@ export class PollingOrchestrator {
       platform: string;
       language: string | null;
       region: string | null;
+      stream_id: string | null;
+      stream_title: string | null;
+    }
+
+    // Build multimap: platform:identifier → ChannelSnapshot[]
+    // Snapshots from getViewerCountsMultiPlatform preserve channelIdentifier,
+    // but we need to pair them with the channel's platform. Since the registry
+    // groups by platform and each adapter only returns its own platform's channels,
+    // we can build the key using the channel list's platform for each identifier.
+    const identifierToPlatform = new Map<string, string>();
+    for (const ch of channelList) {
+      identifierToPlatform.set(ch.channel_identifier.toLowerCase(), ch.platform);
+    }
+
+    const snapshotMap = new Map<string, ChannelSnapshot[]>();
+    for (const snap of snapshots) {
+      const platform = identifierToPlatform.get(snap.channelIdentifier.toLowerCase());
+      if (!platform) continue;
+      const key = `${platform}:${snap.channelIdentifier.toLowerCase()}`;
+      const list = snapshotMap.get(key) ?? [];
+      list.push(snap);
+      snapshotMap.set(key, list);
     }
 
     const insertRows: SnapshotInsertRow[] = [];
     let totalCCV = 0;
 
-    for (let i = 0; i < channelList.length; i++) {
-      const channel = channelList[i];
-      const adapterResult = snapshots[i];
-      const viewers = adapterResult?.concurrentViewers ?? 0;
+    for (const channel of channelList) {
+      const key = `${channel.platform}:${channel.channel_identifier.toLowerCase()}`;
+      const channelSnapshots = snapshotMap.get(key) ?? [{
+        channelIdentifier: channel.channel_identifier,
+        displayName: channel.channel_identifier,
+        concurrentViewers: 0,
+        isLive: false,
+        language: null,
+        gameName: null,
+        title: null,
+        startedAt: null,
+      }];
 
       // Each channel's series may have multiple active broadcast days
       const days = seriesToDays.get(channel.series_id) ?? [];
       const assignedDays = channelDayMap.get(channel.id);
 
-      for (const day of days) {
-        // If channel has specific day assignments, only create snapshots for those days
-        if (assignedDays && assignedDays.size > 0 && !assignedDays.has(day.id)) {
-          continue;
-        }
-        insertRows.push({
-          channel_id: channel.id,
-          broadcast_day_id: day.id,
-          stage_id: day.stage_id,
-          series_id: day.series_id,
-          timestamp,
-          concurrent_viewers: viewers,
-          platform: channel.platform,
-          language: channel.language,
-          region: channel.region,
-        });
-      }
+      for (const snap of channelSnapshots) {
+        const viewers = snap.concurrentViewers ?? 0;
 
-      // Only count CCV once per unique channel (avoid double-counting across days)
-      totalCCV += viewers;
+        for (const day of days) {
+          // If channel has specific day assignments, only create snapshots for those days
+          if (assignedDays && assignedDays.size > 0 && !assignedDays.has(day.id)) {
+            continue;
+          }
+          insertRows.push({
+            channel_id: channel.id,
+            broadcast_day_id: day.id,
+            stage_id: day.stage_id,
+            series_id: day.series_id,
+            timestamp,
+            concurrent_viewers: viewers,
+            platform: channel.platform,
+            language: channel.language,
+            region: channel.region,
+            stream_id: snap.streamId ?? null,
+            stream_title: snap.streamTitle ?? null,
+          });
+        }
+
+        // Sum CCV across all streams for this channel
+        totalCCV += viewers;
+      }
     }
 
     // 8. Batch insert in a single transaction

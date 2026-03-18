@@ -7,6 +7,8 @@ export interface ChannelSnapshot {
   gameName: string | null;
   title: string | null;
   startedAt: string | null;
+  streamId?: string;
+  streamTitle?: string;
 }
 
 export interface DiscoveredStream {

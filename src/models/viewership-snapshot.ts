@@ -12,6 +12,8 @@ export interface ViewershipSnapshot {
   platform: string | null;
   language: string | null;
   region: string | null;
+  stream_id: string | null;
+  stream_title: string | null;
 }
 
 export interface CreateViewershipSnapshot {
@@ -24,6 +26,8 @@ export interface CreateViewershipSnapshot {
   platform?: string;
   language?: string;
   region?: string;
+  stream_id?: string | null;
+  stream_title?: string | null;
 }
 
 export interface Scope {
@@ -148,12 +152,16 @@ export async function getSnapshotsForScope(scope: Scope): Promise<ViewershipSnap
 }
 
 export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?: ViewFilter): Promise<Array<ViewershipSnapshot & { display_name: string; channel_identifier: string }>> {
+  // distinctOn (channel_id, stream_id) returns one row per (channel, stream) pair.
+  // For multi-stream YouTube channels, this gives separate rows for each stream.
+  // For single-stream channels (stream_id IS NULL), NULLs group together → one row per channel.
   const query = db(TABLE)
-    .distinctOn('viewership_snapshots.channel_id')
+    .distinctOn(['viewership_snapshots.channel_id', 'viewership_snapshots.stream_id'])
     .join('channels', 'channels.id', 'viewership_snapshots.channel_id')
     .where('viewership_snapshots.series_id', seriesId)
     .orderBy([
       { column: 'viewership_snapshots.channel_id' },
+      { column: 'viewership_snapshots.stream_id' },
       { column: 'viewership_snapshots.timestamp', order: 'desc' },
     ])
     .select('viewership_snapshots.*', 'channels.display_name', 'channels.channel_identifier');
@@ -182,7 +190,7 @@ export async function getPeakCCV(scope: Scope, filter?: ViewFilter): Promise<Pea
        SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS max_viewers
        FROM viewership_snapshots
        WHERE "${col}" = :id ${f.sql}
-       GROUP BY "timestamp", channel_id
+       GROUP BY "timestamp", channel_id, stream_id
      ) per_channel
      GROUP BY "timestamp"
      ORDER BY SUM(max_viewers) DESC
@@ -203,7 +211,7 @@ export async function getAverageCCV(scope: Scope, filter?: ViewFilter): Promise<
          SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS max_viewers
          FROM viewership_snapshots
          WHERE "${col}" = :id ${f.sql}
-         GROUP BY "timestamp", channel_id
+         GROUP BY "timestamp", channel_id, stream_id
        ) per_channel
        GROUP BY "timestamp"
      ) per_ts`,
@@ -221,7 +229,7 @@ export async function getTotalViewedHours(scope: Scope, filter?: ViewFilter): Pr
        SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS max_viewers
        FROM viewership_snapshots
        WHERE "${col}" = :id ${f.sql}
-       GROUP BY "timestamp", channel_id
+       GROUP BY "timestamp", channel_id, stream_id
      ) per_channel`,
     { id: scope.id, ...f.bindings },
   ).then((r: { rows: Array<{ total_viewer_minutes: string | null }> }) => r.rows[0]);
@@ -249,7 +257,7 @@ async function getBreakdown(scope: Scope, dimension: string, filter?: ViewFilter
            MAX(concurrent_viewers) AS max_viewers
          FROM viewership_snapshots
          WHERE "${col}" = :id ${f.sql}
-         GROUP BY "timestamp", channel_id, "${dimension}"
+         GROUP BY "timestamp", channel_id, stream_id, "${dimension}"
        ) per_channel
        GROUP BY "timestamp", group_key
      ) per_ts
@@ -295,7 +303,7 @@ export async function getTierBreakdown(scope: Scope, filter?: ViewFilter): Promi
          FROM viewership_snapshots vs
          JOIN channels c ON c.id = vs.channel_id
          WHERE vs."${col}" = :id ${fSql}
-         GROUP BY vs."timestamp", vs.channel_id, c.tier
+         GROUP BY vs."timestamp", vs.channel_id, vs.stream_id, c.tier
        ) per_channel
        GROUP BY "timestamp", group_key
      ) per_ts
@@ -325,7 +333,7 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
          MAX(concurrent_viewers) AS max_viewers
        FROM viewership_snapshots
        WHERE "${col}" = :id ${f.sql}
-       GROUP BY "timestamp", channel_id, platform
+       GROUP BY "timestamp", channel_id, stream_id, platform
      ) pc
      JOIN channels c ON c.id = pc.channel_id
      GROUP BY pc.channel_id, c.display_name, c.tier, c.language, pc.platform
@@ -354,7 +362,7 @@ export async function getTimeSeriesData(scope: Scope, intervalSeconds = 60, filt
          MAX(concurrent_viewers) AS max_viewers
        FROM viewership_snapshots
        WHERE "${col}" = :id ${f.sql}
-       GROUP BY bucket, channel_id
+       GROUP BY bucket, channel_id, stream_id
      ) per_channel
      GROUP BY bucket
      ORDER BY bucket ASC`,
@@ -397,7 +405,7 @@ export async function getGroupedTimeSeriesData(
          MAX(concurrent_viewers) AS max_viewers
        FROM viewership_snapshots
        WHERE "${col}" = :id ${f.sql}
-       GROUP BY bucket, channel_id, group_key
+       GROUP BY bucket, channel_id, stream_id, group_key
      ) per_channel
      GROUP BY bucket, group_key
      ORDER BY bucket ASC, total_ccv DESC`,

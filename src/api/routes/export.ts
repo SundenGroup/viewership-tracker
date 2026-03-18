@@ -32,6 +32,8 @@ async function fetchSnapshotsWithChannels(scope: string, id: string) {
       'viewership_snapshots.broadcast_day_id',
       'viewership_snapshots.stage_id',
       'viewership_snapshots.series_id',
+      'viewership_snapshots.stream_id',
+      'viewership_snapshots.stream_title',
       'channels.channel_identifier',
       'channels.display_name',
       'channels.tier',
@@ -61,6 +63,7 @@ router.get('/csv', async (req: Request, res: Response, next: NextFunction) => {
       'snapshot_id', 'timestamp', 'channel_identifier', 'display_name',
       'concurrent_viewers', 'platform', 'language', 'region', 'tier',
       'channel_id', 'broadcast_day_id', 'stage_id', 'series_id',
+      'stream_id', 'stream_title',
     ];
 
     const csvLines = [headers.join(',')];
@@ -79,6 +82,8 @@ router.get('/csv', async (req: Request, res: Response, next: NextFunction) => {
         row.broadcast_day_id ?? '',
         row.stage_id ?? '',
         row.series_id ?? '',
+        row.stream_id ?? '',
+        `"${(row.stream_title ?? '').replace(/"/g, '""')}"`,
       ].join(','));
     }
 
@@ -130,6 +135,8 @@ router.get('/json', async (req: Request, res: Response, next: NextFunction) => {
         broadcastDayId: row.broadcast_day_id,
         stageId: row.stage_id,
         seriesId: row.series_id,
+        streamId: row.stream_id ?? null,
+        streamTitle: row.stream_title ?? null,
       })),
     });
   } catch (err) {

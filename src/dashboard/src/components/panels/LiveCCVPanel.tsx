@@ -1,6 +1,18 @@
+import { useMemo } from 'react';
 import { Card, PlatformBadge, LoadingOverlay } from '@/components/common';
 import { formatNumber, formatCompact, formatTimeAgo } from '@/utils/formatters';
 import type { LiveCCVResponse } from '@/types/api';
+
+type ChannelEntry = LiveCCVResponse['channels'][number];
+
+interface ChannelGroup {
+  channelId: string;
+  displayName: string;
+  platform: string | null;
+  totalCCV: number;
+  streams: ChannelEntry[];
+  isMultiStream: boolean;
+}
 
 interface LiveCCVPanelProps {
   data: LiveCCVResponse | null;
@@ -9,6 +21,32 @@ interface LiveCCVPanelProps {
 }
 
 export function LiveCCVPanel({ data, loading, error }: LiveCCVPanelProps) {
+  // Group channels by channelId for multi-stream support
+  const channelGroups = useMemo<ChannelGroup[]>(() => {
+    if (!data?.channels) return [];
+
+    const groupMap = new Map<string, ChannelGroup>();
+    for (const ch of data.channels) {
+      const existing = groupMap.get(ch.channelId);
+      if (existing) {
+        existing.totalCCV += ch.concurrentViewers;
+        existing.streams.push(ch);
+        existing.isMultiStream = true;
+      } else {
+        groupMap.set(ch.channelId, {
+          channelId: ch.channelId,
+          displayName: ch.displayName,
+          platform: ch.platform,
+          totalCCV: ch.concurrentViewers,
+          streams: [ch],
+          isMultiStream: false,
+        });
+      }
+    }
+
+    return Array.from(groupMap.values()).sort((a, b) => b.totalCCV - a.totalCCV);
+  }, [data?.channels]);
+
   if (loading && !data) return <Card title="Live CCV"><LoadingOverlay /></Card>;
   if (error) {
     return (
@@ -48,26 +86,65 @@ export function LiveCCVPanel({ data, loading, error }: LiveCCVPanelProps) {
             </tr>
           </thead>
           <tbody>
-            {data.channels
-              .sort((a, b) => b.concurrentViewers - a.concurrentViewers)
-              .map((ch) => (
+            {channelGroups.map((group) => (
+              group.isMultiStream ? (
+                // Multi-stream: parent row + indented sub-rows
+                <MultiStreamRows key={group.channelId} group={group} />
+              ) : (
+                // Single-stream: normal row
                 <tr
-                  key={ch.channelId}
+                  key={`${group.channelId}-${group.streams[0]?.streamId ?? 'main'}`}
                   className="border-b border-navy-700/30 last:border-0"
                 >
-                  <td className="py-2 text-gray-200">{ch.displayName}</td>
+                  <td className="py-2 text-gray-200">{group.displayName}</td>
                   <td className="py-2">
-                    <PlatformBadge platform={ch.platform ?? 'unknown'} />
+                    <PlatformBadge platform={group.platform ?? 'unknown'} />
                   </td>
                   <td className="py-2 text-right font-mono text-gray-200">
-                    {formatCompact(ch.concurrentViewers)}
+                    {formatCompact(group.totalCCV)}
                   </td>
                 </tr>
-              ))}
+              )
+            ))}
           </tbody>
         </table>
       </div>
     </Card>
+  );
+}
+
+function MultiStreamRows({ group }: { group: ChannelGroup }) {
+  const sortedStreams = [...group.streams].sort((a, b) => b.concurrentViewers - a.concurrentViewers);
+
+  return (
+    <>
+      {/* Parent row with summed CCV */}
+      <tr className="border-b border-navy-700/30">
+        <td className="py-2 text-gray-200 font-medium">{group.displayName}</td>
+        <td className="py-2">
+          <PlatformBadge platform={group.platform ?? 'unknown'} />
+        </td>
+        <td className="py-2 text-right font-mono text-gray-200 font-medium">
+          {formatCompact(group.totalCCV)}
+        </td>
+      </tr>
+      {/* Sub-rows for each stream */}
+      {sortedStreams.map((stream, idx) => (
+        <tr
+          key={`${group.channelId}-${stream.streamId ?? idx}`}
+          className={`border-b border-navy-700/20 ${idx === sortedStreams.length - 1 ? 'border-navy-700/30' : ''}`}
+        >
+          <td className="py-1.5 pl-5 text-gray-400 text-xs">
+            <span className="mr-1.5 text-gray-600">{idx < sortedStreams.length - 1 ? '\u251C\u2500' : '\u2514\u2500'}</span>
+            {stream.streamTitle ?? stream.streamId ?? 'Stream'}
+          </td>
+          <td className="py-1.5" />
+          <td className="py-1.5 text-right font-mono text-gray-400 text-xs">
+            {formatCompact(stream.concurrentViewers)}
+          </td>
+        </tr>
+      ))}
+    </>
   );
 }
 

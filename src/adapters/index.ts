@@ -128,27 +128,34 @@ export class AdapterRegistry {
 
     const settled = await Promise.all(platformPromises);
 
-    // Build a lookup: platform+channelIdentifier (lowercased) → ChannelSnapshot
-    const resultMap = new Map<string, ChannelSnapshot>();
+    // Build a lookup: platform+channelIdentifier (lowercased) → ChannelSnapshot[]
+    // A single channel can produce multiple snapshots (YouTube multi-stream)
+    const resultMap = new Map<string, ChannelSnapshot[]>();
     for (const { platform, results } of settled) {
       for (const snapshot of results) {
-        resultMap.set(`${platform}:${snapshot.channelIdentifier.toLowerCase()}`, snapshot);
+        const key = `${platform}:${snapshot.channelIdentifier.toLowerCase()}`;
+        const list = resultMap.get(key) ?? [];
+        list.push(snapshot);
+        resultMap.set(key, list);
       }
     }
 
-    // Return results in the same order as the input (case-insensitive match)
-    return channels.map((ch) => {
+    // Return results: flatMap over input channels, expanding multi-stream entries
+    // Order is preserved: channels without multi-stream get 1 result, multi-stream get N
+    const offlineDefault = (ch: MultiPlatformChannel): ChannelSnapshot => ({
+      channelIdentifier: ch.channelIdentifier,
+      displayName: ch.channelIdentifier,
+      concurrentViewers: 0,
+      isLive: false,
+      language: null,
+      gameName: null,
+      title: null,
+      startedAt: null,
+    });
+
+    return channels.flatMap((ch) => {
       const key = `${ch.platform}:${ch.channelIdentifier.toLowerCase()}`;
-      return resultMap.get(key) ?? {
-        channelIdentifier: ch.channelIdentifier,
-        displayName: ch.channelIdentifier,
-        concurrentViewers: 0,
-        isLive: false,
-        language: null,
-        gameName: null,
-        title: null,
-        startedAt: null,
-      };
+      return resultMap.get(key) ?? [offlineDefault(ch)];
     });
   }
 
