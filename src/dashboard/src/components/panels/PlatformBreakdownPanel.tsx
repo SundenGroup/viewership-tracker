@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { Card, LoadingOverlay } from '@/components/common';
-import { formatNumber, formatCompact, formatPercent, platformLabel, platformColor } from '@/utils/formatters';
-import type { LiveCCVResponse, MetricsResponse, ScopeLevel } from '@/types/api';
+import { formatNumber, formatCompact, formatPercent, formatViewedHours, platformLabel, platformColor } from '@/utils/formatters';
+import type { LiveCCVResponse, MetricsResponse, ScopeLevel, BreakdownEntry } from '@/types/api';
 
 interface PlatformBreakdownPanelProps {
   liveCCV: LiveCCVResponse | null;
@@ -10,8 +11,27 @@ interface PlatformBreakdownPanelProps {
   loading: boolean;
 }
 
+type Metric = 'peakCCV' | 'avgCCV' | 'viewedHours';
+
+const METRIC_LABELS: Record<Metric, string> = {
+  peakCCV: 'Peak CCV',
+  avgCCV: 'Avg CCV',
+  viewedHours: 'Viewed Hours',
+};
+
+function getMetricValue(e: BreakdownEntry, metric: Metric): number {
+  if (metric === 'viewedHours') return e.totalCCV / 60;
+  return e[metric];
+}
+
+function formatMetricValue(v: number, metric: Metric): string {
+  if (metric === 'viewedHours') return formatViewedHours(v);
+  return formatNumber(v);
+}
+
 export function PlatformBreakdownPanel({ liveCCV, metrics, scopeLevel, loading }: PlatformBreakdownPanelProps) {
   const isLive = scopeLevel === 'series';
+  const [metric, setMetric] = useState<Metric>('avgCCV');
 
   if (loading && !liveCCV && !metrics) {
     return <Card title="Platform Breakdown"><LoadingOverlay /></Card>;
@@ -74,24 +94,48 @@ export function PlatformBreakdownPanel({ liveCCV, metrics, scopeLevel, loading }
       );
     }
 
-    grandTotal = breakdown.reduce((sum, e) => sum + e.avgCCV, 0) || 1;
-    chartData = breakdown
-      .sort((a, b) => b.avgCCV - a.avgCCV)
+    grandTotal = breakdown.reduce((sum, e) => sum + getMetricValue(e, metric), 0) || 1;
+    chartData = [...breakdown]
+      .sort((a, b) => getMetricValue(b, metric) - getMetricValue(a, metric))
       .map((e) => ({
         name: platformLabel(e.platform ?? e.key ?? 'unknown'),
         platform: e.platform ?? e.key ?? 'unknown',
-        ccv: e.avgCCV,
+        ccv: getMetricValue(e, metric),
         channels: 0, // not available in aggregate
-        pct: e.avgCCV / grandTotal,
+        pct: getMetricValue(e, metric) / grandTotal,
         color: platformColor(e.platform ?? e.key ?? 'unknown'),
       }));
 
     centerLabel = formatCompact(grandTotal);
-    subtitle = 'Avg CCV by platform';
+    subtitle = `${METRIC_LABELS[metric]} by platform`;
   }
 
+  const metricToggle = !isLive ? (
+    <div className="flex gap-1">
+      {(Object.keys(METRIC_LABELS) as Metric[]).map((m) => (
+        <button
+          key={m}
+          onClick={() => setMetric(m)}
+          className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+            metric === m
+              ? 'bg-red-500/20 text-red-400'
+              : 'text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          {METRIC_LABELS[m]}
+        </button>
+      ))}
+    </div>
+  ) : undefined;
+
   return (
-    <Card title="Platform Breakdown" subtitle={subtitle} collapsible storageKey="cvt:panel:platformBreakdown">
+    <Card
+      title="Platform Breakdown"
+      subtitle={subtitle}
+      collapsible
+      storageKey="cvt:panel:platformBreakdown"
+      action={metricToggle}
+    >
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Donut Chart */}
         <ResponsiveContainer width="100%" height={230}>
@@ -119,7 +163,7 @@ export function PlatformBreakdownPanel({ liveCCV, metrics, scopeLevel, loading }
                 fontSize: '12px',
               }}
               formatter={(value: number, name: string) => [
-                `${formatNumber(value)} (${formatPercent(value / grandTotal)})`,
+                `${formatMetricValue(value, isLive ? 'avgCCV' : metric)} (${formatPercent(value / grandTotal)})`,
                 name,
               ]}
             />
@@ -140,7 +184,7 @@ export function PlatformBreakdownPanel({ liveCCV, metrics, scopeLevel, loading }
               className="fill-gray-500 text-[10px]"
               style={{ fontSize: '10px' }}
             >
-              {isLive ? 'Total CCV' : 'Avg CCV'}
+              {isLive ? 'Total CCV' : METRIC_LABELS[metric]}
             </text>
           </PieChart>
         </ResponsiveContainer>
