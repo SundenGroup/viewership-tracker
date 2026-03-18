@@ -45,30 +45,34 @@ function findChrome(): string {
 
   // Try which
   try {
-    return execSync('which google-chrome || which chromium-browser || which chromium', {
+    const found = execSync('which google-chrome || which chromium-browser || which chromium 2>/dev/null', {
       encoding: 'utf-8',
     }).trim();
-  } catch {
-    // Try Playwright's bundled Chromium
-    try {
-      const homeDir = process.env.HOME || '';
-      const cacheDirs = [
-        path.join(homeDir, '.cache', 'ms-playwright'),
-        path.join(homeDir, 'Library', 'Caches', 'ms-playwright'),
+    if (found) return found;
+  } catch { /* not in PATH */ }
+
+  // Try Playwright's bundled Chromium
+  const homeDir = process.env.HOME || '';
+  const cacheDirs = [
+    path.join(homeDir, '.cache', 'ms-playwright'),
+    path.join(homeDir, 'Library', 'Caches', 'ms-playwright'),
+  ];
+  for (const cacheDir of cacheDirs) {
+    if (!fs.existsSync(cacheDir)) continue;
+    const dirs = fs.readdirSync(cacheDir)
+      .filter((d) => d.startsWith('chromium') && !d.includes('headless_shell'))
+      .sort();
+    for (const dir of dirs.reverse()) {
+      // Try all known sub-paths
+      const candidates = [
+        path.join(cacheDir, dir, 'chrome-linux64', 'chrome'),
+        path.join(cacheDir, dir, 'chrome-linux', 'chrome'),
+        path.join(cacheDir, dir, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
       ];
-      for (const cacheDir of cacheDirs) {
-        if (!fs.existsSync(cacheDir)) continue;
-        const dirs = fs.readdirSync(cacheDir).filter((d) => d.startsWith('chromium'));
-        if (dirs.length === 0) continue;
-        const latest = dirs[dirs.length - 1];
-        // Linux path
-        const linuxBin = path.join(cacheDir, latest, 'chrome-linux', 'chrome');
-        if (fs.existsSync(linuxBin)) return linuxBin;
-        // macOS path
-        const macBin = path.join(cacheDir, latest, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium');
-        if (fs.existsSync(macBin)) return macBin;
+      for (const c of candidates) {
+        if (fs.existsSync(c)) return c;
       }
-    } catch { /* ignore */ }
+    }
   }
 
   throw new Error('Chrome/Chromium not found. Install: apt install chromium-browser');
