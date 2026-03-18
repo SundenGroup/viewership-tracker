@@ -34,7 +34,8 @@ export class TikTokAdapter implements PlatformAdapter {
       });
 
       const state = await connection.connect();
-      const data = state.roomInfo?.data;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = state.roomInfo?.data as Record<string, any> | undefined;
 
       if (!data) {
         connection.disconnect();
