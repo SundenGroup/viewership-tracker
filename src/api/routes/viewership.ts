@@ -241,23 +241,35 @@ router.get('/timeseries', async (req: Request, res: Response, next: NextFunction
 
     const groupColumn = groupBy === 'channel' ? 'channel_id' : groupBy;
 
-    // Subquery deduplicates per channel within each bucket (MAX) to avoid
-    // double-counting when multiple poll cycles land in the same time bucket.
+    // Two-level dedup: pick one poll cycle per bucket per channel (latest timestamp),
+    // then sum CCV across streams. Avoids double-counting from deploy restarts.
     const fClauses = filter ? ViewershipSnapshotModel.buildFilterClauses(filter) : { sql: '', bindings: {} };
     const rows: Array<{ bucket: Date; group_key: string; total_ccv: string; channel_count: string }> = await db.raw(
       `SELECT bucket, group_key,
-         SUM(max_viewers)::text AS total_ccv,
+         SUM(channel_ccv)::text AS total_ccv,
          COUNT(*)::text AS channel_count
        FROM (
-         SELECT
-           date_trunc('minute', "timestamp")
-             + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
-             * interval '1 second' AS bucket,
-           channel_id,
-           "${groupColumn}" AS group_key,
-           MAX(concurrent_viewers) AS max_viewers
-         FROM viewership_snapshots
-         WHERE "${scopeColumn}" = :id ${fClauses.sql}
+         SELECT bucket, channel_id, group_key,
+           SUM(concurrent_viewers) AS channel_ccv
+         FROM (
+           SELECT
+             date_trunc('minute', "timestamp")
+               + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
+               * interval '1 second' AS bucket,
+             channel_id,
+             "${groupColumn}" AS group_key,
+             concurrent_viewers,
+             "timestamp",
+             MAX("timestamp") OVER (PARTITION BY
+               date_trunc('minute', "timestamp")
+                 + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
+                 * interval '1 second',
+               channel_id
+             ) AS latest_ts
+           FROM viewership_snapshots
+           WHERE "${scopeColumn}" = :id ${fClauses.sql}
+         ) with_latest
+         WHERE "timestamp" = latest_ts
          GROUP BY bucket, channel_id, group_key
        ) per_channel
        GROUP BY bucket, group_key
