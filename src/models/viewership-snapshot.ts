@@ -167,24 +167,30 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
   const col = scope && scope.level !== 'series' ? scopeColumnBare(scope) : 'series_id';
   const scopeId = scope && scope.level !== 'series' ? scope.id : seriesId;
 
-  // Find the most recent BULK poll timestamp (scope-filtered but NOT view-group-filtered)
+  // Find the latest BULK poll timestamp — the most recent timestamp that has
+  // more than 1 row. TikTok's headless scraper writes a single row ~30s after
+  // the main adapters, so MAX(timestamp) often picks TikTok's lone row.
+  // By requiring count > 1, we always land on the real bulk poll cycle.
   const latestTs = await db.raw(
-    `SELECT MAX("timestamp") AS ts
+    `SELECT "timestamp" AS ts
      FROM viewership_snapshots
      WHERE "${col}" = :scopeId
-       AND series_id = :seriesId`,
+       AND series_id = :seriesId
+       AND "timestamp" > NOW() - INTERVAL '5 minutes'
+     GROUP BY "timestamp"
+     HAVING COUNT(*) > 1
+     ORDER BY "timestamp" DESC
+     LIMIT 1`,
     { scopeId, seriesId },
   ).then((r: { rows: Array<{ ts: Date | null }> }) => r.rows[0]?.ts ?? null);
 
   if (!latestTs) return [];
 
-  // Use a small window (±10s) around the latest timestamp to capture all
-  // platforms from the same poll cycle even if their writes are a few
-  // seconds apart.
+  // Return all snapshots at that exact bulk-poll timestamp
   const query = db(TABLE)
     .join('channels', 'channels.id', 'viewership_snapshots.channel_id')
     .where('viewership_snapshots.series_id', seriesId)
-    .whereRaw(`viewership_snapshots."timestamp" BETWEEN (?::timestamptz - INTERVAL '10 seconds') AND ?::timestamptz`, [latestTs, latestTs])
+    .where('viewership_snapshots.timestamp', latestTs)
     .select('viewership_snapshots.*', 'channels.display_name', 'channels.channel_identifier');
 
   if (scope && scope.level !== 'series') {
@@ -196,15 +202,6 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
     query.whereRaw("SPLIT_PART(viewership_snapshots.language, '-', 1) = ANY(?)", [filter.languages]);
   }
   if (filter?.platforms?.length) query.whereIn('viewership_snapshots.platform', filter.platforms);
-
-  // Deduplicate: if a channel appears at two timestamps within the window,
-  // keep only the row with the latest timestamp per (channel_id, stream_id)
-  query.whereRaw(`viewership_snapshots."timestamp" = (
-    SELECT MAX(vs2."timestamp") FROM viewership_snapshots vs2
-    WHERE vs2.channel_id = viewership_snapshots.channel_id
-      AND COALESCE(vs2.stream_id, '') = COALESCE(viewership_snapshots.stream_id, '')
-      AND vs2."timestamp" BETWEEN (?::timestamptz - INTERVAL '10 seconds') AND ?::timestamptz
-  )`, [latestTs, latestTs]);
 
   return query;
 }
