@@ -32,7 +32,7 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       return;
     }
 
-    const { scope, id, ids, template, format, deliveryMethod, skipNarratives, detail } = req.body;
+    const { scope, id, ids, template, format, deliveryMethod, skipNarratives, detail, viewGroup } = req.body;
 
     // Validate scope
     if (!scope) {
@@ -76,6 +76,16 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       return;
     }
 
+    // Resolve view group to filter if provided
+    let filter: { languages?: string[]; platforms?: string[] } | undefined;
+    let groupName: string | undefined;
+    if (viewGroup && typeof viewGroup === 'object' && viewGroup.name) {
+      groupName = viewGroup.name;
+      filter = {};
+      if (viewGroup.languages?.length) filter.languages = viewGroup.languages;
+      if (viewGroup.platforms?.length) filter.platforms = viewGroup.platforms;
+    }
+
     // Full report generation
     const result = await reportAgent.generateReport({
       scope,
@@ -86,6 +96,8 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       deliveryMethod: (deliveryMethod ?? 'local') as DeliveryMethod,
       skipNarratives: skipNarratives ?? false,
       detail: (detail === 'detailed' ? 'detailed' : 'simple') as 'simple' | 'detailed',
+      filter,
+      groupName,
     });
 
     res.json({

@@ -391,6 +391,7 @@ export interface GenerateReportParams {
   template?: string;
   skipNarratives?: boolean;
   detail?: 'simple' | 'detailed';
+  viewGroup?: { name: string; languages?: string[]; platforms?: string[] };
 }
 
 export interface GenerateReportResult {

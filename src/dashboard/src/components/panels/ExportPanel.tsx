@@ -4,7 +4,7 @@ import { Select } from '@/components/common/Select';
 import { useMutation } from '@/hooks/useMutation';
 import * as api from '@/services/api';
 import { formatTimeAgo, formatDate } from '@/utils/formatters';
-import type { SeriesWithStages, ScopeLevel, ReportPayload } from '@/types/api';
+import type { SeriesWithStages, ScopeLevel, ReportPayload, ViewGroup } from '@/types/api';
 import type { ReportPayloadQuery } from '@/services/api';
 
 interface ExportPanelProps {
@@ -40,6 +40,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
   const [entityId, setEntityId] = useState<string>(seriesId);
   const [format, setFormat] = useState<'csv' | 'json' | 'html' | 'report'>('csv');
   const [detail, setDetail] = useState<'simple' | 'detailed'>('simple');
+  const [selectedViewGroup, setSelectedViewGroup] = useState<string>('');
   const [htmlLoading, setHtmlLoading] = useState(false);
   const [htmlError, setHtmlError] = useState<string | null>(null);
   const [recentExports, setRecentExports] = useState<ExportRecord[]>([]);
@@ -81,6 +82,22 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
     }
     return days;
   }, [scope, seriesId, seriesDetail]);
+
+  // View group options from series metadata
+  const viewGroupOptions = useMemo(() => {
+    const groups: { value: string; label: string }[] = [{ value: '', label: 'Global (All Data)' }];
+    const vg = (seriesDetail?.viewGroups ?? []) as ViewGroup[];
+    for (const g of vg) {
+      groups.push({ value: g.name, label: g.name });
+    }
+    return groups;
+  }, [seriesDetail]);
+
+  const resolvedViewGroup = useMemo(() => {
+    if (!selectedViewGroup) return undefined;
+    const vg = (seriesDetail?.viewGroups ?? []) as ViewGroup[];
+    return vg.find((g) => g.name === selectedViewGroup);
+  }, [selectedViewGroup, seriesDetail]);
 
   // Auto-select first entity when scope changes
   const handleScopeChange = useCallback(
@@ -158,6 +175,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
           format: 'html',
           skipNarratives: false,
           detail,
+          viewGroup: resolvedViewGroup ? { name: resolvedViewGroup.name, languages: resolvedViewGroup.languages, platforms: resolvedViewGroup.platforms } : undefined,
         });
         const reportUrl = api.getReportUrl(result.filePath);
         window.open(reportUrl, '_blank', 'noopener,noreferrer');
@@ -192,7 +210,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
     <Card title="Export Data" subtitle="Download viewership data or generate reports" collapsible storageKey="cvt:panel:export">
       <div className="space-y-4">
         {/* Selectors row */}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           <FormField label="Scope">
             <Select
               options={SCOPE_OPTIONS}
@@ -225,6 +243,16 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
               }}
             />
           </FormField>
+
+          {(format === 'html' || format === 'report') && viewGroupOptions.length > 1 && (
+            <FormField label="View Group">
+              <Select
+                options={viewGroupOptions}
+                value={selectedViewGroup}
+                onChange={(e) => setSelectedViewGroup(e.target.value)}
+              />
+            </FormField>
+          )}
         </div>
 
         {/* Detail level toggle — shown for report formats */}
