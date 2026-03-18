@@ -210,15 +210,15 @@ export async function getPeakCCV(scope: Scope, filter?: ViewFilter): Promise<Pea
   const col = scopeColumnBare(scope);
   const f = buildFilterClauses(filter);
   const result = await db.raw(
-    `SELECT "timestamp", SUM(max_viewers)::text AS total_ccv
+    `SELECT "timestamp", SUM(channel_ccv)::text AS total_ccv
      FROM (
-       SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS max_viewers
+       SELECT "timestamp", channel_id, SUM(concurrent_viewers) AS channel_ccv
        FROM viewership_snapshots
        WHERE "${col}" = :id ${f.sql}
-       GROUP BY "timestamp", channel_id, stream_id
+       GROUP BY "timestamp", channel_id
      ) per_channel
      GROUP BY "timestamp"
-     ORDER BY SUM(max_viewers) DESC
+     ORDER BY SUM(channel_ccv) DESC
      LIMIT 1`,
     { id: scope.id, ...f.bindings },
   ).then((r: { rows: PeakCCVResult[] }) => r.rows[0] ?? null);
@@ -231,12 +231,12 @@ export async function getAverageCCV(scope: Scope, filter?: ViewFilter): Promise<
   const result = await db.raw(
     `SELECT ROUND(AVG(ts_total))::text AS avg_ccv
      FROM (
-       SELECT "timestamp", SUM(max_viewers) AS ts_total
+       SELECT "timestamp", SUM(channel_ccv) AS ts_total
        FROM (
-         SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS max_viewers
+         SELECT "timestamp", channel_id, SUM(concurrent_viewers) AS channel_ccv
          FROM viewership_snapshots
          WHERE "${col}" = :id ${f.sql}
-         GROUP BY "timestamp", channel_id, stream_id
+         GROUP BY "timestamp", channel_id
        ) per_channel
        GROUP BY "timestamp"
      ) per_ts`,
@@ -249,12 +249,12 @@ export async function getTotalViewedHours(scope: Scope, filter?: ViewFilter): Pr
   const col = scopeColumnBare(scope);
   const f = buildFilterClauses(filter);
   const result = await db.raw(
-    `SELECT SUM(max_viewers) AS total_viewer_minutes
+    `SELECT SUM(channel_ccv) AS total_viewer_minutes
      FROM (
-       SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS max_viewers
+       SELECT "timestamp", channel_id, SUM(concurrent_viewers) AS channel_ccv
        FROM viewership_snapshots
        WHERE "${col}" = :id ${f.sql}
-       GROUP BY "timestamp", channel_id, stream_id
+       GROUP BY "timestamp", channel_id
      ) per_channel`,
     { id: scope.id, ...f.bindings },
   ).then((r: { rows: Array<{ total_viewer_minutes: string | null }> }) => r.rows[0]);
@@ -276,13 +276,13 @@ async function getBreakdown(scope: Scope, dimension: string, filter?: ViewFilter
        ROUND(AVG(ts_total))::text AS avg_ccv,
        MAX(ts_total)::text AS peak_ccv
      FROM (
-       SELECT "timestamp", group_key, SUM(max_viewers) AS ts_total
+       SELECT "timestamp", group_key, SUM(channel_ccv) AS ts_total
        FROM (
          SELECT "timestamp", channel_id, "${dimension}" AS group_key,
-           MAX(concurrent_viewers) AS max_viewers
+           SUM(concurrent_viewers) AS channel_ccv
          FROM viewership_snapshots
          WHERE "${col}" = :id ${f.sql}
-         GROUP BY "timestamp", channel_id, stream_id, "${dimension}"
+         GROUP BY "timestamp", channel_id, "${dimension}"
        ) per_channel
        GROUP BY "timestamp", group_key
      ) per_ts
@@ -321,14 +321,14 @@ export async function getTierBreakdown(scope: Scope, filter?: ViewFilter): Promi
        ROUND(AVG(ts_total))::text AS avg_ccv,
        MAX(ts_total)::text AS peak_ccv
      FROM (
-       SELECT "timestamp", group_key, SUM(max_viewers) AS ts_total
+       SELECT "timestamp", group_key, SUM(channel_ccv) AS ts_total
        FROM (
          SELECT vs."timestamp", vs.channel_id, c.tier AS group_key,
-           MAX(vs.concurrent_viewers) AS max_viewers
+           SUM(vs.concurrent_viewers) AS channel_ccv
          FROM viewership_snapshots vs
          JOIN channels c ON c.id = vs.channel_id
          WHERE vs."${col}" = :id ${fSql}
-         GROUP BY vs."timestamp", vs.channel_id, vs.stream_id, c.tier
+         GROUP BY vs."timestamp", vs.channel_id, c.tier
        ) per_channel
        GROUP BY "timestamp", group_key
      ) per_ts
@@ -350,19 +350,19 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
        c.tier,
        c.language,
        pc.platform,
-       MAX(pc.max_viewers)::text AS peak_ccv,
-       ROUND(AVG(pc.max_viewers))::text AS avg_ccv,
-       SUM(pc.max_viewers)::text AS total_viewed_minutes
+       MAX(pc.channel_ccv)::text AS peak_ccv,
+       ROUND(AVG(pc.channel_ccv))::text AS avg_ccv,
+       SUM(pc.channel_ccv)::text AS total_viewed_minutes
      FROM (
        SELECT "timestamp", channel_id, platform,
-         MAX(concurrent_viewers) AS max_viewers
+         SUM(concurrent_viewers) AS channel_ccv
        FROM viewership_snapshots
        WHERE "${col}" = :id ${f.sql}
-       GROUP BY "timestamp", channel_id, stream_id, platform
+       GROUP BY "timestamp", channel_id, platform
      ) pc
      JOIN channels c ON c.id = pc.channel_id
      GROUP BY pc.channel_id, c.display_name, c.tier, c.language, pc.platform
-     ORDER BY MAX(pc.max_viewers) DESC
+     ORDER BY MAX(pc.channel_ccv) DESC
      LIMIT :limit`,
     { id: scope.id, limit, ...f.bindings },
   ).then((r: { rows: LeaderboardEntry[] }) => r.rows);
