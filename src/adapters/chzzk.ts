@@ -13,7 +13,7 @@ const INTER_REQUEST_DELAY_MS = 300;
 
 // ── Chzzk API response shapes ─────────────────────────────────────────────
 
-interface ChzzkLiveStatusResponse {
+interface ChzzkLiveDetailResponse {
   code: number;
   message: string | null;
   content: {
@@ -25,7 +25,13 @@ interface ChzzkLiveStatusResponse {
     liveCategoryValue: string | null;
     chatChannelId: string | null;
     adult: boolean;
-    faultStatus: string | null;
+    openDate: string | null;
+    channel?: {
+      channelId: string;
+      channelName: string;
+      channelImageUrl: string | null;
+      verifiedMark: boolean;
+    };
   } | null;
 }
 
@@ -71,11 +77,13 @@ export class ChzzkAdapter implements PlatformAdapter {
       if (i > 0) await this.delay(INTER_REQUEST_DELAY_MS);
 
       try {
-        // Fetch live status
-        const liveData = await this.fetchLiveStatus(channelId);
+        // Fetch live detail (v3 endpoint includes channel info)
+        const liveData = await this.fetchLiveDetail(channelId);
 
-        // Fetch channel name if not cached
-        if (!this.nameCache.has(channelId)) {
+        // Cache channel name from embedded channel object
+        if (liveData?.channel?.channelName) {
+          this.nameCache.set(channelId, liveData.channel.channelName);
+        } else if (!this.nameCache.has(channelId)) {
           await this.fetchChannelInfo(channelId);
         }
         const displayName = this.nameCache.get(channelId) ?? channelId;
@@ -118,15 +126,15 @@ export class ChzzkAdapter implements PlatformAdapter {
 
   // ── Private: API fetching ───────────────────────────────────────────────
 
-  private async fetchLiveStatus(
+  private async fetchLiveDetail(
     channelId: string,
-  ): Promise<ChzzkLiveStatusResponse['content']> {
+  ): Promise<ChzzkLiveDetailResponse['content']> {
     const res = await this.requestWithRetry(
       () =>
-        this.client.get<ChzzkLiveStatusResponse>(
-          `/polling/v1/channels/${channelId}/live-status`,
+        this.client.get<ChzzkLiveDetailResponse>(
+          `/service/v3/channels/${channelId}/live-detail`,
         ),
-      `liveStatus(${channelId})`,
+      `liveDetail(${channelId})`,
     );
 
     if (!res?.data?.content) return null;
