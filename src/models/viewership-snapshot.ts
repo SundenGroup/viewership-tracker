@@ -152,27 +152,39 @@ export async function getSnapshotsForScope(scope: Scope): Promise<ViewershipSnap
 }
 
 export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?: ViewFilter): Promise<Array<ViewershipSnapshot & { display_name: string; channel_identifier: string }>> {
-  // distinctOn (channel_id, stream_id) returns one row per (channel, stream) pair.
-  // For multi-stream YouTube channels, this gives separate rows for each stream.
-  // For single-stream channels (stream_id IS NULL), NULLs group together → one row per channel.
+  // Strategy: find the most recent poll timestamp, then return all snapshots
+  // at that timestamp. This avoids summing stale stream_id entries from
+  // earlier polls (multi-stream channels can produce different stream_ids
+  // each cycle, and DISTINCT ON would keep every historic stream_id's
+  // latest row, massively inflating the CCV total).
+  const col = scope && scope.level !== 'series' ? scopeColumnBare(scope) : 'series_id';
+  const scopeId = scope && scope.level !== 'series' ? scope.id : seriesId;
+
+  const f = buildFilterClauses(filter);
+
+  // Find the most recent timestamp in scope
+  const latestTs = await db.raw(
+    `SELECT MAX("timestamp") AS ts
+     FROM viewership_snapshots
+     WHERE "${col}" = :scopeId
+       AND series_id = :seriesId
+       ${f.sql}`,
+    { scopeId, seriesId, ...f.bindings },
+  ).then((r: { rows: Array<{ ts: Date | null }> }) => r.rows[0]?.ts ?? null);
+
+  if (!latestTs) return [];
+
+  // Return all snapshots at that timestamp, one per (channel, stream)
   const query = db(TABLE)
-    .distinctOn(['viewership_snapshots.channel_id', 'viewership_snapshots.stream_id'])
     .join('channels', 'channels.id', 'viewership_snapshots.channel_id')
     .where('viewership_snapshots.series_id', seriesId)
-    .orderBy([
-      { column: 'viewership_snapshots.channel_id' },
-      { column: 'viewership_snapshots.stream_id' },
-      { column: 'viewership_snapshots.timestamp', order: 'desc' },
-    ])
+    .where('viewership_snapshots.timestamp', latestTs)
     .select('viewership_snapshots.*', 'channels.display_name', 'channels.channel_identifier');
 
-  // When scoped to a day or stage, filter to only channels with snapshots in that scope
   if (scope && scope.level !== 'series') {
-    const col = scopeColumn(scope);
-    query.where(col, scope.id);
+    query.where(scopeColumn(scope), scope.id);
   }
 
-  // View Group filter (language / platform)
   if (filter?.languages?.length) {
     query.whereRaw("SPLIT_PART(viewership_snapshots.language, '-', 1) = ANY(?)", [filter.languages]);
   }
