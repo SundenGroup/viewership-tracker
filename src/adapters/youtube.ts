@@ -1177,52 +1177,40 @@ function todayDateString(): string {
  * Returns 0 if no live viewer count is found.
  */
 function extractLiveConcurrentViewers(html: string): number {
-  // Strategy 1: Find the actual "videoViewCountRenderer" JSON block.
+  // Strategy 1: Find the "videoViewCountRenderer" JSON block with "isLive":true.
   // IMPORTANT: We search for `"videoViewCountRenderer":` (with the colon) because
-  // YouTube pages also list renderer names in comma-separated arrays like
-  // `"videoPrimaryInfoRenderer","videoViewCountRenderer","menuRenderer"` — searching
+  // YouTube pages also list renderer names in comma-separated arrays — searching
   // without the colon would match that list entry first (wrong location).
   //
-  // The correct block for a live stream looks like:
+  // The block looks like:
   //   "videoViewCountRenderer":{"viewCount":{"runs":[{"text":"18"},{"text":" watching now"}]},"isLive":true,"originalViewCount":"18"}
   //
-  // CRITICAL: YouTube sometimes serves a page where the videoViewCountRenderer has
-  // "isLive":true but shows TOTAL VIEWS instead of concurrent viewers. The runs text
-  // will say "X views" instead of "X watching now" in that case. We MUST check for
-  // "watching now" to distinguish the two.
+  // NOTE: The "runs" text is LOCALIZED (e.g. "watching now" in English, "Zuschauer"
+  // in German, etc.). We CANNOT rely on "watching now" for servers in non-English
+  // locales. Instead we check for "isLive":true which is always in English.
   const rendererIdx = html.indexOf('"videoViewCountRenderer":');
   if (rendererIdx !== -1) {
     const chunk = html.substring(rendererIdx, rendererIdx + 500);
-    const hasWatchingNow = chunk.toLowerCase().includes('watching now');
+    const hasIsLive = chunk.includes('"isLive":true');
     const viewCountMatch = chunk.match(/"originalViewCount":"(\d+)"/);
-    if (hasWatchingNow && viewCountMatch) {
-      logger.debug(`YouTube: extracted viewers via videoViewCountRenderer strategy: ${viewCountMatch[1]}`);
+    if (hasIsLive && viewCountMatch) {
+      logger.debug(`YouTube: extracted viewers via videoViewCountRenderer (isLive=true): ${viewCountMatch[1]}`);
       return parseInt(viewCountMatch[1], 10);
-    }
-    // Log what we found if it didn't match, to help debug
-    if (viewCountMatch && !hasWatchingNow) {
-      logger.warn(`YouTube: videoViewCountRenderer found originalViewCount=${viewCountMatch[1]} but text is NOT "watching now" (likely total views) — rejecting`);
     }
   }
 
-  // Strategy 2: Look for "originalViewCount" near "watching now" text.
-  // YouTube renders "X watching now" which is always the concurrent viewer count.
-  // The "watching now" text appears BEFORE originalViewCount in the same renderer
-  // block, so we look backward (200 chars) from each originalViewCount match.
+  // Strategy 2: Look for "originalViewCount" near localized "watching" text or "isLive".
   const allViewCounts = [...html.matchAll(/"originalViewCount":"(\d+)"/g)];
   for (const match of allViewCounts) {
     const pos = match.index!;
-    const lookback = html.substring(Math.max(0, pos - 200), pos + match[0].length);
-    if (lookback.toLowerCase().includes('watching now')) {
-      logger.debug(`YouTube: extracted viewers via "watching now" proximity strategy: ${match[1]}`);
+    const lookback = html.substring(Math.max(0, pos - 300), pos + match[0].length);
+    // Check for either English "watching now" OR the language-agnostic "isLive":true
+    if (lookback.includes('"isLive":true') || lookback.toLowerCase().includes('watching now')) {
+      logger.debug(`YouTube: extracted viewers via isLive/watching proximity: ${match[1]}`);
       return parseInt(match[1], 10);
     }
   }
 
-  // No reliable match found. Do NOT fall back to a broad "originalViewCount" match
-  // because it may pick up total video views (e.g. 1,976) instead of concurrent
-  // viewers (e.g. 18). It's better to report 0 and let the next poll cycle retry
-  // than to report wildly incorrect data that corrupts charts.
-  logger.warn(`YouTube: could not extract live concurrent viewers — no "watching now" context found in videoViewCountRenderer or page`);
+  logger.warn('YouTube: could not extract live concurrent viewers — no isLive context found');
   return 0;
 }
