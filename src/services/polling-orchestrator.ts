@@ -408,9 +408,12 @@ export class PollingOrchestrator {
 
     // 3. Build multi-platform request (deduplicate by platform:identifier
     //    so channels shared across series are only fetched once)
+    //    Skip TikTok channels when relay is configured (relay handles TikTok polling)
+    const relayHandlesTikTok = !!process.env.RELAY_SECRET;
     const seenPlatformIds = new Set<string>();
     const multiPlatformChannels: MultiPlatformChannel[] = [];
     for (const ch of channelList) {
+      if (relayHandlesTikTok && ch.platform === 'tiktok') continue;
       const dedupKey = `${ch.platform}:${ch.channel_identifier.toLowerCase()}`;
       if (seenPlatformIds.has(dedupKey)) continue;
       seenPlatformIds.add(dedupKey);
