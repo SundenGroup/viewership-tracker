@@ -11,17 +11,17 @@ interface PlatformBreakdownPanelProps {
   loading: boolean;
 }
 
-type Metric = 'peakCCV' | 'avgCCV' | 'viewedHours';
+type Metric = 'liveCCV' | 'avgCCV' | 'viewedHours';
 
 const METRIC_LABELS: Record<Metric, string> = {
-  peakCCV: 'Peak CCV',
+  liveCCV: 'Live CCV',
   avgCCV: 'Avg CCV',
   viewedHours: 'Viewed Hours',
 };
 
 function getMetricValue(e: BreakdownEntry, metric: Metric): number {
   if (metric === 'viewedHours') return e.totalCCV / 60;
-  return e[metric];
+  return e.avgCCV; // fallback for aggregate metrics
 }
 
 function formatMetricValue(v: number, metric: Metric): string {
@@ -31,13 +31,13 @@ function formatMetricValue(v: number, metric: Metric): string {
 
 export function PlatformBreakdownPanel({ liveCCV, metrics, scopeLevel, loading }: PlatformBreakdownPanelProps) {
   const isLive = scopeLevel === 'series';
-  const [metric, setMetric] = useState<Metric>('avgCCV');
+  const [metric, setMetric] = useState<Metric>(isLive ? 'liveCCV' : 'avgCCV');
 
   if (loading && !liveCCV && !metrics) {
     return <Card title="Platform Breakdown"><LoadingOverlay /></Card>;
   }
 
-  // Build chart data from either live CCV (series scope) or aggregate metrics (day/stage scope)
+  // Build chart data based on selected metric
   let chartData: Array<{
     name: string;
     platform: string;
@@ -50,8 +50,10 @@ export function PlatformBreakdownPanel({ liveCCV, metrics, scopeLevel, loading }
   let centerLabel = '';
   let subtitle = '';
 
-  if (isLive) {
-    // Live mode: derive from liveCCV channels
+  const useLiveData = metric === 'liveCCV';
+
+  if (useLiveData) {
+    // Live CCV mode: derive from liveCCV channels
     if (!liveCCV || liveCCV.channels.length === 0) {
       return (
         <Card title="Platform Breakdown">
@@ -101,7 +103,7 @@ export function PlatformBreakdownPanel({ liveCCV, metrics, scopeLevel, loading }
         name: platformLabel(e.platform ?? e.key ?? 'unknown'),
         platform: e.platform ?? e.key ?? 'unknown',
         ccv: getMetricValue(e, metric),
-        channels: 0, // not available in aggregate
+        channels: 0,
         pct: getMetricValue(e, metric) / grandTotal,
         color: platformColor(e.platform ?? e.key ?? 'unknown'),
       }));
@@ -110,7 +112,7 @@ export function PlatformBreakdownPanel({ liveCCV, metrics, scopeLevel, loading }
     subtitle = `${METRIC_LABELS[metric]} by platform`;
   }
 
-  const metricToggle = !isLive ? (
+  const metricToggle = (
     <div className="flex gap-1">
       {(Object.keys(METRIC_LABELS) as Metric[]).map((m) => (
         <button
@@ -126,7 +128,7 @@ export function PlatformBreakdownPanel({ liveCCV, metrics, scopeLevel, loading }
         </button>
       ))}
     </div>
-  ) : undefined;
+  );
 
   return (
     <Card
@@ -163,7 +165,7 @@ export function PlatformBreakdownPanel({ liveCCV, metrics, scopeLevel, loading }
                 fontSize: '12px',
               }}
               formatter={(value: number, name: string) => [
-                `${formatMetricValue(value, isLive ? 'avgCCV' : metric)} (${formatPercent(value / grandTotal)})`,
+                `${formatMetricValue(value, metric)} (${formatPercent(value / grandTotal)})`,
                 name,
               ]}
             />
@@ -184,7 +186,7 @@ export function PlatformBreakdownPanel({ liveCCV, metrics, scopeLevel, loading }
               className="fill-gray-500 text-[10px]"
               style={{ fontSize: '10px' }}
             >
-              {isLive ? 'Total CCV' : METRIC_LABELS[metric]}
+              {METRIC_LABELS[metric]}
             </text>
           </PieChart>
         </ResponsiveContainer>
