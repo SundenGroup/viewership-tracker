@@ -42,6 +42,13 @@ export function formatPercent(value: number, decimals = 1): string {
   return `${pct.toFixed(decimals)}%`;
 }
 
+/** Format hours as "Xh Ym" (e.g. 1234.5 → "1,234h 30m") */
+export function formatViewedHours(hours: number): string {
+  const h = Math.floor(hours);
+  const m = Math.round((hours - h) * 60);
+  return m > 0 ? `${formatNumber(h)}h ${m}m` : `${formatNumber(h)}h`;
+}
+
 // ── Date / Time Formatting ────────────────────────────────────────────────
 
 /**

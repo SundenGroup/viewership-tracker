@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   BarChart,
   Bar,
@@ -9,13 +10,21 @@ import {
   Cell,
 } from 'recharts';
 import { Card, LoadingOverlay } from '@/components/common';
-import { formatCompact, formatNumber, formatPercent } from '@/utils/formatters';
+import { formatCompact, formatNumber, formatPercent, formatViewedHours } from '@/utils/formatters';
 import type { BreakdownEntry } from '@/types/api';
 
 interface LanguageDistPanelProps {
   data: BreakdownEntry[];
   loading: boolean;
 }
+
+type Metric = 'peakCCV' | 'avgCCV' | 'viewedHours';
+
+const METRIC_LABELS: Record<Metric, string> = {
+  peakCCV: 'Peak CCV',
+  avgCCV: 'Avg CCV',
+  viewedHours: 'Viewed Hours',
+};
 
 // Accessible neutral palette
 const BAR_COLORS = [
@@ -31,7 +40,19 @@ const BAR_COLORS = [
   '#e879f9', // fuchsia-400
 ];
 
+function getValue(d: BreakdownEntry, metric: Metric): number {
+  if (metric === 'viewedHours') return d.totalCCV / 60;
+  return d[metric];
+}
+
+function formatValue(v: number, metric: Metric): string {
+  if (metric === 'viewedHours') return formatViewedHours(v);
+  return formatNumber(v);
+}
+
 export function LanguageDistPanel({ data, loading }: LanguageDistPanelProps) {
+  const [metric, setMetric] = useState<Metric>('avgCCV');
+
   if (loading && data.length === 0) {
     return <Card title="Language Distribution"><LoadingOverlay /></Card>;
   }
@@ -44,25 +65,48 @@ export function LanguageDistPanel({ data, loading }: LanguageDistPanelProps) {
     );
   }
 
-  // Sort descending by totalCCV
+  // Sort descending by chosen metric
   const sorted = [...data]
     .filter((d) => d.language ?? d.key)
-    .sort((a, b) => b.totalCCV - a.totalCCV);
+    .sort((a, b) => getValue(b, metric) - getValue(a, metric));
 
-  // Compute grand total for percentages
-  const grandTotal = sorted.reduce((sum, d) => sum + d.totalCCV, 0);
+  const grandTotal = sorted.reduce((sum, d) => sum + getValue(d, metric), 0);
 
   const chartData = sorted.map((d, i) => ({
     name: (d.language ?? d.key ?? 'Unknown').toUpperCase(),
-    value: d.totalCCV,
-    pct: grandTotal > 0 ? d.totalCCV / grandTotal : 0,
+    value: getValue(d, metric),
+    pct: grandTotal > 0 ? getValue(d, metric) / grandTotal : 0,
     color: BAR_COLORS[i % BAR_COLORS.length]!,
   }));
 
   const chartHeight = Math.max(200, chartData.length * 36 + 40);
 
+  const metricToggle = (
+    <div className="flex gap-1">
+      {(Object.keys(METRIC_LABELS) as Metric[]).map((m) => (
+        <button
+          key={m}
+          onClick={() => setMetric(m)}
+          className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+            metric === m
+              ? 'bg-red-500/20 text-red-400'
+              : 'text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          {METRIC_LABELS[m]}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
-    <Card title="Language Distribution" subtitle={`${sorted.length} languages detected`} collapsible storageKey="cvt:panel:languageDist">
+    <Card
+      title="Language Distribution"
+      subtitle={`${sorted.length} languages detected`}
+      collapsible
+      storageKey="cvt:panel:languageDist"
+      action={metricToggle}
+    >
       <ResponsiveContainer width="100%" height={chartHeight}>
         <BarChart
           data={chartData}
@@ -96,8 +140,8 @@ export function LanguageDistPanel({ data, loading }: LanguageDistPanelProps) {
             }}
             labelStyle={{ color: '#9ca3af' }}
             formatter={(value: number, _name: string, entry: { payload?: { pct: number } }) => [
-              `${formatNumber(value)} (${formatPercent(entry.payload?.pct ?? 0)})`,
-              'Total CCV',
+              `${formatValue(value, metric)} (${formatPercent(entry.payload?.pct ?? 0)})`,
+              METRIC_LABELS[metric],
             ]}
           />
           <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
