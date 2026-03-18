@@ -71,6 +71,7 @@ export interface BreakdownResult {
 export interface LeaderboardEntry {
   channel_id: string;
   display_name: string;
+  channel_identifier: string;
   platform: string;
   tier: string;
   language: string | null;
@@ -347,6 +348,7 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
     `SELECT
        pc.channel_id,
        c.display_name,
+       c.channel_identifier,
        c.tier,
        c.language,
        pc.platform,
@@ -361,7 +363,7 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
        GROUP BY "timestamp", channel_id, platform
      ) pc
      JOIN channels c ON c.id = pc.channel_id
-     GROUP BY pc.channel_id, c.display_name, c.tier, c.language, pc.platform
+     GROUP BY pc.channel_id, c.display_name, c.channel_identifier, c.tier, c.language, pc.platform
      ORDER BY MAX(pc.channel_ccv) DESC
      LIMIT :limit`,
     { id: scope.id, limit, ...f.bindings },

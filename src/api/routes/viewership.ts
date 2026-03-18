@@ -359,6 +359,7 @@ router.get('/leaderboard/:seriesId', async (req: Request, res: Response, next: N
       scope: scopeObj,
       channels: leaderboard.map((e) => ({
         channelId: e.channel_id,
+        channelIdentifier: e.channel_identifier,
         displayName: e.display_name,
         platform: e.platform,
         tier: e.tier ?? 'community',

@@ -245,6 +245,7 @@ export interface LeaderboardEntry {
 
 export interface LeaderboardStats {
   channelId: string;
+  channelIdentifier: string;
   displayName: string;
   platform: string;
   tier: string;

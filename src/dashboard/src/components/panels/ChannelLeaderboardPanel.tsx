@@ -241,7 +241,29 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                       <PlatformBadge platform={ch.platform ?? 'unknown'} />
                     </td>
                     <td className="py-2">
-                      <span className="font-medium text-gray-200">{ch.displayName}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-gray-200">{ch.displayName}</span>
+                        {(() => {
+                          const url = getStreamUrl(ch.platform, ch.channelIdentifier);
+                          return url ? (
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="shrink-0 text-gray-600 hover:text-accent-cyan transition-colors"
+                              title="Open stream"
+                            >
+                              <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                <path
+                                  fillRule="evenodd"
+                                  d="M4.25 5.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 00.75-.75v-4a.75.75 0 011.5 0v4A2.25 2.25 0 0112.75 17h-8.5A2.25 2.25 0 012 14.75v-8.5A2.25 2.25 0 014.25 4h5a.75.75 0 010 1.5h-5zm7.25-.75a.75.75 0 01.75-.75h3.5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0V6.31l-5.47 5.47a.75.75 0 01-1.06-1.06l5.47-5.47H12.25a.75.75 0 01-.75-.75z"
+                                  clipRule="evenodd"
+                                />
+                              </svg>
+                            </a>
+                          ) : null;
+                        })()}
+                      </div>
                     </td>
                     <td className="py-2">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${TIER_COLORS[ch.tier] ?? TIER_COLORS.community}`}>
