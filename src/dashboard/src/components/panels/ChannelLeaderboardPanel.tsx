@@ -118,9 +118,10 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
   // Build merged expanded data: aggregate stats + live CCV
   const mergedExpanded = useMemo(() => {
     if (!stats) return [];
-    const liveLookup = new Map(
-      sorted.map((ch) => [ch.channelId, ch.concurrentViewers]),
-    );
+    const liveLookup = new Map<string, number>();
+    for (const ch of sorted) {
+      liveLookup.set(ch.channelId, (liveLookup.get(ch.channelId) ?? 0) + ch.concurrentViewers);
+    }
     return stats.map((s) => ({
       ...s,
       liveCCV: liveLookup.get(s.channelId) ?? 0,

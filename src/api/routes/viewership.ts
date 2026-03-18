@@ -42,12 +42,15 @@ router.get('/live/:seriesId', async (req: Request, res: Response, next: NextFunc
     const filter = parseViewFilter(req.query as Record<string, unknown>);
     const snapshots = await ViewershipSnapshotModel.getLatestSnapshot(req.params.seriesId as string, scope, filter);
 
-    const totalCCV = snapshots.reduce((sum, s) => sum + s.concurrent_viewers, 0);
-    // Count unique channels (not per-stream) for channel/live counts
-    const uniqueChannelIds = new Set(snapshots.map((s) => s.channel_id));
-    const liveChannelIds = new Set(snapshots.filter((s) => s.concurrent_viewers > 0).map((s) => s.channel_id));
-    const channelCount = uniqueChannelIds.size;
-    const liveCount = liveChannelIds.size;
+    // Deduplicate: take MAX(concurrent_viewers) per channel_id to handle
+    // duplicate rows from the polling orchestrator (cross-series channels).
+    const channelMax = new Map<string, number>();
+    for (const s of snapshots) {
+      channelMax.set(s.channel_id, Math.max(channelMax.get(s.channel_id) ?? 0, s.concurrent_viewers));
+    }
+    const totalCCV = [...channelMax.values()].reduce((sum, v) => sum + v, 0);
+    const channelCount = channelMax.size;
+    const liveCount = [...channelMax.entries()].filter(([, v]) => v > 0).length;
 
     res.json({
       seriesId: req.params.seriesId as string,

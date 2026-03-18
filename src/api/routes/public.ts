@@ -107,16 +107,21 @@ router.get('/:shortName/live-ccv', async (req: Request, res: Response, next: Nex
     const filter = parseViewFilter(req.query as Record<string, unknown>);
     const snapshots = await ViewershipSnapshotModel.getLatestSnapshot(series.id, scopeArg, filter);
 
-    const totalCCV = snapshots.reduce((sum, s) => sum + s.concurrent_viewers, 0);
-    const uniqueChannelIds = new Set(snapshots.map((s) => s.channel_id));
-    const liveChannelIds = new Set(snapshots.filter((s) => s.concurrent_viewers > 0).map((s) => s.channel_id));
+    // Deduplicate: take MAX(concurrent_viewers) per channel_id to handle
+    // duplicate rows from the polling orchestrator (cross-series channels).
+    const channelMax = new Map<string, number>();
+    for (const s of snapshots) {
+      channelMax.set(s.channel_id, Math.max(channelMax.get(s.channel_id) ?? 0, s.concurrent_viewers));
+    }
+    const totalCCV = [...channelMax.values()].reduce((sum, v) => sum + v, 0);
+    const liveCount = [...channelMax.entries()].filter(([, v]) => v > 0).length;
 
     res.json({
       seriesId: series.id,
       timestamp: snapshots.length > 0 ? snapshots[0].timestamp : null,
       totalCCV,
-      channelCount: uniqueChannelIds.size,
-      liveChannels: liveChannelIds.size,
+      channelCount: channelMax.size,
+      liveChannels: liveCount,
       channels: snapshots.map((s) => ({
         channelId: s.channel_id,
         displayName: s.display_name,
