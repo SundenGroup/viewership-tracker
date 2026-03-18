@@ -177,25 +177,25 @@ export class SteamAdapter implements PlatformAdapter {
     steamId: string,
   ): Promise<{ isLive: boolean; viewers: number; title: string | null; gameName: string | null } | null> {
     try {
-      const res = await this.scraper.get<{
-        success: string;
-        num_viewers?: number;
-        title?: string;
-      }>(`${STEAM_COMMUNITY_BASE}/broadcast/getbroadcastmpd`, {
+      const res = await this.scraper.get(`${STEAM_COMMUNITY_BASE}/broadcast/getbroadcastmpd`, {
         params: { steamid: steamId, broadcastid: 0, viewertoken: 0 },
         timeout: 8000,
+        responseType: 'json',
       });
 
-      if (res.data?.success === 'ready' && typeof res.data.num_viewers === 'number') {
-        logger.debug('[Steam] Got viewer count from getbroadcastmpd', {
+      const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+
+      if (data?.success === 'ready' && data.num_viewers != null) {
+        const viewers = Number(data.num_viewers);
+        logger.info('[Steam] Got viewer count from getbroadcastmpd', {
           steamId,
-          viewers: res.data.num_viewers,
-          title: res.data.title ?? null,
+          viewers,
+          title: data.title ?? null,
         });
         return {
           isLive: true,
-          viewers: res.data.num_viewers,
-          title: res.data.title ?? null,
+          viewers,
+          title: data.title ?? null,
           gameName: null,
         };
       }
