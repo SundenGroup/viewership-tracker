@@ -947,17 +947,14 @@ export class YouTubeAdapter implements PlatformAdapter {
 
         if (allLiveVideoIds.length > 1) {
           // Multiple simultaneous streams detected — scrape each one individually
+          // IMPORTANT: We must scrape each video via /watch?v= because the /channel/live
+          // page returns garbage viewer counts when multiple streams are active.
           logger.info(`YouTube: multi-stream channel ${originalId} has ${allLiveVideoIds.length} live streams`);
 
           for (const liveVideoId of allLiveVideoIds) {
-            // Reuse existing scraped data if we already have it for the primary stream
-            let streamData: ScrapedLiveData | null = null;
-            if (liveVideoId === scraped.videoId) {
-              streamData = scraped;
-            } else {
-              // Scrape the additional stream
-              streamData = await this.scrapeVideoLiveData(liveVideoId);
-            }
+            // Always scrape each video individually — never reuse /channel/live data
+            // because /channel/live returns wrong CCV when multiple streams are active
+            const streamData = await this.scrapeVideoLiveData(liveVideoId);
 
             if (!streamData) continue;
 
