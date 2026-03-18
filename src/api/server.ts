@@ -14,6 +14,7 @@ import pollingRouter from './routes/polling';
 import reportsRouter from './routes/reports';
 import authRouter from './routes/auth';
 import publicRouter from './routes/public';
+import relayRouter from './routes/relay';
 import { authenticate, requireRole } from './middleware/auth';
 
 export function createApp() {
@@ -44,6 +45,9 @@ export function createApp() {
 
   // Public API routes — no authentication required
   app.use('/api/public', publicRouter);
+
+  // Relay routes — external scrapers push data here (own token auth)
+  app.use('/api/relay', relayRouter);
 
   // All other /api routes require authentication
   app.use('/api', authenticate);
