@@ -151,21 +151,64 @@ export class SteamAdapter implements PlatformAdapter {
 
   /**
    * Attempts to get broadcast viewer data via multiple strategies:
-   * 1. IBroadcastService API (undocumented)
-   * 2. Steam Community broadcast page scraping (fallback)
+   * 1. getbroadcastmpd public endpoint (most reliable, no auth needed)
+   * 2. IBroadcastService API (requires Publisher key)
+   * 3. Steam Community broadcast page scraping (last resort)
    */
   private async fetchBroadcastData(
     steamId: string,
   ): Promise<{ isLive: boolean; viewers: number; title: string | null; gameName: string | null } | null> {
-    // Strategy A: Try the broadcast API
+    // Strategy A: Public getbroadcastmpd endpoint (no API key required)
+    const mpdResult = await this.tryBroadcastMPD(steamId);
+    if (mpdResult) return mpdResult;
+
+    // Strategy B: Try the broadcast API (requires Publisher key)
     const apiResult = await this.tryBroadcastAPI(steamId);
     if (apiResult) return apiResult;
 
-    // Strategy B: Scrape the Steam Community broadcast page
+    // Strategy C: Scrape the Steam Community broadcast page
     const scrapeResult = await this.scrapeBroadcastPage(steamId);
     if (scrapeResult) return scrapeResult;
 
     return null;
+  }
+
+  /**
+   * Strategy A: Use the public getbroadcastmpd endpoint.
+   * Returns num_viewers and title without any API key.
+   */
+  private async tryBroadcastMPD(
+    steamId: string,
+  ): Promise<{ isLive: boolean; viewers: number; title: string | null; gameName: string | null } | null> {
+    try {
+      const res = await this.scraper.get<{
+        success: string;
+        num_viewers?: number;
+        title?: string;
+      }>(`${STEAM_COMMUNITY_BASE}/broadcast/getbroadcastmpd`, {
+        params: { steamid: steamId, broadcastid: 0, viewertoken: 0 },
+        timeout: 8000,
+      });
+
+      if (res.data?.success === 'ready' && typeof res.data.num_viewers === 'number') {
+        logger.debug('[Steam] Got viewer count from getbroadcastmpd', {
+          steamId,
+          viewers: res.data.num_viewers,
+          title: res.data.title ?? null,
+        });
+        return {
+          isLive: true,
+          viewers: res.data.num_viewers,
+          title: res.data.title ?? null,
+          gameName: null,
+        };
+      }
+
+      // success !== 'ready' means not broadcasting
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /**
