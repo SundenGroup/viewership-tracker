@@ -9,7 +9,7 @@ import type { Channel, BroadcastDay } from '@/types/api';
 
 // ── Sort types & helpers ────────────────────────────────────────────────
 
-type SortField = 'display_name' | 'platform' | 'tier' | 'days' | 'source' | 'is_active' | 'added_at';
+type SortField = 'display_name' | 'platform' | 'language' | 'tier' | 'days' | 'source' | 'is_active' | 'added_at';
 type SortDir = 'asc' | 'desc';
 interface SortState { field: SortField; dir: SortDir }
 
@@ -21,6 +21,7 @@ function sortChannels(channels: Channel[], { field, dir }: SortState): Channel[]
     switch (field) {
       case 'display_name': return d * a.display_name.localeCompare(b.display_name);
       case 'platform': return d * a.platform.localeCompare(b.platform);
+      case 'language': return d * (a.language ?? '').localeCompare(b.language ?? '');
       case 'tier': return d * ((TIER_ORDER[a.tier] ?? 99) - (TIER_ORDER[b.tier] ?? 99));
       case 'source': return d * (a.source ?? '').localeCompare(b.source ?? '');
       case 'days': {
@@ -136,6 +137,7 @@ export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: Ch
                 {([
                   ['display_name', 'Channel'],
                   ['platform', 'Platform'],
+                  ['language', 'Lang'],
                   ['tier', 'Tier'],
                 ] as [SortField, string][]).map(([field, label]) => (
                   <th
@@ -464,6 +466,7 @@ function ChannelRow({
       <td className="py-2">
         <PlatformBadge platform={channel.platform} />
       </td>
+      <td className="py-2 text-xs text-gray-400">{(channel.language ?? '').toUpperCase()}</td>
       <td className="py-2 text-xs text-gray-400">{tierLabel(channel.tier)}</td>
       <td className="py-2">{daysPills}</td>
       <td className="py-2 text-xs text-gray-500">
