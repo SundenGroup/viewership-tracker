@@ -39,6 +39,7 @@ export interface HTMLReportData {
   };
   narratives: Narratives;
   detail?: 'simple' | 'detailed';
+  groupName?: string;
 }
 
 // ── Platform / Language / Tier Colors ────────────────────────────────────────
@@ -178,9 +179,10 @@ export function buildHTMLReport(data: HTMLReportData): string {
   }
 
   // Scope label for title
-  const scopeTitle = scope === 'day' ? 'Day Report' :
+  const groupSuffix = data.groupName ? ` — ${data.groupName}` : '';
+  const scopeTitle = (scope === 'day' ? 'Day Report' :
     scope === 'stage' ? 'Stage Report' :
-    scope === 'series' ? 'Series Report' : 'Report';
+    scope === 'series' ? 'Series Report' : 'Report') + groupSuffix;
 
   // Prepare chart data as JSON for embedding
   const platformNames = [...new Set(platformTimeSeries.map((p) => p.groupKey?.toLowerCase()).filter(Boolean))];

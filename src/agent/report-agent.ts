@@ -185,8 +185,8 @@ export class ReportAgent {
     if (format === 'html') {
       // ── HTML Report: Chart.js client-side, no Python ─────────────────
       // 3. Fetch time series data (total + per-platform)
-      const totalTimeSeries = await this.fetchAllTimeSeries(payload.broadcastDays);
-      const platformTimeSeries = await this.fetchGroupedTimeSeries(payload.broadcastDays, 'platform');
+      const totalTimeSeries = await this.fetchAllTimeSeries(payload.broadcastDays, request.filter);
+      const platformTimeSeries = await this.fetchGroupedTimeSeries(payload.broadcastDays, 'platform', request.filter);
 
       // 4. Generate narratives
       let narratives: Narratives = {};
@@ -215,6 +215,7 @@ export class ReportAgent {
         aggregated,
         narratives,
         detail: isDetailed ? 'detailed' : 'simple',
+        groupName: request.groupName,
       };
       const tmpPath = await builder.buildHTML(htmlData);
 
@@ -856,6 +857,7 @@ export class ReportAgent {
   /** Fetch time series data for all broadcast days and merge into one array. */
   private async fetchAllTimeSeries(
     broadcastDays: ReportPayload['broadcastDays'],
+    filter?: ViewershipSnapshotModel.ViewFilter,
   ): Promise<TimeSeriesPoint[]> {
     const allPoints: TimeSeriesPoint[] = [];
 
@@ -864,6 +866,7 @@ export class ReportAgent {
         const buckets = await ViewershipSnapshotModel.getTimeSeriesData(
           { level: 'day', id: day.id },
           300, // 5-min buckets
+          filter,
         );
         for (const b of buckets) {
           allPoints.push({
@@ -887,6 +890,7 @@ export class ReportAgent {
   private async fetchGroupedTimeSeries(
     broadcastDays: ReportPayload['broadcastDays'],
     groupBy: 'platform' | 'language',
+    filter?: ViewershipSnapshotModel.ViewFilter,
   ): Promise<GroupedTimeSeriesPoint[]> {
     const allPoints: GroupedTimeSeriesPoint[] = [];
 
@@ -896,6 +900,7 @@ export class ReportAgent {
           { level: 'day', id: day.id },
           groupBy,
           300, // 5-min buckets
+          filter,
         );
         for (const b of buckets) {
           allPoints.push({
