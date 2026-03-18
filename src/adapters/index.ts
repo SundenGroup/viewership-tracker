@@ -130,9 +130,11 @@ export class AdapterRegistry {
 
     // Build a lookup: platform+channelIdentifier (lowercased) → ChannelSnapshot[]
     // A single channel can produce multiple snapshots (YouTube multi-stream)
+    // Tag each snapshot with its source platform so the orchestrator can key correctly
     const resultMap = new Map<string, ChannelSnapshot[]>();
     for (const { platform, results } of settled) {
       for (const snapshot of results) {
+        snapshot.platform = platform;
         const key = `${platform}:${snapshot.channelIdentifier.toLowerCase()}`;
         const list = resultMap.get(key) ?? [];
         list.push(snapshot);

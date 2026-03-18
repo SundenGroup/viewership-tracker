@@ -480,20 +480,13 @@ export class PollingOrchestrator {
     }
 
     // Build multimap: platform:identifier → ChannelSnapshot[]
-    // Snapshots from getViewerCountsMultiPlatform preserve channelIdentifier,
-    // but we need to pair them with the channel's platform. Since the registry
-    // groups by platform and each adapter only returns its own platform's channels,
-    // we can build the key using the channel list's platform for each identifier.
-    const identifierToPlatform = new Map<string, string>();
-    for (const ch of channelList) {
-      identifierToPlatform.set(ch.channel_identifier.toLowerCase(), ch.platform);
-    }
-
+    // Each snapshot is tagged with its source platform by the registry,
+    // so we can correctly separate channels that share the same identifier
+    // across different platforms (e.g. "pubg_battlegroundstr" on both Kick and Twitch).
     const snapshotMap = new Map<string, ChannelSnapshot[]>();
     for (const snap of snapshots) {
-      const platform = identifierToPlatform.get(snap.channelIdentifier.toLowerCase());
-      if (!platform) continue;
-      const key = `${platform}:${snap.channelIdentifier.toLowerCase()}`;
+      if (!snap.platform) continue;
+      const key = `${snap.platform}:${snap.channelIdentifier.toLowerCase()}`;
       const list = snapshotMap.get(key) ?? [];
       list.push(snap);
       snapshotMap.set(key, list);

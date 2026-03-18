@@ -9,6 +9,8 @@ export interface ChannelSnapshot {
   startedAt: string | null;
   streamId?: string;
   streamTitle?: string;
+  /** Populated by AdapterRegistry.getViewerCountsMultiPlatform to identify source platform */
+  platform?: string;
 }
 
 export interface DiscoveredStream {
