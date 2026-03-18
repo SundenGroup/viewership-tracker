@@ -499,6 +499,9 @@ export class PollingOrchestrator {
     let totalCCV = 0;
 
     for (const channel of channelList) {
+      // Skip channels handled by relay (they write their own snapshots)
+      if (relayHandlesTikTok && channel.platform === 'tiktok') continue;
+
       const key = `${channel.platform}:${channel.channel_identifier.toLowerCase()}`;
       const channelSnapshots = snapshotMap.get(key) ?? [{
         channelIdentifier: channel.channel_identifier,
