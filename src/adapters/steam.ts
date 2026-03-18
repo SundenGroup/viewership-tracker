@@ -77,10 +77,6 @@ export class SteamAdapter implements PlatformAdapter {
 
   async getViewerCounts(channelIdentifiers: string[]): Promise<ChannelSnapshot[]> {
     if (channelIdentifiers.length === 0) return [];
-    if (!this.apiKey) {
-      logger.warn('[Steam] No API key configured — returning offline for all channels');
-      return channelIdentifiers.map((id) => this.offlineSnapshot(id));
-    }
 
     // 1. Resolve all identifiers to Steam64 IDs
     const resolved = await Promise.all(
