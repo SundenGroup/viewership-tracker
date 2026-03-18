@@ -1,26 +1,17 @@
-import { chromium } from 'playwright-extra';
-import stealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { chromium } from 'playwright';
 import type { Browser, BrowserContext, Page } from 'playwright';
+import * as fs from 'fs';
+import * as path from 'path';
 import logger from '../utils/logger';
 import type { PlatformAdapter, ChannelSnapshot, DiscoveredStream } from './types';
-
-// Register stealth plugin once at module level
-chromium.use(stealthPlugin());
 
 const TIKTOK_BASE = 'https://www.tiktok.com';
 const PAGE_TIMEOUT_MS = 30_000;
 const MIN_PAGE_LOAD_DELAY_MS = 5_000;
-const MAX_CONTEXT_AGE_MS = 30 * 60_000; // 30 minutes
-const MAX_CONTEXTS = 3;
 const CAPTCHA_COOLDOWN_MS = 10 * 60_000; // 10 minutes
 
-const USER_AGENTS = [
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-];
+// CDP file written by scripts/tiktok-browser-server.ts
+const CDP_FILE = path.resolve(process.cwd(), '.tiktok-cdp');
 
 // Viewer count selectors — TikTok's DOM changes frequently, so we try multiple
 const VIEWER_COUNT_SELECTORS = [
@@ -39,17 +30,12 @@ const CAPTCHA_INDICATORS = [
   'please verify',
 ];
 
-interface ManagedContext {
-  context: BrowserContext;
-  createdAt: number;
-}
-
 export class TikTokAdapter implements PlatformAdapter {
   readonly platform = 'tiktok';
 
   private browser: Browser | null = null;
-  private contexts: ManagedContext[] = [];
-  private readonly cooldowns = new Map<string, number>(); // username → cooldown-until timestamp
+  private usingCDP = false;
+  private readonly cooldowns = new Map<string, number>();
   private isShuttingDown = false;
 
   // ── Browser lifecycle ─────────────────────────────────────────────────
@@ -59,7 +45,28 @@ export class TikTokAdapter implements PlatformAdapter {
       return this.browser;
     }
 
-    logger.info('TikTok: launching Chromium browser');
+    // Strategy 1: Connect to persistent browser-server via CDP
+    if (fs.existsSync(CDP_FILE)) {
+      const endpoint = fs.readFileSync(CDP_FILE, 'utf-8').trim();
+      try {
+        this.browser = await chromium.connectOverCDP(endpoint);
+        this.usingCDP = true;
+        logger.info(`TikTok: connected to persistent browser via CDP (${endpoint})`);
+
+        this.browser.on('disconnected', () => {
+          logger.warn('TikTok: CDP browser disconnected, will reconnect on next poll');
+          this.browser = null;
+          this.usingCDP = false;
+        });
+
+        return this.browser;
+      } catch (err) {
+        logger.warn(`TikTok: CDP connection failed (${(err as Error).message}), falling back to headless launch`);
+      }
+    }
+
+    // Strategy 2: Launch fresh headless (original behavior, prone to CAPTCHA)
+    logger.info('TikTok: launching standalone headless Chromium (no persistent browser detected)');
     this.browser = await chromium.launch({
       headless: true,
       args: [
@@ -68,50 +75,36 @@ export class TikTokAdapter implements PlatformAdapter {
         '--disable-setuid-sandbox',
       ],
     });
+    this.usingCDP = false;
 
     this.browser.on('disconnected', () => {
       logger.warn('TikTok: browser disconnected');
       this.browser = null;
-      this.contexts = [];
     });
 
     return this.browser;
   }
 
   private async acquireContext(): Promise<BrowserContext> {
-    // Evict stale contexts
-    const now = Date.now();
-    const stale = this.contexts.filter((c) => now - c.createdAt > MAX_CONTEXT_AGE_MS);
-    for (const s of stale) {
-      try { await s.context.close(); } catch { /* already closed */ }
-    }
-    this.contexts = this.contexts.filter((c) => now - c.createdAt <= MAX_CONTEXT_AGE_MS);
-
-    // Reuse an existing context if under limit
-    if (this.contexts.length > 0) {
-      return this.contexts[0].context;
-    }
-
-    // Create new context
     const browser = await this.ensureBrowser();
-    const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 
+    // When using CDP, reuse the browser's existing context (has session cookies)
+    if (this.usingCDP) {
+      const contexts = browser.contexts();
+      if (contexts.length > 0) return contexts[0];
+    }
+
+    // Create a fresh context for standalone mode
     const context = await browser.newContext({
-      userAgent,
-      viewport: { width: 1920, height: 1080 },
+      viewport: { width: 1280, height: 900 },
       locale: 'en-US',
       timezoneId: 'America/New_York',
     });
 
-    this.contexts.push({ context, createdAt: now });
-
-    // Enforce pool limit
-    while (this.contexts.length > MAX_CONTEXTS) {
-      const oldest = this.contexts.shift();
-      if (oldest) {
-        try { await oldest.context.close(); } catch { /* ok */ }
-      }
-    }
+    // Remove webdriver fingerprint
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    });
 
     return context;
   }
@@ -138,7 +131,6 @@ export class TikTokAdapter implements PlatformAdapter {
   private parseViewerCount(text: string): number {
     const cleaned = text.trim().replace(/,/g, '');
 
-    // Handle K/M suffixes: "12.5K" → 12500, "1.2M" → 1200000
     const suffixMatch = cleaned.match(/^([\d.]+)\s*([KkMm])?$/);
     if (!suffixMatch) {
       const digits = cleaned.replace(/\D/g, '');
@@ -246,7 +238,6 @@ export class TikTokAdapter implements PlatformAdapter {
           url: currentUrl,
           selectorsAttempted: VIEWER_COUNT_SELECTORS.length,
         });
-        // Still might be live, but we can't read the count
         return {
           ...offlineResult,
           isLive: true,
@@ -261,7 +252,7 @@ export class TikTokAdapter implements PlatformAdapter {
         displayName: username,
         concurrentViewers: viewerCount,
         isLive: true,
-        language: null, // TikTok doesn't expose this in the DOM reliably
+        language: null,
         gameName: null,
         title,
         startedAt: null,
@@ -290,7 +281,6 @@ export class TikTokAdapter implements PlatformAdapter {
         const text = await titleEl.textContent();
         if (text?.trim()) return text.trim();
       }
-      // Fall back to page title
       const pageTitle = await page.title();
       if (pageTitle && !pageTitle.includes('TikTok')) return pageTitle;
     } catch { /* best effort */ }
@@ -304,12 +294,10 @@ export class TikTokAdapter implements PlatformAdapter {
 
     const results: ChannelSnapshot[] = [];
 
-    // Process sequentially — one page at a time to manage resources
     for (let i = 0; i < usernames.length; i++) {
       const snapshot = await this.scrapeChannel(usernames[i]);
       results.push(snapshot);
 
-      // Polite delay between page loads (unless last item)
       if (i < usernames.length - 1) {
         const delay = MIN_PAGE_LOAD_DELAY_MS + Math.random() * 2000;
         await sleep(delay);
@@ -329,7 +317,6 @@ export class TikTokAdapter implements PlatformAdapter {
       return [];
     }
 
-    // Best-effort: try scraping TikTok search for live content
     let page: Page | null = null;
 
     try {
@@ -349,14 +336,12 @@ export class TikTokAdapter implements PlatformAdapter {
 
           await page.waitForTimeout(3000 + Math.random() * 2000);
 
-          // Check for CAPTCHA
           const content = await page.content();
           if (CAPTCHA_INDICATORS.some((ind) => content.toLowerCase().includes(ind))) {
             logger.warn('TikTok: CAPTCHA detected during search, aborting discovery');
             break;
           }
 
-          // Try to find live stream cards
           const cards = await page.$$('[data-e2e="search-live-card"], [class*="LiveCard"], [class*="live-card"]');
 
           for (const card of cards) {
@@ -390,7 +375,6 @@ export class TikTokAdapter implements PlatformAdapter {
             }
           }
 
-          // Delay between keyword searches
           await sleep(MIN_PAGE_LOAD_DELAY_MS + Math.random() * 2000);
         } catch (err) {
           logger.warn(`TikTok: search failed for keyword "${keyword}"`, {
@@ -417,19 +401,15 @@ export class TikTokAdapter implements PlatformAdapter {
 
   async shutdown(): Promise<void> {
     this.isShuttingDown = true;
-    logger.info('TikTok: shutting down browser pool');
+    logger.info('TikTok: shutting down');
 
-    for (const managed of this.contexts) {
-      try { await managed.context.close(); } catch { /* ok */ }
-    }
-    this.contexts = [];
-
-    if (this.browser) {
+    // Only close the browser if we launched it ourselves (not CDP)
+    if (this.browser && !this.usingCDP) {
       try { await this.browser.close(); } catch { /* ok */ }
-      this.browser = null;
     }
+    this.browser = null;
 
-    logger.info('TikTok: browser pool shut down');
+    logger.info('TikTok: shut down complete');
   }
 }
 
