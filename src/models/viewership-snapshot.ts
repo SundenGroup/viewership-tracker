@@ -212,7 +212,7 @@ export async function getPeakCCV(scope: Scope, filter?: ViewFilter): Promise<Pea
   const result = await db.raw(
     `SELECT "timestamp", SUM(channel_ccv)::text AS total_ccv
      FROM (
-       SELECT "timestamp", channel_id, SUM(concurrent_viewers) AS channel_ccv
+       SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS channel_ccv
        FROM viewership_snapshots
        WHERE "${col}" = :id ${f.sql}
        GROUP BY "timestamp", channel_id
@@ -233,7 +233,7 @@ export async function getAverageCCV(scope: Scope, filter?: ViewFilter): Promise<
      FROM (
        SELECT "timestamp", SUM(channel_ccv) AS ts_total
        FROM (
-         SELECT "timestamp", channel_id, SUM(concurrent_viewers) AS channel_ccv
+         SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS channel_ccv
          FROM viewership_snapshots
          WHERE "${col}" = :id ${f.sql}
          GROUP BY "timestamp", channel_id
@@ -251,7 +251,7 @@ export async function getTotalViewedHours(scope: Scope, filter?: ViewFilter): Pr
   const result = await db.raw(
     `SELECT SUM(channel_ccv) AS total_viewer_minutes
      FROM (
-       SELECT "timestamp", channel_id, SUM(concurrent_viewers) AS channel_ccv
+       SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS channel_ccv
        FROM viewership_snapshots
        WHERE "${col}" = :id ${f.sql}
        GROUP BY "timestamp", channel_id
@@ -279,7 +279,7 @@ async function getBreakdown(scope: Scope, dimension: string, filter?: ViewFilter
        SELECT "timestamp", group_key, SUM(channel_ccv) AS ts_total
        FROM (
          SELECT "timestamp", channel_id, "${dimension}" AS group_key,
-           SUM(concurrent_viewers) AS channel_ccv
+           MAX(concurrent_viewers) AS channel_ccv
          FROM viewership_snapshots
          WHERE "${col}" = :id ${f.sql}
          GROUP BY "timestamp", channel_id, "${dimension}"
@@ -355,7 +355,7 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
        SUM(pc.channel_ccv)::text AS total_viewed_minutes
      FROM (
        SELECT "timestamp", channel_id, platform,
-         SUM(concurrent_viewers) AS channel_ccv
+         MAX(concurrent_viewers) AS channel_ccv
        FROM viewership_snapshots
        WHERE "${col}" = :id ${f.sql}
        GROUP BY "timestamp", channel_id, platform
@@ -383,7 +383,7 @@ export async function getTimeSeriesData(scope: Scope, intervalSeconds = 60, filt
        COUNT(*)::text AS channel_count
      FROM (
        SELECT bucket, channel_id,
-         SUM(concurrent_viewers) AS channel_ccv
+         MAX(concurrent_viewers) AS channel_ccv
        FROM (
          SELECT
            date_trunc('minute', "timestamp")
@@ -438,7 +438,7 @@ export async function getGroupedTimeSeriesData(
        COUNT(*)::text AS channel_count
      FROM (
        SELECT bucket, channel_id, group_key,
-         SUM(concurrent_viewers) AS channel_ccv
+         MAX(concurrent_viewers) AS channel_ccv
        FROM (
          SELECT
            date_trunc('minute', "timestamp")
