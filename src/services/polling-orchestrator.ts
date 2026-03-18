@@ -406,11 +406,19 @@ export class PollingOrchestrator {
       channelDayMap.get(a.channel_id)!.add(a.broadcast_day_id);
     }
 
-    // 3. Build multi-platform request
-    const multiPlatformChannels: MultiPlatformChannel[] = channelList.map((ch) => ({
-      platform: ch.platform as MultiPlatformChannel['platform'],
-      channelIdentifier: ch.channel_identifier,
-    }));
+    // 3. Build multi-platform request (deduplicate by platform:identifier
+    //    so channels shared across series are only fetched once)
+    const seenPlatformIds = new Set<string>();
+    const multiPlatformChannels: MultiPlatformChannel[] = [];
+    for (const ch of channelList) {
+      const dedupKey = `${ch.platform}:${ch.channel_identifier.toLowerCase()}`;
+      if (seenPlatformIds.has(dedupKey)) continue;
+      seenPlatformIds.add(dedupKey);
+      multiPlatformChannels.push({
+        platform: ch.platform as MultiPlatformChannel['platform'],
+        channelIdentifier: ch.channel_identifier,
+      });
+    }
 
     // 3b. Pass multi-stream flags to YouTube adapter (channels with metadata.multi_stream)
     try {
