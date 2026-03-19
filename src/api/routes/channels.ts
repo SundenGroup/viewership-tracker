@@ -456,7 +456,7 @@ router.put('/channels/:id/active', requireRole('admin', 'editor'), async (req: R
       res.status(404).json({ error: 'Channel not found' });
       return;
     }
-    // Clear auto_paused metadata when re-enabling a channel
+    // Clear auto_paused metadata when re-enabling a channel and assign current live broadcast day
     if (is_active && (existing.metadata as Record<string, unknown>)?.auto_paused) {
       await db('channels')
         .where('id', req.params.id as string)
@@ -464,6 +464,17 @@ router.put('/channels/:id/active', requireRole('admin', 'editor'), async (req: R
           is_active: true,
           metadata: db.raw("COALESCE(metadata, '{}'::jsonb) - 'auto_paused' - 'auto_paused_at'"),
         });
+
+      // Auto-assign the current live broadcast day
+      const liveDays = await db('broadcast_days')
+        .where('series_id', existing.series_id)
+        .where('status', 'live')
+        .select('id');
+      if (liveDays.length > 0) {
+        const liveDayIds = liveDays.map((d: { id: string }) => d.id);
+        await ChannelBroadcastDayModel.replaceForChannel(req.params.id as string, liveDayIds);
+      }
+
       const updated = await ChannelModel.findById(req.params.id as string);
       res.json(updated);
       return;
