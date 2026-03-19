@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useCallback } from 'react';
 import { Card, PlatformBadge, LoadingOverlay } from '@/components/common';
-import { formatNumber, tierLabel, getStreamUrl } from '@/utils/formatters';
+import { formatNumber, formatCompact, tierLabel, getStreamUrl } from '@/utils/formatters';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import * as api from '@/services/api';
 import type { LiveCCVResponse, LeaderboardStats, ScopeLevel } from '@/types/api';
@@ -242,9 +242,9 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                     <td className="py-2 pl-2">
                       <PlatformBadge platform={ch.platform ?? 'unknown'} />
                     </td>
-                    <td className="py-2 pl-2">
+                    <td className="py-2 pl-2 max-w-[180px]">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-medium text-gray-200">{ch.displayName}</span>
+                        <span className="font-medium text-gray-200 truncate" title={ch.displayName}>{ch.displayName}</span>
                         {(() => {
                           const url = getStreamUrl(ch.platform, ch.channelIdentifier);
                           return url ? (
@@ -279,19 +279,19 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                         {tierLabel(ch.tier)}
                       </span>
                     </td>
-                    <td className="py-2 pl-2 text-right font-mono text-gray-300 whitespace-nowrap">
-                      {formatNumber(ch.avgCCV)}
+                    <td className="py-2 pl-2 text-right font-mono text-gray-300 whitespace-nowrap" title={formatNumber(ch.avgCCV)}>
+                      {formatCompact(ch.avgCCV)}
                     </td>
-                    <td className="py-2 pl-2 text-right font-mono text-gray-300 whitespace-nowrap">
-                      {formatNumber(ch.peakCCV)}
+                    <td className="py-2 pl-2 text-right font-mono text-gray-300 whitespace-nowrap" title={formatNumber(ch.peakCCV)}>
+                      {formatCompact(ch.peakCCV)}
                     </td>
-                    <td className="py-2 pl-2 text-right font-mono text-gray-400 whitespace-nowrap">
-                      {formatNumber(ch.viewedHours)}
+                    <td className="py-2 pl-2 text-right font-mono text-gray-400 whitespace-nowrap" title={formatNumber(ch.viewedHours)}>
+                      {formatCompact(ch.viewedHours)}
                     </td>
                     <td className="py-2 pl-2 text-right whitespace-nowrap">
                       {ch.liveCCV > 0 ? (
                         <span className="font-mono font-bold text-accent-green">
-                          {formatNumber(ch.liveCCV)}
+                          {formatCompact(ch.liveCCV)}
                         </span>
                       ) : (
                         <span className="font-mono text-gray-600">{'\u2014'}</span>
@@ -391,8 +391,8 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                     )}
                   </td>
                   <td className="py-2 text-right">
-                    <span className="font-mono font-bold text-gray-200">
-                      {formatNumber(ch.concurrentViewers)}
+                    <span className="font-mono font-bold text-accent-green">
+                      {formatCompact(ch.concurrentViewers)}
                     </span>
                   </td>
                 </tr>
