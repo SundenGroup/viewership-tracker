@@ -290,8 +290,8 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                     </td>
                     <td className="py-2 pl-2 text-right whitespace-nowrap">
                       {ch.liveCCV > 0 ? (
-                        <span className="font-mono font-bold text-accent-green">
-                          {formatCompact(ch.liveCCV)}
+                        <span className="font-mono font-bold text-accent-cyan">
+                          {formatNumber(ch.liveCCV)}
                         </span>
                       ) : (
                         <span className="font-mono text-gray-600">{'\u2014'}</span>
@@ -391,8 +391,8 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                     )}
                   </td>
                   <td className="py-2 text-right">
-                    <span className="font-mono font-bold text-accent-green">
-                      {formatCompact(ch.concurrentViewers)}
+                    <span className="font-mono font-bold text-accent-cyan">
+                      {formatNumber(ch.concurrentViewers)}
                     </span>
                   </td>
                 </tr>
