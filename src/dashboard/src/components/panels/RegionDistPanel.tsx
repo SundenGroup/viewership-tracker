@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   BarChart,
   Bar,
@@ -11,17 +11,18 @@ import {
 } from 'recharts';
 import { Card, LoadingOverlay } from '@/components/common';
 import { formatCompact, formatNumber, formatPercent, formatViewedHours } from '@/utils/formatters';
-import type { BreakdownEntry } from '@/types/api';
+import type { BreakdownEntry, LiveCCVResponse } from '@/types/api';
 
 interface RegionDistPanelProps {
   data: BreakdownEntry[];
   loading: boolean;
+  liveCCV?: LiveCCVResponse | null;
 }
 
-type Metric = 'peakCCV' | 'avgCCV' | 'viewedHours';
+type Metric = 'liveCCV' | 'avgCCV' | 'viewedHours';
 
 const METRIC_LABELS: Record<Metric, string> = {
-  peakCCV: 'Peak CCV',
+  liveCCV: 'Live CCV',
   avgCCV: 'Avg CCV',
   viewedHours: 'Viewed Hours',
 };
@@ -40,24 +41,31 @@ const BAR_COLORS = [
   '#ef4444', // red-500
 ];
 
-function getValue(d: BreakdownEntry, metric: Metric): number {
-  if (metric === 'viewedHours') return d.totalCCV / 60;
-  return d[metric];
-}
-
 function formatValue(v: number, metric: Metric): string {
   if (metric === 'viewedHours') return formatViewedHours(v);
   return formatNumber(v);
 }
 
-export function RegionDistPanel({ data, loading }: RegionDistPanelProps) {
+export function RegionDistPanel({ data, loading, liveCCV }: RegionDistPanelProps) {
   const [metric, setMetric] = useState<Metric>('avgCCV');
+
+  // Compute live CCV per region from live snapshot data
+  const liveCCVByRegion = useMemo(() => {
+    if (!liveCCV?.channels) return new Map<string, number>();
+    const map = new Map<string, number>();
+    for (const ch of liveCCV.channels) {
+      if (ch.concurrentViewers <= 0) continue;
+      const region = ch.region ?? 'Unknown';
+      map.set(region, (map.get(region) ?? 0) + ch.concurrentViewers);
+    }
+    return map;
+  }, [liveCCV]);
 
   if (loading && data.length === 0) {
     return <Card title="Region Distribution"><LoadingOverlay /></Card>;
   }
 
-  if (data.length === 0) {
+  if (data.length === 0 && metric !== 'liveCCV') {
     return (
       <Card title="Region Distribution">
         <p className="py-8 text-center text-sm text-gray-500">No region data available.</p>
@@ -65,19 +73,49 @@ export function RegionDistPanel({ data, loading }: RegionDistPanelProps) {
     );
   }
 
-  // Sort descending by chosen metric
-  const sorted = [...data]
-    .filter((d) => d.region ?? d.key)
-    .sort((a, b) => getValue(b, metric) - getValue(a, metric));
+  // Build chart data based on metric
+  let chartData: Array<{ name: string; value: number; pct: number; color: string }>;
 
-  const grandTotal = sorted.reduce((sum, d) => sum + getValue(d, metric), 0);
+  if (metric === 'liveCCV') {
+    const entries = [...liveCCVByRegion.entries()]
+      .sort((a, b) => b[1] - a[1]);
+    const grandTotal = entries.reduce((sum, [, v]) => sum + v, 0);
+    chartData = entries.map(([region, value], i) => ({
+      name: region,
+      value,
+      pct: grandTotal > 0 ? value / grandTotal : 0,
+      color: BAR_COLORS[i % BAR_COLORS.length]!,
+    }));
+  } else {
+    const sorted = [...data]
+      .filter((d) => d.region ?? d.key)
+      .sort((a, b) => {
+        const va = metric === 'viewedHours' ? a.totalCCV / 60 : a[metric];
+        const vb = metric === 'viewedHours' ? b.totalCCV / 60 : b[metric];
+        return vb - va;
+      });
+    const grandTotal = sorted.reduce((sum, d) => {
+      const v = metric === 'viewedHours' ? d.totalCCV / 60 : d[metric];
+      return sum + v;
+    }, 0);
+    chartData = sorted.map((d, i) => {
+      const value = metric === 'viewedHours' ? d.totalCCV / 60 : d[metric];
+      return {
+        name: d.region ?? d.key ?? 'Unknown',
+        value,
+        pct: grandTotal > 0 ? value / grandTotal : 0,
+        color: BAR_COLORS[i % BAR_COLORS.length]!,
+      };
+    });
+  }
 
-  const chartData = sorted.map((d, i) => ({
-    name: d.region ?? d.key ?? 'Unknown',
-    value: getValue(d, metric),
-    pct: grandTotal > 0 ? getValue(d, metric) / grandTotal : 0,
-    color: BAR_COLORS[i % BAR_COLORS.length]!,
-  }));
+  if (chartData.length === 0) {
+    return (
+      <Card title="Region Distribution">
+        <p className="py-8 text-center text-sm text-gray-500">No region data available.</p>
+      </Card>
+    );
+  }
 
   const chartHeight = Math.max(200, chartData.length * 36 + 40);
 
@@ -102,7 +140,7 @@ export function RegionDistPanel({ data, loading }: RegionDistPanelProps) {
   return (
     <Card
       title="Region Distribution"
-      subtitle={`${sorted.length} regions detected`}
+      subtitle={`${chartData.length} regions detected`}
       collapsible
       storageKey="cvt:panel:regionDist"
       action={metricToggle}

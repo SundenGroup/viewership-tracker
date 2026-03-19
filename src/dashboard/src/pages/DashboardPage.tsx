@@ -265,10 +265,12 @@ export function DashboardPage({
           <LanguageDistPanel
             data={activeMetrics?.languageBreakdown ?? []}
             loading={activeMetricsLoading}
+            liveCCV={activeLiveCCV}
           />
           <RegionDistPanel
             data={activeMetrics?.regionBreakdown ?? []}
             loading={activeMetricsLoading}
+            liveCCV={activeLiveCCV}
           />
         </div>
       </div>
