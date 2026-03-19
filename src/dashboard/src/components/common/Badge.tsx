@@ -60,6 +60,10 @@ const PLATFORM_LABELS: Record<string, string> = {
   youtube: 'YouTube',
   kick: 'Kick',
   tiktok: 'TikTok',
+  steam: 'Steam',
+  soop: 'SOOP',
+  chzzk: 'CHZZK',
+  trovo: 'Trovo',
 };
 
 export function PlatformBadge({ platform }: { platform: string }) {

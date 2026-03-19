@@ -443,6 +443,20 @@ export class DiscoveryService {
         metadata: this.db.raw("COALESCE(metadata, '{}'::jsonb) - 'auto_paused' - 'auto_paused_at'"),
       });
 
+    // Auto-assign current live broadcast day(s)
+    const liveDays = await this.db('broadcast_days')
+      .where('series_id', channel.series_id)
+      .where('status', 'live')
+      .select('id');
+    if (liveDays.length > 0) {
+      const liveDayIds = liveDays.map((d: { id: string }) => d.id);
+      // Clear existing day assignments and set to current live day(s)
+      await this.db('channel_broadcast_days').where('channel_id', channelId).del();
+      await this.db('channel_broadcast_days').insert(
+        liveDayIds.map((dayId: string) => ({ channel_id: channelId, broadcast_day_id: dayId })),
+      );
+    }
+
     logger.info(
       `[Discovery] Approved & promoted channel ${channel.display_name} from ${channel.tier} to ${tier}`,
     );
