@@ -232,6 +232,7 @@ export interface LeaderboardEntry {
   displayName: string;
   platform: string;
   tier?: string;
+  language?: string;
   peakCCV: number;
   avgCCV: number;
   totalViewedMinutes: number;
@@ -249,6 +250,7 @@ export interface LeaderboardStats {
   displayName: string;
   platform: string;
   tier: string;
+  language?: string;
   peakCCV: number;
   avgCCV: number;
   viewedHours: number;

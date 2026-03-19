@@ -30,7 +30,7 @@ const TIER_COLORS: Record<string, string> = {
 
 // ── Sort types & helpers ─────────────────────────────────────────────────
 
-type LeaderboardSortField = 'displayName' | 'platform' | 'tier' | 'avgCCV' | 'peakCCV' | 'viewedHours' | 'liveCCV';
+type LeaderboardSortField = 'displayName' | 'platform' | 'language' | 'tier' | 'avgCCV' | 'peakCCV' | 'viewedHours' | 'liveCCV';
 type SortDir = 'asc' | 'desc';
 interface LeaderboardSortState { field: LeaderboardSortField; dir: SortDir }
 
@@ -44,6 +44,7 @@ function sortLeaderboard(rows: MergedEntry[], { field, dir }: LeaderboardSortSta
     switch (field) {
       case 'displayName': return d * a.displayName.localeCompare(b.displayName);
       case 'platform': return d * a.platform.localeCompare(b.platform);
+      case 'language': return d * (a.language ?? '').localeCompare(b.language ?? '');
       case 'tier': return d * ((TIER_ORDER[a.tier] ?? 99) - (TIER_ORDER[b.tier] ?? 99));
       case 'avgCCV': return d * (a.avgCCV - b.avgCCV);
       case 'peakCCV': return d * (a.peakCCV - b.peakCCV);
@@ -194,6 +195,7 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                   {([
                     ['platform', 'Platform', 'text-left'],
                     ['displayName', 'Channel', 'text-left'],
+                    ['language', 'Lang', 'text-left'],
                     ['tier', 'Tier', 'text-left'],
                     ['avgCCV', 'Avg CCV', 'text-right'],
                     ['peakCCV', 'Peak CCV', 'text-right'],
@@ -266,6 +268,13 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                       </div>
                     </td>
                     <td className="py-2">
+                      {ch.language && (
+                        <span className="rounded bg-navy-700 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">
+                          {languageBadge(ch.language)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${TIER_COLORS[ch.tier] ?? TIER_COLORS.community}`}>
                         {tierLabel(ch.tier)}
                       </span>
@@ -316,7 +325,7 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
               <th className="pb-2 text-left font-medium">Platform</th>
               <th className="pb-2 text-left font-medium">Channel</th>
               <th className="pb-2 text-left font-medium">Lang</th>
-              <th className="pb-2 text-right font-medium">CCV</th>
+              <th className="pb-2 text-right font-medium">Live CCV</th>
             </tr>
           </thead>
           <tbody>
@@ -325,11 +334,7 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
               return (
                 <tr
                   key={ch.channelId}
-                  className={`
-                    border-b border-navy-700/30 last:border-0
-                    transition-colors
-                    ${isTop ? 'bg-accent-cyan/[0.04]' : 'hover:bg-navy-800/30'}
-                  `}
+                  className={`border-b border-navy-700/30 last:border-0 transition-colors ${isTop ? 'bg-accent-cyan/[0.04]' : 'hover:bg-navy-800/30'}`}
                 >
                   <td className="py-2 pr-2">
                     <span
@@ -387,18 +392,9 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                     )}
                   </td>
                   <td className="py-2 text-right">
-                    <span
-                      className={`font-mono font-bold ${
-                        isTop ? 'text-accent-cyan' : 'text-gray-200'
-                      }`}
-                    >
+                    <span className={`font-mono font-bold ${isTop ? 'text-accent-cyan' : 'text-gray-200'}`}>
                       {formatNumber(ch.concurrentViewers)}
                     </span>
-                    {isTop && (
-                      <span className="ml-1.5 text-[9px] font-bold uppercase text-accent-cyan/60">
-                        top 10%
-                      </span>
-                    )}
                   </td>
                 </tr>
               );
