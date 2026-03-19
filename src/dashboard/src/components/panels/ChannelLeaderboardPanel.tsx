@@ -204,7 +204,7 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                   ] as [LeaderboardSortField, string, string][]).map(([field, label, align]) => (
                     <th
                       key={field}
-                      className={`pb-2 ${align} font-medium cursor-pointer select-none hover:text-gray-300 transition-colors`}
+                      className={`pb-2 px-2 ${align} font-medium cursor-pointer select-none hover:text-gray-300 transition-colors`}
                       onClick={() => handleSort(field)}
                     >
                       {label}
@@ -239,10 +239,10 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                         {i + 1}
                       </span>
                     </td>
-                    <td className="py-2">
+                    <td className="py-2 px-2">
                       <PlatformBadge platform={ch.platform ?? 'unknown'} />
                     </td>
-                    <td className="py-2">
+                    <td className="py-2 px-2">
                       <div className="flex items-center gap-1.5">
                         <span className="font-medium text-gray-200">{ch.displayName}</span>
                         {(() => {
@@ -267,28 +267,28 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                         })()}
                       </div>
                     </td>
-                    <td className="py-2">
+                    <td className="py-2 px-2">
                       {ch.language && (
                         <span className="rounded bg-navy-700 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">
                           {languageBadge(ch.language)}
                         </span>
                       )}
                     </td>
-                    <td className="py-2">
+                    <td className="py-2 px-2">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${TIER_COLORS[ch.tier] ?? TIER_COLORS.community}`}>
                         {tierLabel(ch.tier)}
                       </span>
                     </td>
-                    <td className="py-2 text-right font-mono text-gray-300">
+                    <td className="py-2 px-3 text-right font-mono text-gray-300">
                       {formatNumber(ch.avgCCV)}
                     </td>
-                    <td className="py-2 text-right font-mono text-gray-300">
+                    <td className="py-2 px-3 text-right font-mono text-gray-300">
                       {formatNumber(ch.peakCCV)}
                     </td>
-                    <td className="py-2 text-right font-mono text-gray-400">
+                    <td className="py-2 px-3 text-right font-mono text-gray-400">
                       {formatNumber(ch.viewedHours)}
                     </td>
-                    <td className="py-2 text-right">
+                    <td className="py-2 pl-3 text-right">
                       {ch.liveCCV > 0 ? (
                         <span className="font-mono font-bold text-accent-green">
                           {formatNumber(ch.liveCCV)}
