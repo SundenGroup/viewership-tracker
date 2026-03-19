@@ -47,7 +47,7 @@ function formatValue(v: number, metric: Metric): string {
 }
 
 export function LanguageDistPanel({ data, loading, liveCCV }: LanguageDistPanelProps) {
-  const [metric, setMetric] = useState<Metric>('avgCCV');
+  const [metric, setMetric] = useState<Metric>('liveCCV');
 
   // Compute live CCV per language from live snapshot data
   const liveCCVByLang = useMemo(() => {

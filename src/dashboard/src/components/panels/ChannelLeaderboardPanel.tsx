@@ -330,11 +330,10 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
           </thead>
           <tbody>
             {sorted.map((ch, i) => {
-              const isTop = ch.concurrentViewers >= p90Threshold && p90Threshold > 0;
               return (
                 <tr
                   key={ch.channelId}
-                  className={`border-b border-navy-700/30 last:border-0 transition-colors ${isTop ? 'bg-accent-cyan/[0.04]' : 'hover:bg-navy-800/30'}`}
+                  className="border-b border-navy-700/30 last:border-0 transition-colors hover:bg-navy-800/30"
                 >
                   <td className="py-2 pr-2">
                     <span
@@ -359,7 +358,7 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                   </td>
                   <td className="py-2">
                     <div className="flex items-center gap-1.5">
-                      <span className={`font-medium ${isTop ? 'text-accent-cyan' : 'text-gray-200'}`}>
+                      <span className="font-medium text-gray-200">
                         {ch.displayName}
                       </span>
                       {(() => {
@@ -392,7 +391,7 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                     )}
                   </td>
                   <td className="py-2 text-right">
-                    <span className={`font-mono font-bold ${isTop ? 'text-accent-cyan' : 'text-gray-200'}`}>
+                    <span className="font-mono font-bold text-gray-200">
                       {formatNumber(ch.concurrentViewers)}
                     </span>
                   </td>

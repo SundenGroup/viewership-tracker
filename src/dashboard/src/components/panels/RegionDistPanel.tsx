@@ -47,7 +47,7 @@ function formatValue(v: number, metric: Metric): string {
 }
 
 export function RegionDistPanel({ data, loading, liveCCV }: RegionDistPanelProps) {
-  const [metric, setMetric] = useState<Metric>('avgCCV');
+  const [metric, setMetric] = useState<Metric>('liveCCV');
 
   // Compute live CCV per region from live snapshot data
   const liveCCVByRegion = useMemo(() => {
