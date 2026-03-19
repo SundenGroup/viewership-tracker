@@ -170,17 +170,16 @@ export function RegionDistPanel({ data, loading, liveCCV }: RegionDistPanelProps
             width={80}
           />
           <Tooltip
-            contentStyle={{
-              backgroundColor: '#141820',
-              border: '1px solid #2A2F36',
-              borderRadius: '8px',
-              fontSize: '12px',
+            content={({ active, payload }) => {
+              if (!active || !payload?.length) return null;
+              const d = payload[0].payload as { name: string; value: number; pct: number };
+              return (
+                <div style={{ backgroundColor: '#141820', border: '1px solid #2A2F36', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
+                  <div style={{ color: '#e5e7eb', fontWeight: 600 }}>{d.name}: {formatValue(d.value, metric)}</div>
+                  <div style={{ color: '#9ca3af', marginTop: 2 }}>{formatPercent(d.pct)} · {METRIC_LABELS[metric]}</div>
+                </div>
+              );
             }}
-            labelStyle={{ color: '#9ca3af' }}
-            formatter={(value: number, _name: string, entry: { payload?: { pct: number } }) => [
-              `${formatValue(value, metric)} (${formatPercent(entry.payload?.pct ?? 0)})`,
-              METRIC_LABELS[metric],
-            ]}
           />
           <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
             {chartData.map((entry, i) => (
