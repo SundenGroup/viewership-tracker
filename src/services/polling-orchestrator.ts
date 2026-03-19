@@ -243,6 +243,42 @@ export class PollingOrchestrator {
           }
         }
 
+        // Auto-pause day-scoped channels that have no remaining scheduled/live days
+        const affectedSeriesIds = [...new Set(goingCompleted.map((d) => d.series_id))];
+        for (const sid of affectedSeriesIds) {
+          try {
+            const channelsToPause = await this.db('channel_broadcast_days as cbd')
+              .join('channels as c', 'c.id', 'cbd.channel_id')
+              .where('c.series_id', sid)
+              .where('c.is_active', true)
+              .whereNotExists(
+                this.db('channel_broadcast_days as cbd2')
+                  .join('broadcast_days as bd', 'bd.id', 'cbd2.broadcast_day_id')
+                  .whereRaw('cbd2.channel_id = cbd.channel_id')
+                  .whereIn('bd.status', ['scheduled', 'live']),
+              )
+              .distinct('cbd.channel_id');
+
+            if (channelsToPause.length > 0) {
+              const pauseIds = channelsToPause.map((r: { channel_id: string }) => r.channel_id);
+              await this.db('channels')
+                .whereIn('id', pauseIds)
+                .update({
+                  is_active: false,
+                  metadata: this.db.raw(
+                    `(COALESCE(metadata, '{}'::jsonb) - 'last_seen_at') || ?::jsonb`,
+                    [JSON.stringify({ auto_paused: true, auto_paused_at: new Date().toISOString() })],
+                  ),
+                });
+              logger.info(`[Poll] Auto-paused ${pauseIds.length} day-scoped channel(s) for series ${sid}`);
+            }
+          } catch (err) {
+            logger.error(`[Poll] Failed to auto-pause channels for series ${sid}`, {
+              error: (err as Error).message,
+            });
+          }
+        }
+
         // Check if all broadcast days for each affected series are now completed
         const completedSeriesIds = [...new Set(goingCompleted.map((d) => d.series_id))];
         for (const sid of completedSeriesIds) {

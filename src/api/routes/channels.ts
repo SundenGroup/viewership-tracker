@@ -456,6 +456,18 @@ router.put('/channels/:id/active', requireRole('admin', 'editor'), async (req: R
       res.status(404).json({ error: 'Channel not found' });
       return;
     }
+    // Clear auto_paused metadata when re-enabling a channel
+    if (is_active && (existing.metadata as Record<string, unknown>)?.auto_paused) {
+      await db('channels')
+        .where('id', req.params.id as string)
+        .update({
+          is_active: true,
+          metadata: db.raw("COALESCE(metadata, '{}'::jsonb) - 'auto_paused' - 'auto_paused_at'"),
+        });
+      const updated = await ChannelModel.findById(req.params.id as string);
+      res.json(updated);
+      return;
+    }
     const updated = await ChannelModel.update(req.params.id as string, { is_active });
     res.json(updated);
   } catch (err) {

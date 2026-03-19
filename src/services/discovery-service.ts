@@ -202,11 +202,16 @@ export class DiscoveryService {
       existingChannels.map((ch) => `${ch.platform}:${ch.channel_identifier.toLowerCase()}`),
     );
 
-    // Also load disabled auto-discovered channels so we can re-surface them
+    // Also load disabled channels that can be re-surfaced:
+    // - auto-discovered channels (original flow)
+    // - any channel with auto_paused flag (day-scoped channels after day completion)
     const disabledChannels = await this.db<Channel>('channels')
       .where('series_id', seriesId)
-      .where('source', 'auto_discovered')
       .where('is_active', false)
+      .where(function () {
+        this.where('source', 'auto_discovered')
+          .orWhereRaw("metadata->>'auto_paused' = 'true'");
+      })
       .select('id', 'platform', 'channel_identifier');
 
     const disabledMap = new Map<string, string>();
@@ -432,7 +437,11 @@ export class DiscoveryService {
 
     await this.db('channels')
       .where('id', channelId)
-      .update({ tier, is_active: true });
+      .update({
+        tier,
+        is_active: true,
+        metadata: this.db.raw("COALESCE(metadata, '{}'::jsonb) - 'auto_paused' - 'auto_paused_at'"),
+      });
 
     logger.info(
       `[Discovery] Approved & promoted channel ${channel.display_name} from ${channel.tier} to ${tier}`,
