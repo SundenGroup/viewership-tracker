@@ -267,7 +267,7 @@ export class PollingOrchestrator {
                   is_active: false,
                   metadata: this.db.raw(
                     `COALESCE(metadata, '{}'::jsonb) || ?::jsonb`,
-                    [JSON.stringify({ auto_paused: true, auto_paused_at: new Date().toISOString(), last_seen_at: new Date().toISOString() })],
+                    [JSON.stringify({ auto_paused: true, auto_paused_at: new Date().toISOString() })],
                   ),
                 });
               logger.info(`[Poll] Auto-paused ${pauseIds.length} day-scoped channel(s) for series ${sid}`);
