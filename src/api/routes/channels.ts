@@ -470,14 +470,17 @@ router.put('/channels/:id/active', requireRole('admin', 'editor'), async (req: R
         await ChannelModel.update(req.params.id as string, { is_active: true });
       }
 
-      // Auto-assign the current live broadcast day(s)
+      // Add the current live broadcast day(s) — preserves existing day assignments
       const liveDays = await db('broadcast_days')
         .where('series_id', existing.series_id)
         .where('status', 'live')
         .select('id');
       if (liveDays.length > 0) {
-        const liveDayIds = liveDays.map((d: { id: string }) => d.id);
-        await ChannelBroadcastDayModel.replaceForChannel(req.params.id as string, liveDayIds);
+        const rows = liveDays.map((d: { id: string }) => ({
+          channel_id: req.params.id as string,
+          broadcast_day_id: d.id,
+        }));
+        await db('channel_broadcast_days').insert(rows).onConflict(['channel_id', 'broadcast_day_id']).ignore();
       }
 
       const updated = await ChannelModel.findById(req.params.id as string);
