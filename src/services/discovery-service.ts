@@ -233,7 +233,11 @@ export class DiscoveryService {
       try {
         const adapter = this.registry.getAdapter(platform);
         const gameId = gameIds[platform] ?? undefined;
-        const streams = await adapter.searchLiveStreams(gameId, keywords.length > 0 ? keywords : undefined);
+        // Pass YouTube category IDs from series metadata (default: Gaming + Entertainment)
+        const categoryIds = platform === 'youtube'
+          ? ((series.metadata as Record<string, unknown>)?.youtube_categories as string[] | undefined)
+          : undefined;
+        const streams = await adapter.searchLiveStreams(gameId, keywords.length > 0 ? keywords : undefined, categoryIds);
         return { platform, streams };
       } catch (err) {
         const msg = `${platform} search failed: ${(err as Error).message}`;

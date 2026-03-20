@@ -1018,6 +1018,7 @@ export class YouTubeAdapter implements PlatformAdapter {
   async searchLiveStreams(
     gameId?: string,
     keywords?: string[],
+    categoryIds?: string[],
   ): Promise<DiscoveredStream[]> {
     // Build effective search terms by combining game name + keywords
     // This mirrors Twitch's game-scoped discovery: filter by game, then by keyword
@@ -1036,12 +1037,19 @@ export class YouTubeAdapter implements PlatformAdapter {
       return [];
     }
 
-    // Search for each term, collect unique video IDs
+    // Determine which YouTube categories to search
+    // Default: Gaming (20) + Entertainment (24) when a game is configured
+    const categories = categoryIds && categoryIds.length > 0
+      ? categoryIds
+      : gameId ? ['20', '24'] : [undefined];
+
+    // Search for each term × category combination, collect unique video IDs
     const seenVideoIds = new Set<string>();
     const searchResults: Array<{ videoId: string; snippet: YouTubeSearchItem['snippet'] }> = [];
 
     for (const searchTerm of searchTerms) {
-      if (!this.consumeQuota(QUOTA_COST.search, `searchLiveStreams("${searchTerm}")`)) {
+      for (const catId of categories) {
+      if (!this.consumeQuota(QUOTA_COST.search, `searchLiveStreams("${searchTerm}" cat=${catId ?? 'all'})`)) {
         break;
       }
 
@@ -1057,8 +1065,7 @@ export class YouTubeAdapter implements PlatformAdapter {
             part: 'id,snippet',
             maxResults: 50,
           };
-          // Scope to Gaming category when a game name is configured
-          if (gameId) params.videoCategoryId = '20';
+          if (catId) params.videoCategoryId = catId;
           if (nextPageToken) params.pageToken = nextPageToken;
 
           const { data } = await this.client.get<YouTubeListResponse<YouTubeSearchItem>>(
@@ -1085,6 +1092,7 @@ export class YouTubeAdapter implements PlatformAdapter {
           break;
         }
       }
+      } // end categories loop
     }
 
     if (searchResults.length === 0) return [];

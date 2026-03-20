@@ -29,5 +29,6 @@ export interface PlatformAdapter {
   searchLiveStreams(
     gameId?: string,
     keywords?: string[],
+    categoryIds?: string[],
   ): Promise<DiscoveredStream[]>;
 }
