@@ -206,9 +206,9 @@ router.get('/:seriesId/channels', async (req: Request, res: Response, next: Next
       channels = channels.filter((ch) => ch.source === source);
     } else {
       // By default, exclude unapproved auto-discovered channels from the main list.
-      // These should only appear in the Discovery Feed (which explicitly requests source=auto_discovered).
+      // Auto-paused channels (previously approved, now paused between broadcast days) remain visible.
       channels = channels.filter(
-        (ch) => !(ch.source === 'auto_discovered' && !ch.is_active),
+        (ch) => !(ch.source === 'auto_discovered' && !ch.is_active && !(ch.metadata as Record<string, unknown>)?.auto_paused),
       );
     }
 
