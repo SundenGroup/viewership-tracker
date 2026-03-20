@@ -146,13 +146,48 @@ function formatTimeHHMM(isoStr: string, timezone?: string): string {
   return d.toISOString().slice(11, 16);
 }
 
+/** Map IANA timezone to well-known public abbreviation */
+const TZ_ABBR_MAP: Record<string, string> = {
+  // Central European
+  'Europe/Stockholm': 'CET', 'Europe/Berlin': 'CET', 'Europe/Paris': 'CET',
+  'Europe/Amsterdam': 'CET', 'Europe/Brussels': 'CET', 'Europe/Rome': 'CET',
+  'Europe/Madrid': 'CET', 'Europe/Vienna': 'CET', 'Europe/Warsaw': 'CET',
+  'Europe/Oslo': 'CET', 'Europe/Copenhagen': 'CET', 'Europe/Zurich': 'CET',
+  'Europe/Prague': 'CET', 'Europe/Budapest': 'CET',
+  // Eastern European
+  'Europe/Helsinki': 'EET', 'Europe/Bucharest': 'EET', 'Europe/Athens': 'EET',
+  'Europe/Kiev': 'EET', 'Europe/Sofia': 'EET',
+  // UK / Western European
+  'Europe/London': 'GMT', 'Europe/Dublin': 'GMT', 'Europe/Lisbon': 'WET',
+  // US
+  'America/New_York': 'EST', 'America/Chicago': 'CST', 'America/Denver': 'MST',
+  'America/Los_Angeles': 'PST',
+  // Asia
+  'Asia/Tokyo': 'JST', 'Asia/Seoul': 'KST', 'Asia/Shanghai': 'CST',
+  'Asia/Singapore': 'SGT', 'Asia/Bangkok': 'ICT', 'Asia/Kolkata': 'IST',
+  // Brazil
+  'America/Sao_Paulo': 'BRT',
+  // Australia
+  'Australia/Sydney': 'AEST', 'Australia/Melbourne': 'AEST',
+  // Moscow
+  'Europe/Moscow': 'MSK',
+};
+
 function getTzAbbr(timezone: string): string {
+  // Check well-known mapping first
+  const mapped = TZ_ABBR_MAP[timezone];
+  if (mapped) return mapped;
+
+  // Fallback to Intl
   try {
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: timezone,
       timeZoneName: 'short',
     }).formatToParts(new Date());
-    return parts.find((p) => p.type === 'timeZoneName')?.value ?? timezone;
+    const raw = parts.find((p) => p.type === 'timeZoneName')?.value ?? timezone;
+    // If Intl returns "GMT+X", try to return a friendlier name
+    if (raw.startsWith('GMT+') || raw.startsWith('GMT-')) return raw;
+    return raw;
   } catch {
     return timezone;
   }
