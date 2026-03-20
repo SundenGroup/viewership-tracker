@@ -466,7 +466,13 @@ function ChannelRow({
       <td className="py-2">
         <PlatformBadge platform={channel.platform} />
       </td>
-      <td className="py-2 text-xs text-gray-400">{(channel.language ?? '').toUpperCase()}</td>
+      <td className="py-2">
+        {channel.language && (
+          <span className="rounded bg-navy-700 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">
+            {channel.language.toUpperCase()}
+          </span>
+        )}
+      </td>
       <td className="py-2 text-xs text-gray-400">{tierLabel(channel.tier)}</td>
       <td className="py-2">{daysPills}</td>
       <td className="py-2 text-xs text-gray-500">

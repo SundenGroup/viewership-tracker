@@ -24,6 +24,13 @@ import type {
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
+export interface TrendData {
+  previousDayLabel: string;
+  peakCCV: number;
+  avgCCV: number;
+  totalViewedHours: number;
+}
+
 export interface HTMLReportData {
   payload: ReportPayload;
   totalTimeSeries: TimeSeriesPoint[];
@@ -40,6 +47,7 @@ export interface HTMLReportData {
   narratives: Narratives;
   detail?: 'simple' | 'detailed';
   groupName?: string;
+  trend?: TrendData;
 }
 
 // ── Platform / Language / Tier Colors ────────────────────────────────────────
@@ -97,6 +105,16 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+/** Format a trend percentage with arrow icon */
+function trendHTML(current: number, previous: number): string {
+  if (previous <= 0) return '';
+  const pct = ((current - previous) / previous) * 100;
+  const sign = pct >= 0 ? '+' : '';
+  const arrow = pct >= 0 ? '&#9650;' : '&#9660;'; // ▲ or ▼
+  const color = pct >= 0 ? '#34d399' : '#f87171'; // green or red
+  return `<span class="kpi-trend" style="color:${color}">${arrow} ${sign}${pct.toFixed(1)}%</span>`;
+}
+
 function tierLabel(tier: string | null | undefined): string {
   if (!tier) return 'Community';
   return TIER_CLASSES[tier]?.label ?? capitalize(tier);
@@ -143,7 +161,7 @@ function getTzAbbr(timezone: string): string {
 // ── Main Export ─────────────────────────────────────────────────────────────
 
 export function buildHTMLReport(data: HTMLReportData): string {
-  const { payload, totalTimeSeries, platformTimeSeries, aggregated, narratives, detail } = data;
+  const { payload, totalTimeSeries, platformTimeSeries, aggregated, narratives, detail, trend } = data;
   const isDetailed = detail === 'detailed';
 
   const seriesName = esc(payload.series.name);
@@ -239,7 +257,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
   const platColors = aggregated.platformBreakdown.map((p) => platformColor(p.platform));
 
   // Language breakdown for pie chart
-  const langLabels = aggregated.languageBreakdown.map((l) => capitalize(l.language || 'Unknown'));
+  const langLabels = aggregated.languageBreakdown.map((l) => (l.language || 'Unknown').toUpperCase());
   const langVH = aggregated.languageBreakdown.map((l) => Math.round(l.totalCCV / 60));
   const langColors = aggregated.languageBreakdown.map((_, i) => langColor(i));
 
@@ -267,7 +285,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
       name: ch.displayName,
       platform: ch.platform.toLowerCase(),
       tier: tierLabel(ch.tier || channel?.tier),
-      lang: capitalize(ch.language || channel?.language || 'Unknown'),
+      lang: (ch.language || channel?.language || 'Unknown').toUpperCase(),
       avg: Math.round(ch.avgCCV),
       peak: ch.peakCCV,
       vh: Math.round((ch.totalViewedMinutes ?? 0) / 60),
@@ -284,7 +302,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
   }));
 
   const langTableRows = aggregated.languageBreakdown.map((l, i) => ({
-    label: capitalize(l.language || 'Unknown'),
+    label: (l.language || 'Unknown').toUpperCase(),
     colorIdx: i,
     vh: fmtNum(Math.round(l.totalCCV / 60)),
     avg: fmtNum(Math.round(l.avgCCV)),
@@ -415,6 +433,13 @@ export function buildHTMLReport(data: HTMLReportData): string {
     font-size: 32px;
     font-weight: 700;
     color: #fff;
+  }
+  .kpi-trend {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 4px;
+    font-family: 'Space Mono', monospace;
   }
 
   .section-title {
@@ -678,16 +703,20 @@ export function buildHTMLReport(data: HTMLReportData): string {
     <div class="kpi">
       <div class="kpi-label">Total Viewed Hours</div>
       <div class="kpi-value">${fmtNum(Math.round(aggregated.totalViewedHours))}</div>
+      ${trend ? trendHTML(aggregated.totalViewedHours, trend.totalViewedHours) : ''}
     </div>
     <div class="kpi">
       <div class="kpi-label">Avg Concurrent</div>
       <div class="kpi-value">${fmtNum(aggregated.avgCCV)}</div>
+      ${trend ? trendHTML(aggregated.avgCCV, trend.avgCCV) : ''}
     </div>
     <div class="kpi">
       <div class="kpi-label">Peak Concurrent</div>
       <div class="kpi-value">${fmtNum(aggregated.peakCCV)}</div>
+      ${trend ? trendHTML(aggregated.peakCCV, trend.peakCCV) : ''}
     </div>
   </div>
+  ${trend ? `<p style="font-size:11px;color:#6b7280;text-align:center;margin-top:-16px;margin-bottom:16px;">vs ${esc(trend.previousDayLabel)}</p>` : ''}
 
   <!-- Concurrent Line Chart -->
   <div class="chart-card full" style="margin-bottom:32px;">

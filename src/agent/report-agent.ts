@@ -202,6 +202,17 @@ export class ReportAgent {
 
       // 5. Aggregate metrics and build HTML
       const aggregated = this.aggregateMetrics(payload.metrics, isDetailed);
+
+      // 5b. Compute trend data (day scope only: compare with previous day in same stage)
+      let trend: HTMLReportData['trend'];
+      if (scope === 'day' && payload.broadcastDays.length === 1) {
+        try {
+          trend = await this.computeDayTrend(payload.broadcastDays[0], request.filter);
+        } catch (err) {
+          logger.warn('[ReportAgent] Trend computation failed — skipping', { error: (err as Error).message });
+        }
+      }
+
       const builder = new ReportBuilder(request.branding ?? this.branding);
       const htmlData: HTMLReportData = {
         payload,
@@ -216,6 +227,7 @@ export class ReportAgent {
         narratives,
         detail: isDetailed ? 'detailed' : 'simple',
         groupName: request.groupName,
+        trend,
       };
       const tmpPath = await builder.buildHTML(htmlData);
 
@@ -679,6 +691,42 @@ export class ReportAgent {
       })),
       snapshotCount: parseInt((snapshotCount as { count: string })?.count ?? '0', 10),
       metrics: dayMetrics,
+    };
+  }
+
+  /** Compute trend data by comparing with the previous broadcast day in the same stage. */
+  private async computeDayTrend(
+    currentDay: { id: string; stageId: string; label: string; date: string },
+    filter?: ViewershipSnapshotModel.ViewFilter,
+  ): Promise<HTMLReportData['trend']> {
+    // Find previous broadcast day in the same stage (ordered by date)
+    const previousDay = await db('broadcast_days')
+      .where('stage_id', currentDay.stageId)
+      .where('date', '<', currentDay.date)
+      .whereIn('status', ['completed', 'live'])
+      .orderBy('date', 'desc')
+      .first();
+
+    if (!previousDay) return undefined; // First day of stage — no trend
+
+    const prevScope: ViewershipSnapshotModel.Scope = { level: 'day', id: previousDay.id };
+    const [prevPeak, prevAvg, prevHours] = await Promise.all([
+      ViewershipSnapshotModel.getPeakCCV(prevScope, filter),
+      ViewershipSnapshotModel.getAverageCCV(prevScope, filter),
+      ViewershipSnapshotModel.getTotalViewedHours(prevScope, filter),
+    ]);
+
+    const prevPeakVal = prevPeak ? parseInt(prevPeak.total_ccv, 10) : 0;
+    const prevAvgVal = prevAvg ? parseFloat(String(prevAvg)) : 0;
+    const prevHoursVal = prevHours ? parseFloat(String(prevHours)) : 0;
+
+    if (prevPeakVal <= 0 && prevAvgVal <= 0) return undefined; // No data for previous day
+
+    return {
+      previousDayLabel: previousDay.label ?? 'Previous Day',
+      peakCCV: prevPeakVal,
+      avgCCV: prevAvgVal,
+      totalViewedHours: prevHoursVal,
     };
   }
 

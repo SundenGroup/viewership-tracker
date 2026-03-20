@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useCallback } from 'react';
-import { Card, PlatformBadge, LoadingOverlay } from '@/components/common';
+import { Card, PlatformIcon, LoadingOverlay } from '@/components/common';
 import { formatNumber, formatCompact, tierLabel, getStreamUrl } from '@/utils/formatters';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import * as api from '@/services/api';
@@ -240,7 +240,7 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                       </span>
                     </td>
                     <td className="py-2 pl-2">
-                      <PlatformBadge platform={ch.platform ?? 'unknown'} />
+                      <PlatformIcon platform={ch.platform ?? 'unknown'} size={18} />
                     </td>
                     <td className="py-2 pl-2 max-w-[180px]">
                       <div className="flex items-center gap-1.5">
@@ -354,7 +354,7 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                     </span>
                   </td>
                   <td className="py-2">
-                    <PlatformBadge platform={ch.platform ?? 'unknown'} />
+                    <PlatformIcon platform={ch.platform ?? 'unknown'} size={18} />
                   </td>
                   <td className="py-2">
                     <div className="flex items-center gap-1.5">
