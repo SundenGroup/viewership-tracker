@@ -307,6 +307,10 @@ export function buildHTMLReport(data: HTMLReportData): string {
 <title>${seriesName} — ${esc(scopeTitle)}</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<!-- Umami Analytics (cookie-free, GDPR compliant) -->
+<script defer src="https://stats.clutch.game/script.js"
+  data-website-id="0ae421d0-9d8c-47c3-bd67-9f8e9c076a47"
+  data-domains="tracker.clutch.game"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
