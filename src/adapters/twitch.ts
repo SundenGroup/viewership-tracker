@@ -4,8 +4,11 @@ import { config } from '../utils/config';
 import type { PlatformAdapter, ChannelSnapshot, DiscoveredStream } from './types';
 
 const HELIX_BASE = 'https://api.twitch.tv/helix';
+const GQL_URL = 'https://gql.twitch.tv/gql';
+const GQL_CLIENT_ID = 'kimne78kx3ncx6brgo4mv6wki5h1ko'; // Public Twitch web client ID
 const TOKEN_URL = 'https://id.twitch.tv/oauth2/token';
 const MAX_CHANNELS_PER_REQUEST = 100;
+const GQL_BATCH_SIZE = 35; // GQL batches: keep under rate limits
 const MAX_RETRIES = 3;
 const BASE_RETRY_DELAY_MS = 1000;
 const TOKEN_REFRESH_BUFFER_MS = 60_000; // refresh 60s before expiry
@@ -42,6 +45,24 @@ interface TwitchPaginatedResponse<T> {
   pagination: { cursor?: string };
 }
 
+interface GqlStreamResponse {
+  data: {
+    user: {
+      login: string;
+      displayName: string;
+      stream: {
+        viewersCount: number;
+        title: string;
+        game: { name: string } | null;
+        createdAt: string;
+      } | null;
+      broadcastSettings: {
+        language: string;
+      } | null;
+    } | null;
+  };
+}
+
 export class TwitchAdapter implements PlatformAdapter {
   readonly platform = 'twitch';
 
@@ -50,7 +71,9 @@ export class TwitchAdapter implements PlatformAdapter {
   private readonly clientId: string;
   private readonly clientSecret: string;
   private readonly client: AxiosInstance;
+  private readonly gqlClient: AxiosInstance;
   private readonly gameIdCache = new Map<string, string>();
+  private gqlHealthy = true; // Track GQL availability for fallback
 
   constructor(clientId?: string, clientSecret?: string) {
     this.clientId = clientId ?? config.twitch.clientId;
@@ -62,6 +85,12 @@ export class TwitchAdapter implements PlatformAdapter {
       reqConfig.headers['Client-ID'] = this.clientId;
       reqConfig.headers['Authorization'] = `Bearer ${this.accessToken}`;
       return reqConfig;
+    });
+
+    this.gqlClient = axios.create({
+      baseURL: GQL_URL,
+      headers: { 'Client-ID': GQL_CLIENT_ID },
+      timeout: 10_000,
     });
   }
 
@@ -134,6 +163,96 @@ export class TwitchAdapter implements PlatformAdapter {
   async getViewerCounts(channelNames: string[]): Promise<ChannelSnapshot[]> {
     if (channelNames.length === 0) return [];
 
+    // Try GQL first (real-time counts), fall back to Helix (stepped ~3-5 min)
+    if (this.gqlHealthy) {
+      try {
+        const results = await this.getViewerCountsViaGQL(channelNames);
+        return results;
+      } catch (err) {
+        logger.warn('Twitch GQL failed, falling back to Helix API', {
+          error: (err as Error).message,
+        });
+        this.gqlHealthy = false;
+        // Re-enable GQL after 5 minutes
+        setTimeout(() => { this.gqlHealthy = true; }, 5 * 60 * 1000);
+      }
+    }
+
+    return this.getViewerCountsViaHelix(channelNames);
+  }
+
+  // ── GQL: Real-time viewer counts (~15-30s freshness) ────────────────
+
+  private async getViewerCountsViaGQL(channelNames: string[]): Promise<ChannelSnapshot[]> {
+    const batches = chunk(channelNames, GQL_BATCH_SIZE);
+    const results: ChannelSnapshot[] = [];
+
+    for (const batch of batches) {
+      // Build a batched GQL request: one query per channel in a single POST
+      const operations = batch.map((name, i) => ({
+        operationName: 'StreamMetadata',
+        variables: { channelLogin: name.toLowerCase() },
+        extensions: {
+          persistedQuery: {
+            version: 1,
+            sha256Hash: 'a647c2a13599e5991e175155f798ca7f1ecddde73f7f341f39009c14dbfd59df',
+          },
+        },
+      }));
+
+      // Try persisted query first, fall back to inline query
+      let responses: GqlStreamResponse[];
+      try {
+        const { data } = await this.gqlClient.post<GqlStreamResponse[]>('', operations);
+        responses = data;
+      } catch {
+        // Fall back to inline query approach
+        const inlineOps = batch.map((name) => ({
+          query: `query { user(login: "${name.toLowerCase()}") { login displayName stream { viewersCount title game { name } createdAt } broadcastSettings { language } } }`,
+        }));
+        const { data } = await this.gqlClient.post<GqlStreamResponse[]>('', inlineOps);
+        responses = data;
+      }
+
+      for (let i = 0; i < batch.length; i++) {
+        const name = batch[i];
+        const resp = responses[i];
+        const user = resp?.data?.user;
+        const stream = user?.stream;
+
+        if (user && stream) {
+          results.push({
+            channelIdentifier: user.login,
+            displayName: user.displayName,
+            concurrentViewers: stream.viewersCount,
+            isLive: true,
+            language: user.broadcastSettings?.language ?? null,
+            gameName: stream.game?.name ?? null,
+            title: stream.title,
+            startedAt: stream.createdAt,
+          });
+        } else {
+          results.push({
+            channelIdentifier: name,
+            displayName: user?.displayName ?? name,
+            concurrentViewers: 0,
+            isLive: false,
+            language: null,
+            gameName: null,
+            title: null,
+            startedAt: null,
+          });
+        }
+      }
+    }
+
+    logger.debug(`Twitch GQL getViewerCounts: ${results.filter(r => r.isLive).length}/${channelNames.length} live`);
+    return results;
+  }
+
+  // ── Helix: Official API (stepped ~3-5 min viewer counts) ────────────
+
+  private async getViewerCountsViaHelix(channelNames: string[]): Promise<ChannelSnapshot[]> {
     const batches = chunk(channelNames, MAX_CHANNELS_PER_REQUEST);
     const results: ChannelSnapshot[] = [];
 
@@ -187,7 +306,7 @@ export class TwitchAdapter implements PlatformAdapter {
       }
     }
 
-    logger.debug(`Twitch getViewerCounts: ${results.filter(r => r.isLive).length}/${channelNames.length} live`);
+    logger.debug(`Twitch Helix getViewerCounts: ${results.filter(r => r.isLive).length}/${channelNames.length} live`);
     return results;
   }
 
