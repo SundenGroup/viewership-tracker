@@ -612,16 +612,18 @@ export class ReportAgent {
             avgCCV: parseFloat(b.avg_ccv),
             peakCCV: parseInt(b.peak_ccv, 10),
           })),
-          channelLeaderboard: leaderboard.map((e) => ({
-            channelId: e.channel_id,
-            displayName: e.display_name,
-            platform: e.platform,
-            tier: e.tier ?? 'community',
-            language: e.language ?? null,
-            peakCCV: parseInt(e.peak_ccv, 10),
-            avgCCV: parseFloat(e.avg_ccv),
-            totalViewedMinutes: parseInt(e.total_viewed_minutes, 10),
-          })),
+          channelLeaderboard: leaderboard
+            .map((e) => ({
+              channelId: e.channel_id,
+              displayName: e.display_name,
+              platform: e.platform,
+              tier: e.tier ?? 'community',
+              language: e.language ?? null,
+              peakCCV: parseInt(e.peak_ccv, 10),
+              avgCCV: parseFloat(e.avg_ccv),
+              totalViewedMinutes: parseInt(e.total_viewed_minutes, 10),
+            }))
+            .filter((e) => e.peakCCV > 0),
         };
       }),
     );
