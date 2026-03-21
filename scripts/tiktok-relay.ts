@@ -67,34 +67,42 @@ async function fetchTikTokLive(username: string): Promise<ChannelResult> {
   const clean = username.replace(/^@/, '');
 
   try {
-    const { WebcastPushConnection } = await import('tiktok-live-connector');
-
-    const connection = new WebcastPushConnection(clean, {
-      fetchRoomInfoOnConnect: false,
-      enableExtendedGiftInfo: false,
+    // Scrape the TikTok live page directly — more reliable than tiktok-live-connector
+    const res = await fetch(`https://www.tiktok.com/@${clean}/live`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
     });
+    const html = await res.text();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const roomInfo = await connection.fetchRoomInfo() as Record<string, any>;
-    const data = roomInfo?.data;
-
-    if (!data || data.status !== 2) {
+    // Check if user is live (status: 2 in liveRoomUserInfo)
+    const statusMatch = html.match(/"status"\s*:\s*(\d+)/);
+    if (!statusMatch || statusMatch[1] !== '2') {
       return { identifier: username, viewers: 0, title: null, displayName: null, isLive: false };
     }
+
+    // Extract viewer count from liveRoomStats
+    const statsMatch = html.match(/"liveRoomStats"\s*:\s*\{[^}]*"userCount"\s*:\s*(\d+)/);
+    const viewers = statsMatch ? parseInt(statsMatch[1], 10) : 0;
+
+    // Extract display name
+    const nameMatch = html.match(/"nickname"\s*:\s*"([^"]+)"/);
+    const displayName = nameMatch ? nameMatch[1] : null;
+
+    // Extract title/signature
+    const titleMatch = html.match(/"signature"\s*:\s*"([^"]+)"/);
+    const title = titleMatch ? titleMatch[1].replace(/\\n/g, ' ').slice(0, 200) : null;
 
     return {
       identifier: username,
-      viewers: data.user_count ?? 0,
-      title: data.title || null,
-      displayName: data.owner?.nickname || null,
+      viewers,
+      title,
+      displayName,
       isLive: true,
     };
   } catch (err) {
-    const msg = (err as Error).message ?? '';
-    if (msg.includes('offline') || msg.includes('UserOffline') || msg.includes('not found')) {
-      return { identifier: username, viewers: 0, title: null, displayName: null, isLive: false };
-    }
-    log(`  ERROR fetching ${username}: ${msg}`);
+    log(`  ERROR fetching ${clean}: ${(err as Error).message}`);
     return { identifier: username, viewers: 0, title: null, displayName: null, isLive: false };
   }
 }
@@ -131,9 +139,11 @@ async function pushToServer(results: ChannelResult[]): Promise<void> {
 
 // ── Main ─────────────────────────────────────────────────────────────────
 
-// Hard-coded channel list — add more as needed
+// TikTok channels to poll — add more as needed
 const TIKTOK_CHANNELS = [
   '@pubg.esports.official',
+  '@pubg_battlegrounds_vn',
+  'pubgthailandofficial',
 ];
 
 async function runOnce() {

@@ -262,7 +262,7 @@ router.get('/:shortName/timeseries', async (req: Request, res: Response, next: N
 
     const needsJoin = groupBy === 'tier';
     const groupColumn = groupBy === 'channel' ? 'channel_id' : groupBy;
-    const groupExpr = needsJoin ? 'c.tier' : `vs."${groupColumn}"`;
+    const groupExpr = needsJoin ? 'c.tier' : `"${groupColumn}"`;
     const joinClause = needsJoin ? 'JOIN channels c ON c.id = vs.channel_id' : '';
     const vsPrefix = needsJoin ? 'vs.' : '';
 

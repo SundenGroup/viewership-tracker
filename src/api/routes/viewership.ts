@@ -245,7 +245,7 @@ router.get('/timeseries', async (req: Request, res: Response, next: NextFunction
     // For tier, we need to JOIN channels table; for others, column is on viewership_snapshots
     const needsJoin = groupBy === 'tier';
     const groupColumn = groupBy === 'channel' ? 'channel_id' : groupBy;
-    const groupExpr = needsJoin ? 'c.tier' : `vs."${groupColumn}"`;
+    const groupExpr = needsJoin ? 'c.tier' : `"${groupColumn}"`;
     const joinClause = needsJoin ? 'JOIN channels c ON c.id = vs.channel_id' : '';
     const vsPrefix = needsJoin ? 'vs.' : '';
 
