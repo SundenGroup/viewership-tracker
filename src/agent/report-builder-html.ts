@@ -1082,7 +1082,7 @@ function buildDatasets(mode) {
     var ds = [{ label: 'Total', data: totalTS, borderColor: '#FF154D',
       backgroundColor: 'transparent', borderWidth: 2, fill: false,
       tension: 0.3, pointRadius: 0, order: 0 }];
-    platformOrder.forEach(function(p, i) {
+    Object.keys(platformTS).forEach(function(p, i) {
       if (platformTS[p]) ds.push({
         label: p.charAt(0).toUpperCase() + p.slice(1), data: platformTS[p],
         borderColor: C[p] || '#7a82a0', backgroundColor: CA[p] || 'rgba(122,130,160,0.12)',
