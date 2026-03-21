@@ -200,19 +200,13 @@ export class TwitchAdapter implements PlatformAdapter {
         },
       }));
 
-      // Try persisted query first, fall back to inline query
+      // Use inline queries (persisted query hashes rotate and break)
       let responses: GqlStreamResponse[];
-      try {
-        const { data } = await this.gqlClient.post<GqlStreamResponse[]>('', operations);
-        responses = data;
-      } catch {
-        // Fall back to inline query approach
-        const inlineOps = batch.map((name) => ({
-          query: `query { user(login: "${name.toLowerCase()}") { login displayName stream { viewersCount title game { name } createdAt } broadcastSettings { language } } }`,
-        }));
-        const { data } = await this.gqlClient.post<GqlStreamResponse[]>('', inlineOps);
-        responses = data;
-      }
+      const inlineOps = batch.map((name) => ({
+        query: `query { user(login: "${name.toLowerCase()}") { login displayName stream { viewersCount title game { name } createdAt } broadcastSettings { language } } }`,
+      }));
+      const { data } = await this.gqlClient.post<GqlStreamResponse[]>('', inlineOps);
+      responses = data;
 
       for (let i = 0; i < batch.length; i++) {
         const name = batch[i];
