@@ -440,8 +440,8 @@ export async function getGroupedTimeSeriesData(
          SUM(channel_ccv)::text AS total_ccv,
          COUNT(*)::text AS channel_count
        FROM (
-         SELECT bucket, vs.channel_id, group_key,
-           MAX(vs.concurrent_viewers) AS channel_ccv
+         SELECT bucket, channel_id, group_key,
+           MAX(concurrent_viewers) AS channel_ccv
          FROM (
            SELECT
              date_trunc('minute', vs."timestamp")
@@ -461,7 +461,7 @@ export async function getGroupedTimeSeriesData(
            JOIN channels c ON c.id = vs.channel_id
            WHERE vs."${col}" = :id ${fSql}
          ) with_latest
-         WHERE with_latest."timestamp" = latest_ts
+         WHERE "timestamp" = latest_ts
          GROUP BY bucket, channel_id, group_key
        ) per_channel
        GROUP BY bucket, group_key
