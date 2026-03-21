@@ -461,8 +461,8 @@ export async function getGroupedTimeSeriesData(
            JOIN channels c ON c.id = vs.channel_id
            WHERE vs."${col}" = :id ${fSql}
          ) with_latest
-         WHERE "timestamp" = latest_ts
-         GROUP BY bucket, vs.channel_id, group_key
+         WHERE with_latest."timestamp" = latest_ts
+         GROUP BY bucket, channel_id, group_key
        ) per_channel
        GROUP BY bucket, group_key
        ORDER BY bucket ASC, total_ccv DESC`,
