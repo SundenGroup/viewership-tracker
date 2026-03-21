@@ -215,8 +215,8 @@ router.get('/timeseries', async (req: Request, res: Response, next: NextFunction
     }
 
     const groupBy = (req.query.groupBy as string) || 'total';
-    if (!['total', 'platform', 'language', 'region', 'channel'].includes(groupBy)) {
-      res.status(400).json({ error: 'groupBy must be one of: total, platform, language, region, channel' });
+    if (!['total', 'platform', 'language', 'region', 'channel', 'tier'].includes(groupBy)) {
+      res.status(400).json({ error: 'groupBy must be one of: total, platform, language, region, channel, tier' });
       return;
     }
 
@@ -242,11 +242,18 @@ router.get('/timeseries', async (req: Request, res: Response, next: NextFunction
       scopeObj.level === 'day' ? 'broadcast_day_id' :
       scopeObj.level === 'stage' ? 'stage_id' : 'series_id';
 
+    // For tier, we need to JOIN channels table; for others, column is on viewership_snapshots
+    const needsJoin = groupBy === 'tier';
     const groupColumn = groupBy === 'channel' ? 'channel_id' : groupBy;
+    const groupExpr = needsJoin ? 'c.tier' : `vs."${groupColumn}"`;
+    const joinClause = needsJoin ? 'JOIN channels c ON c.id = vs.channel_id' : '';
+    const vsPrefix = needsJoin ? 'vs.' : '';
 
     // Two-level dedup: pick one poll cycle per bucket per channel (latest timestamp),
     // then sum CCV across streams. Avoids double-counting from deploy restarts.
     const fClauses = filter ? ViewershipSnapshotModel.buildFilterClauses(filter) : { sql: '', bindings: {} };
+    // Prefix filter SQL with vs. alias when using JOIN
+    const fSql = needsJoin ? fClauses.sql.replace(/\b(language|platform|region)\b/g, 'vs.$1') : fClauses.sql;
     const rows: Array<{ bucket: Date; group_key: string; total_ccv: string; channel_count: string }> = await db.raw(
       `SELECT bucket, group_key,
          SUM(channel_ccv)::text AS total_ccv,
@@ -256,21 +263,22 @@ router.get('/timeseries', async (req: Request, res: Response, next: NextFunction
            SUM(concurrent_viewers) AS channel_ccv
          FROM (
            SELECT
-             date_trunc('minute', "timestamp")
-               + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
+             date_trunc('minute', ${vsPrefix}"timestamp")
+               + (EXTRACT(epoch FROM ${vsPrefix}"timestamp" - date_trunc('minute', ${vsPrefix}"timestamp"))::int / :interval * :interval)
                * interval '1 second' AS bucket,
-             channel_id,
-             "${groupColumn}" AS group_key,
-             concurrent_viewers,
-             "timestamp",
-             MAX("timestamp") OVER (PARTITION BY
-               date_trunc('minute', "timestamp")
-                 + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
+             ${vsPrefix}channel_id,
+             ${groupExpr} AS group_key,
+             ${vsPrefix}concurrent_viewers,
+             ${vsPrefix}"timestamp",
+             MAX(${vsPrefix}"timestamp") OVER (PARTITION BY
+               date_trunc('minute', ${vsPrefix}"timestamp")
+                 + (EXTRACT(epoch FROM ${vsPrefix}"timestamp" - date_trunc('minute', ${vsPrefix}"timestamp"))::int / :interval * :interval)
                  * interval '1 second',
-               channel_id
+               ${vsPrefix}channel_id
              ) AS latest_ts
-           FROM viewership_snapshots
-           WHERE "${scopeColumn}" = :id ${fClauses.sql}
+           FROM viewership_snapshots ${needsJoin ? 'vs' : ''}
+           ${joinClause}
+           WHERE ${vsPrefix}"${scopeColumn}" = :id ${fSql}
          ) with_latest
          WHERE "timestamp" = latest_ts
          GROUP BY bucket, channel_id, group_key

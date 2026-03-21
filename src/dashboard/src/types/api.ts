@@ -295,7 +295,7 @@ export interface GroupedTimeSeriesBucket {
   channel_count?: string;
 }
 
-export type TimeSeriesGroupBy = 'total' | 'platform' | 'language' | 'region' | 'channel';
+export type TimeSeriesGroupBy = 'total' | 'platform' | 'language' | 'region' | 'channel' | 'tier';
 
 export interface TimeSeriesResponse {
   scope: { level: ScopeLevel; id: string };

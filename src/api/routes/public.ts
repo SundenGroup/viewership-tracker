@@ -230,8 +230,8 @@ router.get('/:shortName/timeseries', async (req: Request, res: Response, next: N
     }
 
     const groupBy = (req.query.groupBy as string) || 'total';
-    if (!['total', 'platform', 'language', 'region', 'channel'].includes(groupBy)) {
-      res.status(400).json({ error: 'groupBy must be one of: total, platform, language, region, channel' });
+    if (!['total', 'platform', 'language', 'region', 'channel', 'tier'].includes(groupBy)) {
+      res.status(400).json({ error: 'groupBy must be one of: total, platform, language, region, channel, tier' });
       return;
     }
 
@@ -260,9 +260,14 @@ router.get('/:shortName/timeseries', async (req: Request, res: Response, next: N
           ? 'stage_id'
           : 'series_id';
 
+    const needsJoin = groupBy === 'tier';
     const groupColumn = groupBy === 'channel' ? 'channel_id' : groupBy;
+    const groupExpr = needsJoin ? 'c.tier' : `vs."${groupColumn}"`;
+    const joinClause = needsJoin ? 'JOIN channels c ON c.id = vs.channel_id' : '';
+    const vsPrefix = needsJoin ? 'vs.' : '';
 
     const fClauses = filter ? ViewershipSnapshotModel.buildFilterClauses(filter) : { sql: '', bindings: {} };
+    const fSql = needsJoin ? fClauses.sql.replace(/\b(language|platform|region)\b/g, 'vs.$1') : fClauses.sql;
     const rows: Array<{
       bucket: Date;
       group_key: string;
@@ -275,15 +280,16 @@ router.get('/:shortName/timeseries', async (req: Request, res: Response, next: N
            COUNT(*)::text AS channel_count
          FROM (
            SELECT
-             date_trunc('minute', "timestamp")
-               + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
+             date_trunc('minute', ${vsPrefix}"timestamp")
+               + (EXTRACT(epoch FROM ${vsPrefix}"timestamp" - date_trunc('minute', ${vsPrefix}"timestamp"))::int / :interval * :interval)
                * interval '1 second' AS bucket,
-             channel_id,
-             "${groupColumn}" AS group_key,
-             MAX(concurrent_viewers) AS max_viewers
-           FROM viewership_snapshots
-           WHERE "${scopeColumn}" = :id ${fClauses.sql}
-           GROUP BY bucket, channel_id, group_key
+             ${vsPrefix}channel_id,
+             ${groupExpr} AS group_key,
+             MAX(${vsPrefix}concurrent_viewers) AS max_viewers
+           FROM viewership_snapshots ${needsJoin ? 'vs' : ''}
+           ${joinClause}
+           WHERE ${vsPrefix}"${scopeColumn}" = :id ${fSql}
+           GROUP BY bucket, ${vsPrefix}channel_id, group_key
          ) per_channel
          GROUP BY bucket, group_key
          ORDER BY bucket ASC, total_ccv DESC`,

@@ -31,12 +31,13 @@ interface TimeSeriesPanelProps {
   platforms?: string[];
 }
 
-type ViewMode = 'total' | 'platform' | 'language';
+type ViewMode = 'total' | 'platform' | 'language' | 'tier';
 
 const VIEW_MODES: { value: ViewMode; label: string }[] = [
   { value: 'total', label: 'Total' },
   { value: 'platform', label: 'By Platform' },
   { value: 'language', label: 'By Language' },
+  { value: 'tier', label: 'By Category' },
 ];
 
 type IntervalOption = 60 | 300 | 600;
@@ -304,6 +305,8 @@ export function TimeSeriesPanel({ seriesId, scope: scopeProp, publicShortName, b
         <TotalChart data={totalChartData} dayMarkers={dayMarkers} tickFormatter={tickFormatter} />
       ) : viewMode === 'platform' ? (
         <PlatformChart data={groupedChartData} keys={groupKeys} dayMarkers={dayMarkers} tickFormatter={tickFormatter} />
+      ) : viewMode === 'tier' ? (
+        <StackedCategoryChart data={groupedChartData} keys={groupKeys} dayMarkers={dayMarkers} tickFormatter={tickFormatter} />
       ) : (
         <StackedLanguageChart data={groupedChartData} keys={groupKeys} dayMarkers={dayMarkers} tickFormatter={tickFormatter} />
       )}
@@ -427,6 +430,66 @@ function PlatformChart({ data, keys, dayMarkers, tickFormatter }: { data: Array<
 }
 
 // ── Language stacked area ────────────────────────────────────────────────
+
+const TIER_COLORS: Record<string, string> = {
+  official: '#ef4444',    // red
+  partner: '#f59e0b',     // amber
+  watch_party: '#a78bfa', // violet
+  player: '#38bdf8',      // sky
+  community: '#6b7280',   // gray
+};
+
+const TIER_LABELS: Record<string, string> = {
+  official: 'Official',
+  partner: 'Partner',
+  watch_party: 'Watch Party',
+  player: 'Player',
+  community: 'Community',
+};
+
+function StackedCategoryChart({ data, keys, dayMarkers, tickFormatter }: { data: Array<Record<string, unknown>>; keys: string[] } & ChartExtras) {
+  return (
+    <ResponsiveContainer width="100%" height={320}>
+      <AreaChart data={data} margin={{ top: 16, right: 10, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
+        <XAxis
+          dataKey="ts"
+          stroke="#6b7280"
+          fontSize={11}
+          tickLine={false}
+          axisLine={false}
+          tickFormatter={tickFormatter}
+          minTickGap={60}
+        />
+        <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompact(v)} />
+        <Tooltip
+          {...TOOLTIP_STYLE}
+          labelFormatter={(v: number) => formatTooltipLabel(v)}
+          formatter={(value: number, name: string) => [formatCompact(value), TIER_LABELS[name] ?? name]}
+        />
+        <Legend
+          verticalAlign="top"
+          iconType="circle"
+          wrapperStyle={{ fontSize: '11px', color: '#9ca3af', paddingBottom: '8px' }}
+          formatter={(value: string) => TIER_LABELS[value] ?? value}
+        />
+        {renderDayMarkers(dayMarkers)}
+        {keys.map((key) => (
+          <Area
+            key={key}
+            type="monotone"
+            dataKey={key}
+            stackId="1"
+            stroke={TIER_COLORS[key] ?? '#6b7280'}
+            fill={TIER_COLORS[key] ?? '#6b7280'}
+            fillOpacity={0.3}
+            name={key}
+          />
+        ))}
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
 
 function StackedLanguageChart({ data, keys, dayMarkers, tickFormatter }: { data: Array<Record<string, unknown>>; keys: string[] } & ChartExtras) {
   return (
