@@ -1038,10 +1038,10 @@ export class YouTubeAdapter implements PlatformAdapter {
     }
 
     // Determine which YouTube categories to search
-    // Default: Gaming (20) + Entertainment (24) when a game is configured
+    // Default: Gaming (20) + Entertainment (24) + People & Blogs (22) when a game is configured
     const categories = categoryIds && categoryIds.length > 0
       ? categoryIds
-      : gameId ? ['20', '24'] : [undefined];
+      : gameId ? ['20', '24', '22'] : [undefined];
 
     // Search for each term × category combination, collect unique video IDs
     const seenVideoIds = new Set<string>();
