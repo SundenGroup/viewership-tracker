@@ -184,9 +184,13 @@ export class ReportAgent {
 
     if (format === 'html') {
       // ── HTML Report: Chart.js client-side, no Python ─────────────────
-      // 3. Fetch time series data (total + per-platform)
-      const totalTimeSeries = await this.fetchAllTimeSeries(payload.broadcastDays, request.filter);
-      const platformTimeSeries = await this.fetchGroupedTimeSeries(payload.broadcastDays, 'platform', request.filter);
+      // 3. Fetch time series data (total + per-platform + per-language + per-tier)
+      const [totalTimeSeries, platformTimeSeries, languageTimeSeries, tierTimeSeries] = await Promise.all([
+        this.fetchAllTimeSeries(payload.broadcastDays, request.filter),
+        this.fetchGroupedTimeSeries(payload.broadcastDays, 'platform', request.filter),
+        this.fetchGroupedTimeSeries(payload.broadcastDays, 'language', request.filter),
+        this.fetchGroupedTimeSeries(payload.broadcastDays, 'tier', request.filter),
+      ]);
 
       // 4. Generate narratives
       let narratives: Narratives = {};
@@ -218,6 +222,18 @@ export class ReportAgent {
         payload,
         totalTimeSeries,
         platformTimeSeries: platformTimeSeries.map((p) => ({
+          timestamp: p.timestamp,
+          groupKey: p.groupKey,
+          totalCCV: p.totalCCV,
+          channelCount: p.channelCount,
+        })),
+        languageTimeSeries: languageTimeSeries.map((p) => ({
+          timestamp: p.timestamp,
+          groupKey: p.groupKey,
+          totalCCV: p.totalCCV,
+          channelCount: p.channelCount,
+        })),
+        tierTimeSeries: tierTimeSeries.map((p) => ({
           timestamp: p.timestamp,
           groupKey: p.groupKey,
           totalCCV: p.totalCCV,
@@ -939,7 +955,7 @@ export class ReportAgent {
    */
   private async fetchGroupedTimeSeries(
     broadcastDays: ReportPayload['broadcastDays'],
-    groupBy: 'platform' | 'language',
+    groupBy: 'platform' | 'language' | 'tier',
     filter?: ViewershipSnapshotModel.ViewFilter,
   ): Promise<GroupedTimeSeriesPoint[]> {
     const allPoints: GroupedTimeSeriesPoint[] = [];

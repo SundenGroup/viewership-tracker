@@ -425,12 +425,51 @@ export interface GroupedTimeSeriesBucket {
  */
 export async function getGroupedTimeSeriesData(
   scope: Scope,
-  groupBy: 'platform' | 'language',
+  groupBy: 'platform' | 'language' | 'tier',
   intervalSeconds = 60,
   filter?: ViewFilter,
 ): Promise<GroupedTimeSeriesBucket[]> {
   const col = scopeColumnBare(scope);
   const f = buildFilterClauses(filter);
+
+  // For 'tier', join with channels table; for others, use viewership_snapshots columns directly
+  if (groupBy === 'tier') {
+    const fSql = f.sql.replace(/\blanguage\b/g, 'vs.language').replace(/\bplatform\b/g, 'vs.platform');
+    return db.raw(
+      `SELECT bucket, group_key,
+         SUM(channel_ccv)::text AS total_ccv,
+         COUNT(*)::text AS channel_count
+       FROM (
+         SELECT bucket, vs.channel_id, group_key,
+           MAX(vs.concurrent_viewers) AS channel_ccv
+         FROM (
+           SELECT
+             date_trunc('minute', vs."timestamp")
+               + (EXTRACT(epoch FROM vs."timestamp" - date_trunc('minute', vs."timestamp"))::int / :interval * :interval)
+               * interval '1 second' AS bucket,
+             vs.channel_id,
+             c.tier AS group_key,
+             vs.concurrent_viewers,
+             vs."timestamp",
+             MAX(vs."timestamp") OVER (PARTITION BY
+               date_trunc('minute', vs."timestamp")
+                 + (EXTRACT(epoch FROM vs."timestamp" - date_trunc('minute', vs."timestamp"))::int / :interval * :interval)
+                 * interval '1 second',
+               vs.channel_id
+             ) AS latest_ts
+           FROM viewership_snapshots vs
+           JOIN channels c ON c.id = vs.channel_id
+           WHERE vs."${col}" = :id ${fSql}
+         ) with_latest
+         WHERE "timestamp" = latest_ts
+         GROUP BY bucket, vs.channel_id, group_key
+       ) per_channel
+       GROUP BY bucket, group_key
+       ORDER BY bucket ASC, total_ccv DESC`,
+      { interval: intervalSeconds, id: scope.id, ...f.bindings },
+    ).then((r: { rows: GroupedTimeSeriesBucket[] }) => r.rows);
+  }
+
   // Two-level dedup: pick one poll cycle per bucket per channel (latest timestamp),
   // then sum CCV across streams for that channel. Avoids double-counting when
   // deploys/restarts cause two polls in one bucket with different stream_ids.

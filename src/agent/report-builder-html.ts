@@ -35,6 +35,8 @@ export interface HTMLReportData {
   payload: ReportPayload;
   totalTimeSeries: TimeSeriesPoint[];
   platformTimeSeries: GroupedTimeSeriesPoint[];
+  languageTimeSeries?: GroupedTimeSeriesPoint[];
+  tierTimeSeries?: GroupedTimeSeriesPoint[];
   aggregated: {
     peakCCV: number;
     avgCCV: number;
@@ -196,7 +198,7 @@ function getTzAbbr(timezone: string): string {
 // ── Main Export ─────────────────────────────────────────────────────────────
 
 export function buildHTMLReport(data: HTMLReportData): string {
-  const { payload, totalTimeSeries, platformTimeSeries, aggregated, narratives, detail, trend } = data;
+  const { payload, totalTimeSeries, platformTimeSeries, languageTimeSeries, tierTimeSeries, aggregated, narratives, detail, trend } = data;
   const isDetailed = detail === 'detailed';
 
   const seriesName = esc(payload.series.name);
@@ -259,6 +261,40 @@ export function buildHTMLReport(data: HTMLReportData): string {
     if (idx !== undefined) {
       platformTSData[key][idx] = pt.totalCCV;
     }
+  }
+
+  // Build per-language time series arrays
+  const languageNames = [...new Set((languageTimeSeries ?? []).map((p) => (p.groupKey ?? 'unknown').toUpperCase()).filter(Boolean))];
+  const langTSData: Record<string, number[]> = {};
+  for (const name of languageNames) {
+    langTSData[name] = new Array(totalTimeSeries.length).fill(0);
+  }
+  for (const pt of (languageTimeSeries ?? [])) {
+    const key = (pt.groupKey ?? 'unknown').toUpperCase();
+    if (!langTSData[key]) continue;
+    const idx = timestampIndex.get(pt.timestamp);
+    if (idx !== undefined) langTSData[key][idx] = pt.totalCCV;
+  }
+
+  // Build per-tier (category) time series arrays
+  const TIER_LABEL_MAP: Record<string, string> = {
+    official: 'Official', partner: 'Partner', watch_party: 'Watch Party',
+    player: 'Player', community: 'Community',
+  };
+  const TIER_COLOR_MAP: Record<string, string> = {
+    official: '#ef4444', partner: '#f59e0b', watch_party: '#a78bfa',
+    player: '#38bdf8', community: '#6b7280',
+  };
+  const tierNames = [...new Set((tierTimeSeries ?? []).map((p) => p.groupKey?.toLowerCase()).filter(Boolean))];
+  const tierTSData: Record<string, number[]> = {};
+  for (const name of tierNames) {
+    tierTSData[name] = new Array(totalTimeSeries.length).fill(0);
+  }
+  for (const pt of (tierTimeSeries ?? [])) {
+    const key = pt.groupKey?.toLowerCase();
+    if (!key || !tierTSData[key]) continue;
+    const idx = timestampIndex.get(pt.timestamp);
+    if (idx !== undefined) tierTSData[key][idx] = pt.totalCCV;
   }
 
   // Day boundary markers: find the data index where each broadcast day starts
@@ -648,6 +684,14 @@ export function buildHTMLReport(data: HTMLReportData): string {
   .tag-player { background: rgba(56,189,248,0.15); color: #38bdf8; }
   .tag-watchparty { background: rgba(124,77,255,0.15); color: #b388ff; }
 
+  /* Chart mode toggle buttons */
+  .chart-mode-btn {
+    padding: 4px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);
+    background: transparent; color: #9ca3af; cursor: pointer; transition: all 0.2s;
+  }
+  .chart-mode-btn:hover { border-color: rgba(255,255,255,0.2); color: #e5e7eb; }
+  .chart-mode-btn.active { background: rgba(255,21,77,0.15); color: #FF154D; border-color: rgba(255,21,77,0.3); }
+
   /* Sortable table */
   .sortable-th {
     cursor: pointer;
@@ -755,7 +799,15 @@ export function buildHTMLReport(data: HTMLReportData): string {
 
   <!-- Concurrent Line Chart -->
   <div class="chart-card full" style="margin-bottom:32px;">
-    <h3>Concurrent Viewers Over Time</h3>
+    <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap">
+      Concurrent Viewers Over Time
+      <span style="display:flex;gap:6px;font-size:12px;font-weight:500">
+        <button class="chart-mode-btn active" data-mode="total">Total</button>
+        <button class="chart-mode-btn" data-mode="platform">By Platform</button>
+        <button class="chart-mode-btn" data-mode="language">By Language</button>
+        <button class="chart-mode-btn" data-mode="category">By Category</button>
+      </span>
+    </h3>
     <canvas id="lineChart" height="110"></canvas>
   </div>
 
@@ -1006,79 +1058,114 @@ dayBoundaries.forEach(function(b, i) {
   };
 });
 
-var lineDatasets = [
-  {
-    label: 'Total',
-    data: totalTS,
-    borderColor: '#FF154D',
-    backgroundColor: 'rgba(255,21,77,0.06)',
-    borderWidth: 2.5,
-    fill: true,
-    tension: 0.3,
-    pointRadius: 0,
-    order: 0
-  }
-];
+// Language time series data
+var langTS = ${JSON.stringify(langTSData)};
+var langOrder = ${JSON.stringify(languageNames)};
+var langGroupColors = ['#60a5fa','#34d399','#a78bfa','#fbbf24','#fb923c','#f472b6','#2dd4bf','#818cf8','#a3e635','#e879f9','#14b8a6','#ef4444','#06b6d4','#8b5cf6'];
 
-var platformOrder = ${JSON.stringify(platformNames)};
-platformOrder.forEach(function(platform, idx) {
-  if (platformTS[platform]) {
-    lineDatasets.push({
-      label: platform.charAt(0).toUpperCase() + platform.slice(1),
-      data: platformTS[platform],
-      borderColor: C[platform] || '#7a82a0',
-      backgroundColor: CA[platform] || 'rgba(122,130,160,0.12)',
-      borderWidth: 1.8,
-      fill: true,
-      tension: 0.3,
-      pointRadius: 0,
-      order: idx + 1
+// Tier (category) time series data
+var tierTS = ${JSON.stringify(tierTSData)};
+var tierOrder = ${JSON.stringify(tierNames)};
+var tierColors = ${JSON.stringify(TIER_COLOR_MAP)};
+var tierLabels = ${JSON.stringify(TIER_LABEL_MAP)};
+
+// Build datasets per mode
+function buildDatasets(mode) {
+  if (mode === 'total') {
+    return [{
+      label: 'Total', data: totalTS, borderColor: '#FF154D',
+      backgroundColor: 'rgba(255,21,77,0.06)', borderWidth: 2.5,
+      fill: true, tension: 0.3, pointRadius: 0
+    }];
+  }
+  if (mode === 'platform') {
+    var ds = [{ label: 'Total', data: totalTS, borderColor: '#FF154D',
+      backgroundColor: 'transparent', borderWidth: 2, fill: false,
+      tension: 0.3, pointRadius: 0, order: 0 }];
+    platformOrder.forEach(function(p, i) {
+      if (platformTS[p]) ds.push({
+        label: p.charAt(0).toUpperCase() + p.slice(1), data: platformTS[p],
+        borderColor: C[p] || '#7a82a0', backgroundColor: CA[p] || 'rgba(122,130,160,0.12)',
+        borderWidth: 1.8, fill: true, tension: 0.3, pointRadius: 0, order: i+1
+      });
+    });
+    return ds;
+  }
+  if (mode === 'language') {
+    return langOrder.map(function(lang, i) {
+      return {
+        label: lang, data: langTS[lang] || [],
+        borderColor: langGroupColors[i % langGroupColors.length],
+        backgroundColor: langGroupColors[i % langGroupColors.length] + '30',
+        borderWidth: 1.5, fill: true, tension: 0.3, pointRadius: 0
+      };
     });
   }
-});
+  if (mode === 'category') {
+    return tierOrder.map(function(tier) {
+      return {
+        label: tierLabels[tier] || tier, data: tierTS[tier] || [],
+        borderColor: tierColors[tier] || '#6b7280',
+        backgroundColor: (tierColors[tier] || '#6b7280') + '30',
+        borderWidth: 1.5, fill: true, tension: 0.3, pointRadius: 0
+      };
+    });
+  }
+  return [];
+}
 
-new Chart(document.getElementById('lineChart'), {
-  type: 'line',
-  data: {
-    labels: sparseLabels,
-    datasets: lineDatasets
+var chartOpts = {
+  responsive: true,
+  interaction: { mode: 'index', intersect: false },
+  scales: {
+    x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { maxRotation: 0 } },
+    y: { grid: { color: 'rgba(255,255,255,0.04)' }, beginAtZero: true, stacked: false,
+      ticks: { callback: function(v) { return v >= 1000 ? (v/1000).toFixed(1)+'k' : v; } } }
   },
-  options: {
-    responsive: true,
-    interaction: { mode: 'index', intersect: false },
-    scales: {
-      x: {
-        grid: { color: 'rgba(255,255,255,0.04)' },
-        ticks: { maxRotation: 0 }
-      },
-      y: {
-        grid: { color: 'rgba(255,255,255,0.04)' },
-        beginAtZero: true,
-        ticks: { callback: function(v) { return v >= 1000 ? (v/1000).toFixed(1)+'k' : v; } }
+  plugins: {
+    legend: {
+      position: 'top',
+      labels: { usePointStyle: true, pointStyle: 'circle', padding: 20, font: { size: 12 } },
+      onClick: function(e, legendItem, legend) {
+        var idx = legendItem.datasetIndex;
+        var ci = legend.chart;
+        ci.getDatasetMeta(idx).hidden = !ci.getDatasetMeta(idx).hidden;
+        ci.update();
       }
     },
-    plugins: {
-      legend: {
-        position: 'top',
-        labels: { usePointStyle: true, pointStyle: 'circle', padding: 20, font: { size: 12 } }
-      },
-      tooltip: {
-        backgroundColor: '#1a1e2e',
-        borderColor: '#2a2f45',
-        borderWidth: 1,
-        titleFont: { weight: '600' },
-        callbacks: {
-          title: function(items) {
-            var idx = items[0].dataIndex;
-            var prefix = dayBoundaries.length > 0 ? dateLabels[idx] + ', ' : '';
-            return prefix + timeLabels[idx] + ' ${esc(tzLabel)}';
-          },
-          label: function(ctx) { return '  ' + ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString(); }
-        }
-      },
-      annotation: { annotations: dayAnnotations }
-    }
+    tooltip: {
+      backgroundColor: '#1a1e2e', borderColor: '#2a2f45', borderWidth: 1,
+      titleFont: { weight: '600' },
+      callbacks: {
+        title: function(items) {
+          var idx = items[0].dataIndex;
+          var prefix = dayBoundaries.length > 0 ? dateLabels[idx] + ', ' : '';
+          return prefix + timeLabels[idx] + ' ${esc(tzLabel)}';
+        },
+        label: function(ctx) { return '  ' + ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString(); }
+      }
+    },
+    annotation: { annotations: dayAnnotations }
   }
+};
+
+var ccvChart = new Chart(document.getElementById('lineChart'), {
+  type: 'line',
+  data: { labels: sparseLabels, datasets: buildDatasets('total') },
+  options: chartOpts
+});
+
+// Mode toggle buttons
+document.querySelectorAll('.chart-mode-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.chart-mode-btn').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    var mode = btn.getAttribute('data-mode');
+    var stacked = (mode === 'language' || mode === 'category');
+    ccvChart.options.scales.y.stacked = stacked;
+    ccvChart.data.datasets = buildDatasets(mode);
+    ccvChart.update();
+  });
 });
 
 // ── Sortable Streamer Table ──
