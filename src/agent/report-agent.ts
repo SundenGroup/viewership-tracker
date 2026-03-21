@@ -941,8 +941,8 @@ export class ReportAgent {
             channelCount: parseInt(b.channel_count, 10),
           });
         }
-      } catch {
-        // Skip days with no data
+      } catch (err) {
+        logger.warn(`[ReportAgent] Grouped time series failed for day ${day.id}`, { error: (err as Error).message });
       }
     }
 
@@ -976,8 +976,8 @@ export class ReportAgent {
             channelCount: parseInt(b.channel_count, 10),
           });
         }
-      } catch {
-        // Skip days with no data
+      } catch (err) {
+        logger.warn(`[ReportAgent] Grouped time series failed for day ${day.id}`, { error: (err as Error).message });
       }
     }
 
