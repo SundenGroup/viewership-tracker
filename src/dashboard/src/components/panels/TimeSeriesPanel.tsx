@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import {
   AreaChart,
   Area,
@@ -9,7 +9,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
   ReferenceLine,
 } from 'recharts';
 import { Card, LoadingOverlay } from '@/components/common';
@@ -321,6 +320,51 @@ interface ChartExtras {
   tickFormatter: (v: number) => string;
 }
 
+// ── Toggle legend hook ────────────────────────────────────────────────
+
+function useToggleLegend(keys: string[]) {
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const toggle = useCallback((key: string) => {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+  const visibleKeys = useMemo(() => keys.filter((k) => !hidden.has(k)), [keys, hidden]);
+  return { hidden, toggle, visibleKeys };
+}
+
+function ClickableLegend({ keys, hidden, toggle, colorFn, labelFn }: {
+  keys: string[];
+  hidden: Set<string>;
+  toggle: (key: string) => void;
+  colorFn: (key: string, i: number) => string;
+  labelFn: (key: string) => string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-1 justify-center pb-2 text-[11px]">
+      {keys.map((key, i) => {
+        const isHidden = hidden.has(key);
+        return (
+          <button
+            key={key}
+            onClick={() => toggle(key)}
+            className={`flex items-center gap-1 transition-opacity ${isHidden ? 'opacity-30' : 'opacity-100'} hover:opacity-80`}
+          >
+            <span
+              className="inline-block h-2.5 w-2.5 rounded-full"
+              style={{ backgroundColor: colorFn(key, i) }}
+            />
+            <span className="text-gray-400">{labelFn(key)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Shared axis/tooltip/grid config ────────────────────────────────────
 
 const TOOLTIP_STYLE = {
@@ -387,45 +431,33 @@ function TotalChart({ data, dayMarkers, tickFormatter }: { data: Array<{ ts: num
 // ── Platform overlaid lines ──────────────────────────────────────────────
 
 function PlatformChart({ data, keys, dayMarkers, tickFormatter }: { data: Array<Record<string, unknown>>; keys: string[] } & ChartExtras) {
+  const { hidden, toggle, visibleKeys } = useToggleLegend(keys);
   return (
-    <ResponsiveContainer width="100%" height={320}>
-      <LineChart data={data} margin={{ top: 16, right: 10, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
-        <XAxis
-          dataKey="ts"
-          stroke="#6b7280"
-          fontSize={11}
-          tickLine={false}
-          axisLine={false}
-          tickFormatter={tickFormatter}
-          minTickGap={60}
-        />
-        <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompact(v)} />
-        <Tooltip
-          {...TOOLTIP_STYLE}
-          labelFormatter={(v: number) => formatTooltipLabel(v)}
-          formatter={(value: number) => [formatCompact(value)]}
-        />
-        <Legend
-          verticalAlign="top"
-          iconType="circle"
-          wrapperStyle={{ fontSize: '11px', color: '#9ca3af', paddingBottom: '8px' }}
-          formatter={(value: string) => platformLabel(value)}
-        />
-        {renderDayMarkers(dayMarkers)}
-        {keys.map((key, i) => (
-          <Line
-            key={key}
-            type="monotone"
-            dataKey={key}
-            stroke={platformColor(key) || GROUP_COLORS[i % GROUP_COLORS.length]}
-            strokeWidth={2}
-            dot={false}
-            name={key}
+    <>
+      <ClickableLegend
+        keys={keys}
+        hidden={hidden}
+        toggle={toggle}
+        colorFn={(key, i) => platformColor(key) || GROUP_COLORS[i % GROUP_COLORS.length]}
+        labelFn={platformLabel}
+      />
+      <ResponsiveContainer width="100%" height={320}>
+        <LineChart data={data} margin={{ top: 4, right: 10, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
+          <XAxis dataKey="ts" stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={tickFormatter} minTickGap={60} />
+          <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompact(v)} />
+          <Tooltip
+            {...TOOLTIP_STYLE}
+            labelFormatter={(v: number) => formatTooltipLabel(v)}
+            formatter={(value: number) => [formatCompact(value)]}
           />
-        ))}
-      </LineChart>
-    </ResponsiveContainer>
+          {renderDayMarkers(dayMarkers)}
+          {visibleKeys.map((key, i) => (
+            <Line key={key} type="monotone" dataKey={key} stroke={platformColor(key) || GROUP_COLORS[i % GROUP_COLORS.length]} strokeWidth={2} dot={false} name={key} />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </>
   );
 }
 
@@ -448,89 +480,66 @@ const TIER_LABELS: Record<string, string> = {
 };
 
 function StackedCategoryChart({ data, keys, dayMarkers, tickFormatter }: { data: Array<Record<string, unknown>>; keys: string[] } & ChartExtras) {
+  const { hidden, toggle, visibleKeys } = useToggleLegend(keys);
   return (
-    <ResponsiveContainer width="100%" height={320}>
-      <AreaChart data={data} margin={{ top: 16, right: 10, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
-        <XAxis
-          dataKey="ts"
-          stroke="#6b7280"
-          fontSize={11}
-          tickLine={false}
-          axisLine={false}
-          tickFormatter={tickFormatter}
-          minTickGap={60}
-        />
-        <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompact(v)} />
-        <Tooltip
-          {...TOOLTIP_STYLE}
-          labelFormatter={(v: number) => formatTooltipLabel(v)}
-          formatter={(value: number, name: string) => [formatCompact(value), TIER_LABELS[name] ?? name]}
-        />
-        <Legend
-          verticalAlign="top"
-          iconType="circle"
-          wrapperStyle={{ fontSize: '11px', color: '#9ca3af', paddingBottom: '8px' }}
-          formatter={(value: string) => TIER_LABELS[value] ?? value}
-        />
-        {renderDayMarkers(dayMarkers)}
-        {keys.map((key) => (
-          <Area
-            key={key}
-            type="monotone"
-            dataKey={key}
-            stackId="1"
-            stroke={TIER_COLORS[key] ?? '#6b7280'}
-            fill={TIER_COLORS[key] ?? '#6b7280'}
-            fillOpacity={0.3}
-            name={key}
+    <>
+      <ClickableLegend
+        keys={keys}
+        hidden={hidden}
+        toggle={toggle}
+        colorFn={(key) => TIER_COLORS[key] ?? '#6b7280'}
+        labelFn={(key) => TIER_LABELS[key] ?? key}
+      />
+      <ResponsiveContainer width="100%" height={320}>
+        <AreaChart data={data} margin={{ top: 4, right: 10, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
+          <XAxis dataKey="ts" stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={tickFormatter} minTickGap={60} />
+          <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompact(v)} />
+          <Tooltip
+            {...TOOLTIP_STYLE}
+            labelFormatter={(v: number) => formatTooltipLabel(v)}
+            formatter={(value: number, name: string) => [formatCompact(value), TIER_LABELS[name] ?? name]}
           />
-        ))}
-      </AreaChart>
-    </ResponsiveContainer>
+          {renderDayMarkers(dayMarkers)}
+          {visibleKeys.map((key) => (
+            <Area key={key} type="monotone" dataKey={key} stackId="1" stroke={TIER_COLORS[key] ?? '#6b7280'} fill={TIER_COLORS[key] ?? '#6b7280'} fillOpacity={0.3} name={key} />
+          ))}
+        </AreaChart>
+      </ResponsiveContainer>
+    </>
   );
 }
 
 function StackedLanguageChart({ data, keys, dayMarkers, tickFormatter }: { data: Array<Record<string, unknown>>; keys: string[] } & ChartExtras) {
+  const { hidden, toggle, visibleKeys } = useToggleLegend(keys);
   return (
-    <ResponsiveContainer width="100%" height={320}>
-      <AreaChart data={data} margin={{ top: 16, right: 10, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
-        <XAxis
-          dataKey="ts"
-          stroke="#6b7280"
-          fontSize={11}
-          tickLine={false}
-          axisLine={false}
-          tickFormatter={tickFormatter}
-          minTickGap={60}
-        />
-        <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompact(v)} />
-        <Tooltip
-          {...TOOLTIP_STYLE}
-          labelFormatter={(v: number) => formatTooltipLabel(v)}
-          formatter={(value: number) => [formatCompact(value)]}
-        />
-        <Legend
-          verticalAlign="top"
-          iconType="circle"
-          wrapperStyle={{ fontSize: '11px', color: '#9ca3af', paddingBottom: '8px' }}
-          formatter={(value: string) => (value || 'Unknown').toUpperCase()}
-        />
-        {renderDayMarkers(dayMarkers)}
-        {keys.map((key, i) => (
-          <Area
-            key={key}
-            type="monotone"
-            dataKey={key}
-            stackId="1"
-            stroke={GROUP_COLORS[i % GROUP_COLORS.length]}
-            fill={GROUP_COLORS[i % GROUP_COLORS.length]}
-            fillOpacity={0.3}
-            name={key}
+    <>
+      <ClickableLegend
+        keys={keys}
+        hidden={hidden}
+        toggle={toggle}
+        colorFn={(_key, i) => GROUP_COLORS[i % GROUP_COLORS.length]}
+        labelFn={(key) => (key || 'Unknown').toUpperCase()}
+      />
+      <ResponsiveContainer width="100%" height={320}>
+        <AreaChart data={data} margin={{ top: 4, right: 10, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
+          <XAxis dataKey="ts" stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={tickFormatter} minTickGap={60} />
+          <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCompact(v)} />
+          <Tooltip
+            {...TOOLTIP_STYLE}
+            labelFormatter={(v: number) => formatTooltipLabel(v)}
+            formatter={(value: number) => [formatCompact(value)]}
           />
-        ))}
-      </AreaChart>
-    </ResponsiveContainer>
+          {renderDayMarkers(dayMarkers)}
+          {visibleKeys.map((key) => {
+            const origIdx = keys.indexOf(key);
+            return (
+              <Area key={key} type="monotone" dataKey={key} stackId="1" stroke={GROUP_COLORS[origIdx % GROUP_COLORS.length]} fill={GROUP_COLORS[origIdx % GROUP_COLORS.length]} fillOpacity={0.3} name={key} />
+            );
+          })}
+        </AreaChart>
+      </ResponsiveContainer>
+    </>
   );
 }
