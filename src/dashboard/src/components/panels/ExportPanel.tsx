@@ -57,7 +57,16 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
   const [copied, setCopied] = useState(false);
   const [excludeTiers, setExcludeTiers] = useState<string[]>([]);
   const [excludeLanguages, setExcludeLanguages] = useState<string[]>([]);
+  const [excludeChannelIds, setExcludeChannelIds] = useState<string[]>([]);
   const [showExclusions, setShowExclusions] = useState(false);
+  const [channelSearch, setChannelSearch] = useState('');
+  const [allChannels, setAllChannels] = useState<Array<{ id: string; display_name: string; platform: string }>>([]);
+
+  // Fetch channels for exclusion picker
+  useEffect(() => {
+    if (!seriesId || !showExclusions) return;
+    api.listChannels(seriesId, { is_active: true }).then(setAllChannels).catch(() => {});
+  }, [seriesId, showExclusions]);
 
   // Reset "Copied!" feedback after 2 seconds
   useEffect(() => {
@@ -189,6 +198,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
           viewGroup: resolvedViewGroup ? { name: resolvedViewGroup.name, languages: resolvedViewGroup.languages, platforms: resolvedViewGroup.platforms } : undefined,
           excludeTiers: excludeTiers.length > 0 ? excludeTiers : undefined,
           excludeLanguages: excludeLanguages.length > 0 ? excludeLanguages : undefined,
+          excludeChannelIds: excludeChannelIds.length > 0 ? excludeChannelIds : undefined,
         });
         const reportUrl = api.getReportUrl(result.filePath);
         window.open(reportUrl, '_blank', 'noopener,noreferrer');
@@ -304,9 +314,9 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
                 <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
               </svg>
               Exclude Filters
-              {(excludeTiers.length > 0 || excludeLanguages.length > 0) && (
+              {(excludeTiers.length > 0 || excludeLanguages.length > 0 || excludeChannelIds.length > 0) && (
                 <span className="rounded bg-clutch-red/20 px-1.5 py-0.5 text-[10px] text-clutch-red">
-                  {excludeTiers.length + excludeLanguages.length} active
+                  {excludeTiers.length + excludeLanguages.length + excludeChannelIds.length} active
                 </span>
               )}
             </button>
@@ -351,6 +361,38 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
                         </button>
                       );
                     })}
+                  </div>
+                </div>
+                <div className="sm:col-span-2">
+                  <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-wider text-gray-500">
+                    Exclude Channels {excludeChannelIds.length > 0 && `(${excludeChannelIds.length})`}
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="Search channels..."
+                    value={channelSearch}
+                    onChange={(e) => setChannelSearch(e.target.value)}
+                    className="mb-1.5 w-full rounded bg-navy-900 px-2 py-1 text-xs text-gray-300 placeholder-gray-600 border border-navy-700/50 focus:border-gray-500 focus:outline-none"
+                  />
+                  <div className="max-h-32 overflow-y-auto flex flex-wrap gap-1">
+                    {allChannels
+                      .filter((ch) => ch.display_name.toLowerCase().includes(channelSearch.toLowerCase()))
+                      .slice(0, 50)
+                      .map((ch) => {
+                        const active = excludeChannelIds.includes(ch.id);
+                        return (
+                          <button
+                            key={ch.id}
+                            onClick={() => setExcludeChannelIds(active ? excludeChannelIds.filter((v) => v !== ch.id) : [...excludeChannelIds, ch.id])}
+                            className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                              active ? 'bg-red-500/20 text-red-400 line-through' : 'bg-navy-700 text-gray-400 hover:text-gray-200'
+                            }`}
+                            title={`${ch.platform} · ${ch.display_name}`}
+                          >
+                            {ch.display_name}
+                          </button>
+                        );
+                      })}
                   </div>
                 </div>
               </div>
