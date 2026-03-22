@@ -66,12 +66,19 @@ export function DiscoveryFeedPanel({
       }
       return true;
     })
-    .sort(
-      (a, b) => new Date(b.added_at).getTime() - new Date(a.added_at).getTime(),
-    );
+    .sort((a, b) => {
+      // Re-surfaced channels (with last_seen_at) sort first by last_seen_at
+      const aLive = a.metadata?.last_seen_at as string | undefined;
+      const bLive = b.metadata?.last_seen_at as string | undefined;
+      if (aLive && !bLive) return -1;
+      if (!aLive && bLive) return 1;
+      if (aLive && bLive) return new Date(bLive).getTime() - new Date(aLive).getTime();
+      // Then by added_at
+      return new Date(b.added_at).getTime() - new Date(a.added_at).getTime();
+    });
 
-  // Take most recent 50
-  const recent = sorted.slice(0, 50);
+  // Take most recent 100
+  const recent = sorted.slice(0, 100);
 
   const handleClear = async () => {
     if (!confirmClear) {
