@@ -375,7 +375,7 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
      ) pc
      JOIN channels c ON c.id = pc.channel_id
      GROUP BY pc.channel_id, c.display_name, c.channel_identifier, c.tier, c.language, pc.platform
-     ORDER BY MAX(pc.channel_ccv) DESC
+     ORDER BY SUM(pc.channel_ccv) DESC
      LIMIT :limit`,
     { id: scope.id, limit, ...f.bindings },
   ).then((r: { rows: LeaderboardEntry[] }) => r.rows);

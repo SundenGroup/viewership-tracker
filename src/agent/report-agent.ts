@@ -1116,7 +1116,7 @@ export class ReportAgent {
     for (const ch of channelMap.values()) {
       ch.avgCCV = ch._minuteCount > 0 ? Math.round(ch._avgSum / ch._minuteCount) : 0;
     }
-    const sorted = [...channelMap.values()].sort((a, b) => b.peakCCV - a.peakCCV);
+    const sorted = [...channelMap.values()].sort((a, b) => b.totalViewedMinutes - a.totalViewedMinutes);
     const channelLeaderboard = isDetailed ? sorted : sorted.slice(0, 20);
 
     return {
