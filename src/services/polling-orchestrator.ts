@@ -251,6 +251,7 @@ export class PollingOrchestrator {
               .join('channels as c', 'c.id', 'cbd.channel_id')
               .where('c.series_id', sid)
               .where('c.is_active', true)
+              .where('c.source', 'auto_discovered')
               .whereNotExists(
                 this.db('channel_broadcast_days as cbd2')
                   .join('broadcast_days as bd', 'bd.id', 'cbd2.broadcast_day_id')
