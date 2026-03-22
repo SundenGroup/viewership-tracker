@@ -205,19 +205,8 @@ router.get('/:seriesId/channels', async (req: Request, res: Response, next: Next
     if (source && ['manual', 'auto_discovered'].includes(source as string)) {
       channels = channels.filter((ch) => ch.source === source);
     } else {
-      // Exclude only unapproved auto-discovered channels (never had a broadcast day, never tracked).
-      // Previously approved channels (auto_paused, has broadcast days, or manually disabled) stay visible.
-      const approvedIds = new Set(
-        (await db('channel_broadcast_days').select('channel_id')).map((r: { channel_id: string }) => r.channel_id),
-      );
-      channels = channels.filter(
-        (ch) => {
-          if (ch.source !== 'auto_discovered' || ch.is_active) return true;
-          // Show if auto_paused OR has broadcast day assignments (was previously approved)
-          const meta = ch.metadata as Record<string, unknown>;
-          return !!meta?.auto_paused || approvedIds.has(ch.id);
-        },
-      );
+      // Show all channels. The frontend handles active/inactive filtering via tabs.
+      // Discovery feed handles unapproved new discoveries separately.
     }
 
     // Attach broadcast_day_ids to each channel
