@@ -339,6 +339,49 @@ export class DiscoveryService {
       }
     }
 
+    // 6. Direct live-check for disabled channels not found via search
+    // Search APIs have result limits and may miss smaller channels
+    const uncheckedDisabled = disabledChannels.filter(
+      (ch) => !trackedSet.has(`${ch.platform}:${ch.channel_identifier.toLowerCase()}`),
+    );
+    if (uncheckedDisabled.length > 0) {
+      // Group by platform for batch checking
+      const byPlatform = new Map<string, typeof uncheckedDisabled>();
+      for (const ch of uncheckedDisabled) {
+        const list = byPlatform.get(ch.platform) ?? [];
+        list.push(ch);
+        byPlatform.set(ch.platform, list);
+      }
+
+      for (const [platform, channels] of byPlatform) {
+        try {
+          const adapter = this.registry.getAdapter(platform as PlatformName);
+          const identifiers = channels.map((ch) => ch.channel_identifier);
+          const snapshots = await adapter.getViewerCounts(identifiers);
+
+          for (const snap of snapshots) {
+            if (snap.isLive && snap.concurrentViewers > 0) {
+              const ch = channels.find(
+                (c) => c.channel_identifier.toLowerCase() === snap.channelIdentifier.toLowerCase(),
+              );
+              if (ch) {
+                const freshMeta: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
+                if (snap.title) freshMeta.stream_title = snap.title;
+                if (snap.concurrentViewers > 0) freshMeta.discovered_ccv = snap.concurrentViewers;
+                await this.db('channels').where('id', ch.id)
+                  .update({ metadata: this.db.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [JSON.stringify(freshMeta)]) });
+                logger.info(
+                  `[Discovery] Re-surfaced disabled channel ${snap.channelIdentifier} [${platform}] via direct check (${snap.concurrentViewers} viewers)`,
+                );
+              }
+            }
+          }
+        } catch (err) {
+          logger.debug(`[Discovery] Direct live-check failed for ${platform}`, { error: (err as Error).message });
+        }
+      }
+    }
+
     const duration = Date.now() - startTime;
 
     logger.info(
