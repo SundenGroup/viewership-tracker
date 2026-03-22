@@ -60,8 +60,8 @@ export function DiscoveryFeedPanel({
   // Sort by added_at descending (most recent first), filter out stale disabled channels
   const sorted = [...(channels ?? [])]
     .filter((ch) => {
-      // Hide disabled/promoted channels unless re-discovered streaming or auto-paused
-      if (!ch.is_active && ch.tier !== 'community' && !blocklist.includes(ch.channel_identifier)) {
+      // Hide disabled channels unless re-discovered streaming or auto-paused
+      if (!ch.is_active && !blocklist.includes(ch.channel_identifier)) {
         return !!ch.metadata?.last_seen_at || !!ch.metadata?.auto_paused;
       }
       return true;
@@ -252,9 +252,10 @@ function DiscoveryRow({
   // Distinguish between blocked (in blocklist) and disabled (just deactivated)
   const inBlocklist = blocklist.includes(channel.channel_identifier);
   const isBlocked = !actionDone && !channel.is_active && inBlocklist;
-  const isDisabled = !actionDone && !channel.is_active && channel.tier !== 'community' && !inBlocklist
-    && !!channel.metadata?.last_seen_at;
   const isAutoPaused = !actionDone && !channel.is_active && !!channel.metadata?.auto_paused;
+  const isDisabled = !actionDone && !channel.is_active && !inBlocklist
+    && !!channel.metadata?.last_seen_at
+    && (channel.tier !== 'community' || isAutoPaused);
 
   return (
     <div className="rounded-lg bg-navy-800/40 px-3 py-2 hover:bg-navy-800/60 transition-colors">
