@@ -1085,12 +1085,18 @@ export class ReportAgent {
       (e) => e.tier,
     );
 
-    // Merge channel leaderboards (take best per channel)
-    const channelMap = new Map<string, ChannelLeaderboardEntry>();
+    // Merge channel leaderboards — accumulate across all days
+    const channelMap = new Map<string, ChannelLeaderboardEntry & { _avgSum: number; _minuteCount: number }>();
     for (const m of metrics) {
       for (const ch of m.channelLeaderboard) {
+        const mins = ch.totalViewedMinutes ?? 0;
         const existing = channelMap.get(ch.channelId);
-        if (!existing || ch.peakCCV > existing.peakCCV) {
+        if (existing) {
+          existing.totalViewedMinutes += mins;
+          if (ch.peakCCV > existing.peakCCV) existing.peakCCV = ch.peakCCV;
+          existing._avgSum += ch.avgCCV * mins;
+          existing._minuteCount += mins;
+        } else {
           channelMap.set(ch.channelId, {
             channelId: ch.channelId,
             displayName: ch.displayName,
@@ -1099,10 +1105,16 @@ export class ReportAgent {
             language: ch.language,
             peakCCV: ch.peakCCV,
             avgCCV: ch.avgCCV,
-            totalViewedMinutes: ch.totalViewedMinutes ?? 0,
+            totalViewedMinutes: mins,
+            _avgSum: ch.avgCCV * mins,
+            _minuteCount: mins,
           });
         }
       }
+    }
+    // Finalize weighted averages
+    for (const ch of channelMap.values()) {
+      ch.avgCCV = ch._minuteCount > 0 ? Math.round(ch._avgSum / ch._minuteCount) : 0;
     }
     const sorted = [...channelMap.values()].sort((a, b) => b.peakCCV - a.peakCCV);
     const channelLeaderboard = isDetailed ? sorted : sorted.slice(0, 20);
