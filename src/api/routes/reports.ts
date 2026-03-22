@@ -32,7 +32,7 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       return;
     }
 
-    const { scope, id, ids, template, format, deliveryMethod, skipNarratives, detail, viewGroup } = req.body;
+    const { scope, id, ids, template, format, deliveryMethod, skipNarratives, detail, viewGroup, excludeTiers, excludeLanguages, excludeChannelIds } = req.body;
 
     // Validate scope
     if (!scope) {
@@ -77,13 +77,35 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
     }
 
     // Resolve view group to filter if provided
-    let filter: { languages?: string[]; platforms?: string[] } | undefined;
+    let filter: { languages?: string[]; platforms?: string[]; excludeTiers?: string[]; excludeLanguages?: string[]; excludeChannelIds?: string[] } | undefined;
     let groupName: string | undefined;
     if (viewGroup && typeof viewGroup === 'object' && viewGroup.name) {
       groupName = viewGroup.name;
       filter = {};
       if (viewGroup.languages?.length) filter.languages = viewGroup.languages;
       if (viewGroup.platforms?.length) filter.platforms = viewGroup.platforms;
+    }
+
+    // Apply exclusions
+    if (excludeTiers?.length || excludeLanguages?.length || excludeChannelIds?.length) {
+      if (!filter) filter = {};
+      if (excludeLanguages?.length) filter.excludeLanguages = excludeLanguages;
+      if (excludeChannelIds?.length) filter.excludeChannelIds = excludeChannelIds;
+      // Resolve tier exclusions to channel IDs
+      if (excludeTiers?.length) {
+        const db = (await import('../../utils/db')).default;
+        const seriesId = scope === 'day'
+          ? (await db('broadcast_days').where('id', id).first())?.series_id
+          : id;
+        if (seriesId) {
+          const excluded = await db('channels')
+            .where('series_id', seriesId)
+            .whereIn('tier', excludeTiers)
+            .select('id');
+          const tierChannelIds = excluded.map((c: { id: string }) => c.id);
+          filter.excludeChannelIds = [...(filter.excludeChannelIds ?? []), ...tierChannelIds];
+        }
+      }
     }
 
     // Full report generation

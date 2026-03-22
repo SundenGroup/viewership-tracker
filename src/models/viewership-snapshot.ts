@@ -39,6 +39,9 @@ export interface Scope {
 export interface ViewFilter {
   languages?: string[];
   platforms?: string[];
+  excludeTiers?: string[];
+  excludeLanguages?: string[];
+  excludeChannelIds?: string[];
 }
 
 /** Build conditional WHERE clauses for ViewFilter (raw SQL). */
@@ -52,6 +55,14 @@ export function buildFilterClauses(filter?: ViewFilter): { sql: string; bindings
   if (filter?.platforms?.length) {
     parts.push('AND platform = ANY(:filterPlatforms)');
     bindings.filterPlatforms = filter.platforms;
+  }
+  if (filter?.excludeLanguages?.length) {
+    parts.push("AND SPLIT_PART(language, '-', 1) != ALL(:excludeLanguages)");
+    bindings.excludeLanguages = filter.excludeLanguages;
+  }
+  if (filter?.excludeChannelIds?.length) {
+    parts.push('AND channel_id != ALL(:excludeChannelIds::uuid[])');
+    bindings.excludeChannelIds = filter.excludeChannelIds;
   }
   return { sql: parts.join(' '), bindings };
 }

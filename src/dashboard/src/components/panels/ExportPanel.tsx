@@ -35,6 +35,14 @@ const FORMAT_OPTIONS = [
   { value: 'report', label: 'Report (PDF-ready)' },
 ];
 
+const TIER_OPTIONS = [
+  { value: 'official', label: 'Official' },
+  { value: 'partner', label: 'Partner' },
+  { value: 'watch_party', label: 'Watch Party' },
+  { value: 'player', label: 'Player' },
+  { value: 'community', label: 'Community' },
+];
+
 export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
   const [scope, setScope] = useState<ScopeLevel>('series');
   const [entityId, setEntityId] = useState<string>(seriesId);
@@ -47,6 +55,9 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
   const [reportData, setReportData] = useState<ReportPayload | null>(null);
   const [publicReportUrl, setPublicReportUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [excludeTiers, setExcludeTiers] = useState<string[]>([]);
+  const [excludeLanguages, setExcludeLanguages] = useState<string[]>([]);
+  const [showExclusions, setShowExclusions] = useState(false);
 
   // Reset "Copied!" feedback after 2 seconds
   useEffect(() => {
@@ -176,6 +187,8 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
           skipNarratives: false,
           detail,
           viewGroup: resolvedViewGroup ? { name: resolvedViewGroup.name, languages: resolvedViewGroup.languages, platforms: resolvedViewGroup.platforms } : undefined,
+          excludeTiers: excludeTiers.length > 0 ? excludeTiers : undefined,
+          excludeLanguages: excludeLanguages.length > 0 ? excludeLanguages : undefined,
         });
         const reportUrl = api.getReportUrl(result.filePath);
         window.open(reportUrl, '_blank', 'noopener,noreferrer');
@@ -277,6 +290,71 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
             <span className="text-[10px] text-gray-600">
               {detail === 'detailed' ? 'All channels included' : 'Top channels only'}
             </span>
+          </div>
+        )}
+
+        {/* Exclusions — collapsible */}
+        {(format === 'html' || format === 'report') && (
+          <div>
+            <button
+              onClick={() => setShowExclusions(!showExclusions)}
+              className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              <svg className={`h-3 w-3 transition-transform ${showExclusions ? '' : '-rotate-90'}`} viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+              </svg>
+              Exclude Filters
+              {(excludeTiers.length > 0 || excludeLanguages.length > 0) && (
+                <span className="rounded bg-clutch-red/20 px-1.5 py-0.5 text-[10px] text-clutch-red">
+                  {excludeTiers.length + excludeLanguages.length} active
+                </span>
+              )}
+            </button>
+            {showExclusions && (
+              <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 rounded-lg border border-navy-700/50 bg-navy-800/40 p-3">
+                <div>
+                  <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-wider text-gray-500">Exclude Categories</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {TIER_OPTIONS.map((t) => {
+                      const active = excludeTiers.includes(t.value);
+                      return (
+                        <button
+                          key={t.value}
+                          onClick={() => setExcludeTiers(active ? excludeTiers.filter((v) => v !== t.value) : [...excludeTiers, t.value])}
+                          className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                            active ? 'bg-red-500/20 text-red-400 line-through' : 'bg-navy-700 text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          {t.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-wider text-gray-500">Exclude Languages</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {['EN', 'RU', 'TR', 'VI', 'TH', 'KO', 'PT', 'DE', 'ES', 'FR', 'AR', 'UA', 'HU', 'FI', 'SE', 'DK', 'AL'].map((lang) => {
+                      const active = excludeLanguages.includes(lang.toLowerCase());
+                      return (
+                        <button
+                          key={lang}
+                          onClick={() => {
+                            const lc = lang.toLowerCase();
+                            setExcludeLanguages(active ? excludeLanguages.filter((v) => v !== lc) : [...excludeLanguages, lc]);
+                          }}
+                          className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                            active ? 'bg-red-500/20 text-red-400 line-through' : 'bg-navy-700 text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          {lang}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

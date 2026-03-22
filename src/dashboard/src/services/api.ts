@@ -392,6 +392,9 @@ export interface GenerateReportParams {
   skipNarratives?: boolean;
   detail?: 'simple' | 'detailed';
   viewGroup?: { name: string; languages?: string[]; platforms?: string[] };
+  excludeTiers?: string[];
+  excludeLanguages?: string[];
+  excludeChannelIds?: string[];
 }
 
 export interface GenerateReportResult {
