@@ -248,7 +248,7 @@ export class ReportAgent {
       const tmpPath = await builder.buildHTML(htmlData);
 
       // 6. Handle delivery
-      finalPath = await this.handleDelivery(tmpPath, payload, scope, format, deliveryMethod, request.groupName);
+      finalPath = await this.handleDelivery(tmpPath, payload, scope, format, deliveryMethod, request.groupName, request.filter);
     } else {
       // ── PDF / DOCX: Python subprocess with matplotlib charts ──────────
       // 3. Generate charts
@@ -283,7 +283,7 @@ export class ReportAgent {
       });
 
       // 6. Handle delivery
-      finalPath = await this.handleDelivery(tmpPath, payload, scope, format, deliveryMethod, request.groupName);
+      finalPath = await this.handleDelivery(tmpPath, payload, scope, format, deliveryMethod, request.groupName, request.filter);
 
       // 7. Cleanup temp files
       await chartGenerator.cleanup();
@@ -1298,6 +1298,7 @@ Respond with ONLY the JSON object, no markdown code blocks.`;
     format: string,
     method: DeliveryMethod,
     groupName?: string,
+    filter?: { excludeTiers?: string[]; excludeLanguages?: string[]; excludeChannelIds?: string[] },
   ): Promise<string> {
     const shortName = (payload.series.shortName ?? payload.series.name)
       .replace(/[^a-zA-Z0-9_-]/g, '_')
@@ -1316,7 +1317,13 @@ Respond with ONLY the JSON object, no markdown code blocks.`;
     const groupSuffix = groupName
       ? `_${groupName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase()}`
       : '';
-    const filename = `${scope}_${dateSuffix}${groupSuffix}.${format}`;
+    // Build exclusion suffix so different filter combos get unique filenames
+    const excludeParts: string[] = [];
+    if (filter?.excludeTiers?.length) excludeParts.push(`xt-${filter.excludeTiers.join('-')}`);
+    if (filter?.excludeLanguages?.length) excludeParts.push(`xl-${filter.excludeLanguages.join('-')}`);
+    if (filter?.excludeChannelIds?.length) excludeParts.push(`xc-${filter.excludeChannelIds.length}`);
+    const excludeSuffix = excludeParts.length > 0 ? `_${excludeParts.join('_')}` : '';
+    const filename = `${scope}_${dateSuffix}${groupSuffix}${excludeSuffix}.${format}`;
 
     switch (method) {
       case 'local': {
