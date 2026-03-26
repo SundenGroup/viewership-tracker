@@ -42,10 +42,11 @@ function sortChannels(channels: Channel[], { field, dir }: SortState): Channel[]
 interface ChannelListPanelProps {
   seriesId: string | undefined;
   broadcastDays: BroadcastDay[];
+  dayLabelMap?: Map<string, string>;
   refreshKey?: number;
 }
 
-export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: ChannelListPanelProps) {
+export function ChannelListPanel({ seriesId, broadcastDays, dayLabelMap, refreshKey = 0 }: ChannelListPanelProps) {
   const { hasRole } = useAuth();
   const canEdit = hasRole('editor');
   const canDelete = hasRole('admin');
@@ -81,8 +82,8 @@ export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: Ch
 
   const sorted = sortChannels(filtered, sort);
 
-  // Build a quick lookup: dayId → label
-  const dayLabelMap = new Map(broadcastDays.map((d) => [d.id, d.label]));
+  // Build a quick lookup: dayId → label (use provided map or fallback)
+  const effectiveDayLabelMap = dayLabelMap ?? new Map(broadcastDays.map((d) => [d.id, d.label]));
 
   const action = (
     <div className="flex items-center gap-2">
@@ -186,7 +187,7 @@ export function ChannelListPanel({ seriesId, broadcastDays, refreshKey = 0 }: Ch
                   channel={ch}
                   seriesId={seriesId}
                   broadcastDays={broadcastDays}
-                  dayLabelMap={dayLabelMap}
+                  dayLabelMap={effectiveDayLabelMap}
                   onRefresh={refetch}
                   canEdit={canEdit}
                   canDelete={canDelete}

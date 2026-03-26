@@ -84,6 +84,19 @@ export function DashboardPage({
     return seriesDetail.stages.flatMap((s) => s.broadcast_days);
   }, [seriesDetail]);
 
+  // Build day label map with stage prefix when multiple stages exist
+  const dayLabelMap = useMemo(() => {
+    if (!seriesDetail) return new Map<string, string>();
+    const map = new Map<string, string>();
+    for (const stage of seriesDetail.stages) {
+      for (const day of stage.broadcast_days) {
+        const label = hasMultipleStages ? `${stage.name} ${day.label}` : day.label;
+        map.set(day.id, label);
+      }
+    }
+    return map;
+  }, [seriesDetail, hasMultipleStages]);
+
   // Derive resolved scope
   const dashboardScope = useMemo((): { level: ScopeLevel; id: string; label: string } | null => {
     if (!seriesId || !seriesDetail) return null;
@@ -277,7 +290,7 @@ export function DashboardPage({
 
       {/* Row 4: All Channels — editor+ only */}
       {canManage && (
-        <ChannelListPanel seriesId={seriesId} broadcastDays={allBroadcastDays} refreshKey={channelRefreshKey} />
+        <ChannelListPanel seriesId={seriesId} broadcastDays={allBroadcastDays} dayLabelMap={dayLabelMap} refreshKey={channelRefreshKey} />
       )}
 
       {/* Row 5: Discovery Feed — editor+ only */}
