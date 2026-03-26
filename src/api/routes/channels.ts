@@ -492,7 +492,7 @@ router.put('/channels/:id/active', requireRole('admin', 'editor'), async (req: R
 });
 
 // PATCH /api/channels/:id/promote — Promote auto-discovered channel to manual (editor+)
-router.patch(':id/promote', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/channels/:id/promote', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const existing = await ChannelModel.findById(req.params.id as string);
     if (!existing) {
