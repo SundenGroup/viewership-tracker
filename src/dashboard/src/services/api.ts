@@ -233,6 +233,12 @@ export function updateChannelDays(channelId: string, broadcastDayIds: string[]) 
   });
 }
 
+export function promoteToManual(channelId: string) {
+  return request<Channel>(`/api/channels/${channelId}/promote`, {
+    method: 'PATCH',
+  });
+}
+
 // ── Viewership ────────────────────────────────────────────────────────────
 
 /** Append comma-separated filter arrays to URL params when present. */

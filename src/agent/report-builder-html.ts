@@ -1180,7 +1180,7 @@ function renderTable(data) {
       '<td style="font-weight:600">' + s.name + '</td>' +
       '<td style="text-align:center"><span class="badge"><span class="dot ' + dotClass + '"></span>' + platName + '</span></td>' +
       '<td style="text-align:center"><span class="tag ' + tagClass + '">' + s.tier + '</span></td>' +
-      '<td style="text-align:center">' + s.lang + '</td>' +
+      '<td style="text-align:center"><span style="background:#1e2530;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:500;color:#9ca3af">' + s.lang + '</span></td>' +
       '<td>' + s.avg.toLocaleString() + '</td>' +
       '<td>' + s.peak.toLocaleString() + '</td>' +
       '<td>' + s.vh.toLocaleString() + '</td>' +

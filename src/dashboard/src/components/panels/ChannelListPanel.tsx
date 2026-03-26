@@ -266,6 +266,18 @@ function ChannelRow({
     }
   };
 
+  const handlePromote = async () => {
+    setActing(true);
+    try {
+      await api.promoteToManual(channel.id);
+      onRefresh();
+    } catch {
+      // Silently fail
+    } finally {
+      setActing(false);
+    }
+  };
+
   const handleSaveEdit = async () => {
     setActing(true);
     try {
@@ -503,6 +515,17 @@ function ChannelRow({
             >
               {channel.is_active ? 'Disable' : 'Enable'}
             </Button>
+            {channel.source === 'auto_discovered' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handlePromote}
+                loading={acting}
+                title="Promote to manual channel (tracked all days, never auto-paused)"
+              >
+                Manual
+              </Button>
+            )}
             {channel.source === 'auto_discovered' && channel.is_active && (
               <Button
                 variant="danger"

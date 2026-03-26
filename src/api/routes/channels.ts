@@ -491,4 +491,34 @@ router.put('/channels/:id/active', requireRole('admin', 'editor'), async (req: R
   }
 });
 
+// PATCH /api/channels/:id/promote — Promote auto-discovered channel to manual (editor+)
+router.patch(':id/promote', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const existing = await ChannelModel.findById(req.params.id as string);
+    if (!existing) {
+      res.status(404).json({ error: 'Channel not found' });
+      return;
+    }
+    if (existing.source !== 'auto_discovered') {
+      res.status(400).json({ error: 'Channel is already manual' });
+      return;
+    }
+
+    await db('channels')
+      .where('id', req.params.id as string)
+      .update({
+        source: 'manual',
+        metadata: db.raw("COALESCE(metadata, '{}'::jsonb) - 'auto_paused' - 'auto_paused_at'"),
+      });
+
+    // Remove day assignments so it becomes "All Days"
+    await db('channel_broadcast_days').where('channel_id', req.params.id as string).del();
+
+    const updated = await ChannelModel.findById(req.params.id as string);
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
