@@ -497,11 +497,11 @@ export class DiscoveryService {
       .select('id');
     if (liveDays.length > 0) {
       const liveDayIds = liveDays.map((d: { id: string }) => d.id);
-      // Clear existing day assignments and set to current live day(s)
-      await this.db('channel_broadcast_days').where('channel_id', channelId).del();
-      await this.db('channel_broadcast_days').insert(
-        liveDayIds.map((dayId: string) => ({ channel_id: channelId, broadcast_day_id: dayId })),
-      );
+      // Add current live day(s) — preserves existing historical day tags
+      await this.db('channel_broadcast_days')
+        .insert(liveDayIds.map((dayId: string) => ({ channel_id: channelId, broadcast_day_id: dayId })))
+        .onConflict(['channel_id', 'broadcast_day_id'])
+        .ignore();
     }
 
     logger.info(
