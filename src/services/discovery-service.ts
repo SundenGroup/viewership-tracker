@@ -210,7 +210,7 @@ export class DiscoveryService {
       .where('is_active', false)
       .where(function () {
         this.where('source', 'auto_discovered')
-          .orWhereRaw("metadata->>'auto_paused' = 'true'");
+          .orWhereRaw("metadata->'auto_paused' = 'true'::jsonb");
       })
       .select('id', 'platform', 'channel_identifier');
 

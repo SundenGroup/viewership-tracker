@@ -353,6 +353,38 @@ export class PollingOrchestrator {
           }
         }
       }
+
+      // ── Periodic sweep: catch orphaned auto-discovered channels ──────
+      // Runs every cycle to catch channels that missed the transition auto-pause
+      // (e.g. due to deploy, restart, or race condition)
+      const orphaned = await this.db('channels')
+        .where('is_active', true)
+        .where('source', 'auto_discovered')
+        .whereExists(
+          this.db('channel_broadcast_days')
+            .whereRaw('channel_broadcast_days.channel_id = channels.id'),
+        )
+        .whereNotExists(
+          this.db('channel_broadcast_days as cbd2')
+            .join('broadcast_days as bd', 'bd.id', 'cbd2.broadcast_day_id')
+            .whereRaw('cbd2.channel_id = channels.id')
+            .whereIn('bd.status', ['scheduled', 'live']),
+        )
+        .select('id');
+
+      if (orphaned.length > 0) {
+        const orphanIds = orphaned.map((r: { id: string }) => r.id);
+        await this.db('channels')
+          .whereIn('id', orphanIds)
+          .update({
+            is_active: false,
+            metadata: this.db.raw(
+              `COALESCE(metadata, '{}'::jsonb) || ?::jsonb`,
+              [JSON.stringify({ auto_paused: true, auto_paused_at: new Date().toISOString() })],
+            ),
+          });
+        logger.info(`[Poll] Periodic sweep: auto-paused ${orphanIds.length} orphaned auto-discovered channel(s)`);
+      }
     } catch (err) {
       logger.error('[Poll] Failed to transition broadcast day statuses', {
         error: (err as Error).message,
