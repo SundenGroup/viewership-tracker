@@ -122,17 +122,46 @@ export function formatTimeAgo(iso: string | null | undefined): string {
 
 // ── Timezone-aware Formatting ─────────────────────────────────────────────
 
+/** Map Intl long timezone names to common abbreviations (DST-aware) */
+const LONG_TZ_TO_ABBR: Record<string, string> = {
+  'Central European Standard Time': 'CET',
+  'Central European Summer Time': 'CEST',
+  'Eastern European Standard Time': 'EET',
+  'Eastern European Summer Time': 'EEST',
+  'Greenwich Mean Time': 'GMT',
+  'British Summer Time': 'BST',
+  'Eastern Standard Time': 'EST',
+  'Eastern Daylight Time': 'EDT',
+  'Central Standard Time': 'CST',
+  'Central Daylight Time': 'CDT',
+  'Mountain Standard Time': 'MST',
+  'Mountain Daylight Time': 'MDT',
+  'Pacific Standard Time': 'PST',
+  'Pacific Daylight Time': 'PDT',
+  'Japan Standard Time': 'JST',
+  'Korean Standard Time': 'KST',
+  'Moscow Standard Time': 'MSK',
+};
+
 /**
- * Get the short timezone abbreviation (e.g. "MSK", "EST", "PDT") for a
- * given date in a given IANA timezone.
+ * Get the short timezone abbreviation (e.g. "CEST", "EST", "PDT") for a
+ * given date in a given IANA timezone. DST-aware.
  */
 function getTimezoneAbbr(date: Date, timezone: string): string {
   try {
-    const parts = new Intl.DateTimeFormat('en-US', {
+    const longParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'long',
+    }).formatToParts(date);
+    const longName = longParts.find((p) => p.type === 'timeZoneName')?.value ?? '';
+    const mapped = LONG_TZ_TO_ABBR[longName];
+    if (mapped) return mapped;
+
+    const shortParts = new Intl.DateTimeFormat('en-US', {
       timeZone: timezone,
       timeZoneName: 'short',
     }).formatToParts(date);
-    return parts.find((p) => p.type === 'timeZoneName')?.value ?? timezone;
+    return shortParts.find((p) => p.type === 'timeZoneName')?.value ?? timezone;
   } catch {
     return timezone;
   }

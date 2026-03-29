@@ -148,48 +148,53 @@ function formatTimeHHMM(isoStr: string, timezone?: string): string {
   return d.toISOString().slice(11, 16);
 }
 
-/** Map IANA timezone to well-known public abbreviation */
-const TZ_ABBR_MAP: Record<string, string> = {
-  // Central European
-  'Europe/Stockholm': 'CET', 'Europe/Berlin': 'CET', 'Europe/Paris': 'CET',
-  'Europe/Amsterdam': 'CET', 'Europe/Brussels': 'CET', 'Europe/Rome': 'CET',
-  'Europe/Madrid': 'CET', 'Europe/Vienna': 'CET', 'Europe/Warsaw': 'CET',
-  'Europe/Oslo': 'CET', 'Europe/Copenhagen': 'CET', 'Europe/Zurich': 'CET',
-  'Europe/Prague': 'CET', 'Europe/Budapest': 'CET',
-  // Eastern European
-  'Europe/Helsinki': 'EET', 'Europe/Bucharest': 'EET', 'Europe/Athens': 'EET',
-  'Europe/Kiev': 'EET', 'Europe/Sofia': 'EET',
-  // UK / Western European
-  'Europe/London': 'GMT', 'Europe/Dublin': 'GMT', 'Europe/Lisbon': 'WET',
-  // US
-  'America/New_York': 'EST', 'America/Chicago': 'CST', 'America/Denver': 'MST',
-  'America/Los_Angeles': 'PST',
-  // Asia
-  'Asia/Tokyo': 'JST', 'Asia/Seoul': 'KST', 'Asia/Shanghai': 'CST',
-  'Asia/Singapore': 'SGT', 'Asia/Bangkok': 'ICT', 'Asia/Kolkata': 'IST',
-  // Brazil
-  'America/Sao_Paulo': 'BRT',
-  // Australia
-  'Australia/Sydney': 'AEST', 'Australia/Melbourne': 'AEST',
-  // Moscow
-  'Europe/Moscow': 'MSK',
+/** Map Intl long timezone names to common abbreviations (DST-aware) */
+const LONG_TZ_TO_ABBR: Record<string, string> = {
+  'Central European Standard Time': 'CET',
+  'Central European Summer Time': 'CEST',
+  'Eastern European Standard Time': 'EET',
+  'Eastern European Summer Time': 'EEST',
+  'Western European Standard Time': 'WET',
+  'Western European Summer Time': 'WEST',
+  'Greenwich Mean Time': 'GMT',
+  'British Summer Time': 'BST',
+  'Eastern Standard Time': 'EST',
+  'Eastern Daylight Time': 'EDT',
+  'Central Standard Time': 'CST',
+  'Central Daylight Time': 'CDT',
+  'Mountain Standard Time': 'MST',
+  'Mountain Daylight Time': 'MDT',
+  'Pacific Standard Time': 'PST',
+  'Pacific Daylight Time': 'PDT',
+  'Japan Standard Time': 'JST',
+  'Korean Standard Time': 'KST',
+  'China Standard Time': 'CST',
+  'Singapore Standard Time': 'SGT',
+  'Indochina Time': 'ICT',
+  'India Standard Time': 'IST',
+  'Moscow Standard Time': 'MSK',
+  'Australian Eastern Standard Time': 'AEST',
+  'Australian Eastern Daylight Time': 'AEDT',
+  'Brasilia Standard Time': 'BRT',
 };
 
 function getTzAbbr(timezone: string): string {
-  // Check well-known mapping first
-  const mapped = TZ_ABBR_MAP[timezone];
-  if (mapped) return mapped;
-
-  // Fallback to Intl
   try {
-    const parts = new Intl.DateTimeFormat('en-US', {
+    // Use Intl with 'long' to get DST-aware name, then map to abbreviation
+    const longParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'long',
+    }).formatToParts(new Date());
+    const longName = longParts.find((p) => p.type === 'timeZoneName')?.value ?? '';
+    const mapped = LONG_TZ_TO_ABBR[longName];
+    if (mapped) return mapped;
+
+    // Fallback to short format
+    const shortParts = new Intl.DateTimeFormat('en-US', {
       timeZone: timezone,
       timeZoneName: 'short',
     }).formatToParts(new Date());
-    const raw = parts.find((p) => p.type === 'timeZoneName')?.value ?? timezone;
-    // If Intl returns "GMT+X", try to return a friendlier name
-    if (raw.startsWith('GMT+') || raw.startsWith('GMT-')) return raw;
-    return raw;
+    return shortParts.find((p) => p.type === 'timeZoneName')?.value ?? timezone;
   } catch {
     return timezone;
   }
