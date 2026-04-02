@@ -358,7 +358,7 @@ function DiscoveryRow({
         )}
         <span>{channel.channel_identifier}</span>
         <span>&middot;</span>
-        <span>{formatTimeAgo(channel.added_at)}</span>
+        <span>{formatTimeAgo((channel.metadata?.last_seen_at as string) ?? channel.added_at)}</span>
         {actionError && (
           <span className="ml-1 text-accent-red">&middot; {actionError}</span>
         )}
