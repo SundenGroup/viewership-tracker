@@ -13,6 +13,7 @@ export interface DiscoveryResult {
   timestamp: Date;
   discovered: number;
   added: number;
+  resurfaced: number;
   alreadyTracked: number;
   belowThreshold: number;
   blocked: number;
@@ -252,6 +253,7 @@ export class DiscoveryService {
     // 5. Process all discovered streams
     let discovered = 0;
     let added = 0;
+    let resurfaced = 0;
     let alreadyTracked = 0;
     let belowThreshold = 0;
     let blocked = 0;
@@ -290,6 +292,7 @@ export class DiscoveryService {
             await this.db('channels').where('id', disabledId)
               .update({ metadata: this.db.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [JSON.stringify(freshMeta)]) });
             trackedSet.add(lookupKey);
+            resurfaced++;
             logger.info(
               `[Discovery] Re-surfaced disabled channel ${stream.displayName} [${platform}] (${stream.concurrentViewers} viewers)`,
             );
@@ -370,6 +373,7 @@ export class DiscoveryService {
                 if (snap.concurrentViewers > 0) freshMeta.discovered_ccv = snap.concurrentViewers;
                 await this.db('channels').where('id', ch.id)
                   .update({ metadata: this.db.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [JSON.stringify(freshMeta)]) });
+                resurfaced++;
                 logger.info(
                   `[Discovery] Re-surfaced disabled channel ${snap.channelIdentifier} [${platform}] via direct check (${snap.concurrentViewers} viewers)`,
                 );
@@ -385,7 +389,7 @@ export class DiscoveryService {
     const duration = Date.now() - startTime;
 
     logger.info(
-      `[Discovery] Cycle for ${series.name}: ${discovered} discovered, ${added} added, ` +
+      `[Discovery] Cycle for ${series.name}: ${discovered} discovered, ${added} added, ${resurfaced} resurfaced, ` +
       `${alreadyTracked} already tracked, ${belowThreshold} below threshold, ${blocked} blocked, ${duration}ms`,
     );
 
@@ -394,6 +398,7 @@ export class DiscoveryService {
       timestamp,
       discovered,
       added,
+      resurfaced,
       alreadyTracked,
       belowThreshold,
       blocked,
@@ -403,8 +408,8 @@ export class DiscoveryService {
 
     this.lastResults.set(seriesId, result);
 
-    // Broadcast discovery result via WebSocket
-    if (this.discoveryBroadcast && added > 0) {
+    // Broadcast discovery result via WebSocket (trigger on new or resurfaced channels)
+    if (this.discoveryBroadcast && (added > 0 || resurfaced > 0)) {
       try {
         this.discoveryBroadcast(result);
       } catch (err) {

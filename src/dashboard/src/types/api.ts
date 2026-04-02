@@ -329,6 +329,7 @@ export interface DiscoveryResult {
   timestamp: string;
   discovered: number;
   added: number;
+  resurfaced: number;
   alreadyTracked: number;
   belowThreshold: number;
   blocked: number;

@@ -103,6 +103,9 @@ export function DiscoveryFeedPanel({
       {lastDiscoveryResult && (
         <div className="flex items-center gap-2 text-xs text-gray-500">
           <span>+{lastDiscoveryResult.added} new</span>
+          {(lastDiscoveryResult.resurfaced ?? 0) > 0 && (
+            <span>+{lastDiscoveryResult.resurfaced} updated</span>
+          )}
           <span className="text-gray-700">|</span>
           <span>{formatTimeAgo(lastDiscoveryResult.timestamp)}</span>
         </div>
