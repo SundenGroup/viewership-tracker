@@ -221,15 +221,22 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
 export async function getPeakCCV(scope: Scope, filter?: ViewFilter): Promise<PeakCCVResult | null> {
   const col = scopeColumnBare(scope);
   const f = buildFilterClauses(filter);
+  // Bucket by minute, pick MAX CCV per poll cycle per channel, then SUM across channels.
   const result = await db.raw(
-    `SELECT "timestamp", SUM(channel_ccv)::text AS total_ccv
+    `SELECT minute_bucket AS "timestamp", SUM(channel_ccv)::text AS total_ccv
      FROM (
-       SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS channel_ccv
-       FROM viewership_snapshots
-       WHERE "${col}" = :id ${f.sql}
-       GROUP BY "timestamp", channel_id
+       SELECT minute_bucket, channel_id, MAX(cycle_ccv) AS channel_ccv
+       FROM (
+         SELECT date_trunc('minute', "timestamp") AS minute_bucket,
+                "timestamp" AS poll_ts, channel_id,
+                SUM(concurrent_viewers) AS cycle_ccv
+         FROM viewership_snapshots
+         WHERE "${col}" = :id ${f.sql}
+         GROUP BY minute_bucket, poll_ts, channel_id
+       ) per_cycle
+       GROUP BY minute_bucket, channel_id
      ) per_channel
-     GROUP BY "timestamp"
+     GROUP BY minute_bucket
      ORDER BY SUM(channel_ccv) DESC
      LIMIT 1`,
     { id: scope.id, ...f.bindings },
@@ -240,17 +247,24 @@ export async function getPeakCCV(scope: Scope, filter?: ViewFilter): Promise<Pea
 export async function getAverageCCV(scope: Scope, filter?: ViewFilter): Promise<string> {
   const col = scopeColumnBare(scope);
   const f = buildFilterClauses(filter);
+  // Bucket by minute, MAX CCV per channel per minute, then AVG of per-minute totals.
   const result = await db.raw(
     `SELECT ROUND(AVG(ts_total))::text AS avg_ccv
      FROM (
-       SELECT "timestamp", SUM(channel_ccv) AS ts_total
+       SELECT minute_bucket, SUM(channel_ccv) AS ts_total
        FROM (
-         SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS channel_ccv
-         FROM viewership_snapshots
-         WHERE "${col}" = :id ${f.sql}
-         GROUP BY "timestamp", channel_id
+         SELECT minute_bucket, channel_id, MAX(cycle_ccv) AS channel_ccv
+         FROM (
+           SELECT date_trunc('minute', "timestamp") AS minute_bucket,
+                  "timestamp" AS poll_ts, channel_id,
+                  SUM(concurrent_viewers) AS cycle_ccv
+           FROM viewership_snapshots
+           WHERE "${col}" = :id ${f.sql}
+           GROUP BY minute_bucket, poll_ts, channel_id
+         ) per_cycle
+         GROUP BY minute_bucket, channel_id
        ) per_channel
-       GROUP BY "timestamp"
+       GROUP BY minute_bucket
      ) per_ts`,
     { id: scope.id, ...f.bindings },
   ).then((r: { rows: Array<{ avg_ccv: string | null }> }) => r.rows[0]);
@@ -260,13 +274,20 @@ export async function getAverageCCV(scope: Scope, filter?: ViewFilter): Promise<
 export async function getTotalViewedHours(scope: Scope, filter?: ViewFilter): Promise<string> {
   const col = scopeColumnBare(scope);
   const f = buildFilterClauses(filter);
+  // Bucket by minute, MAX CCV per channel per minute, then SUM all for total viewer-minutes.
   const result = await db.raw(
     `SELECT SUM(channel_ccv) AS total_viewer_minutes
      FROM (
-       SELECT "timestamp", channel_id, MAX(concurrent_viewers) AS channel_ccv
-       FROM viewership_snapshots
-       WHERE "${col}" = :id ${f.sql}
-       GROUP BY "timestamp", channel_id
+       SELECT minute_bucket, channel_id, MAX(cycle_ccv) AS channel_ccv
+       FROM (
+         SELECT date_trunc('minute', "timestamp") AS minute_bucket,
+                "timestamp" AS poll_ts, channel_id,
+                SUM(concurrent_viewers) AS cycle_ccv
+         FROM viewership_snapshots
+         WHERE "${col}" = :id ${f.sql}
+         GROUP BY minute_bucket, poll_ts, channel_id
+       ) per_cycle
+       GROUP BY minute_bucket, channel_id
      ) per_channel`,
     { id: scope.id, ...f.bindings },
   ).then((r: { rows: Array<{ total_viewer_minutes: string | null }> }) => r.rows[0]);
@@ -275,9 +296,9 @@ export async function getTotalViewedHours(scope: Scope, filter?: ViewFilter): Pr
 }
 
 /**
- * Two-level breakdown query: first sums all channel CCVs per (timestamp, group)
- * to get per-timestamp group totals, then computes AVG and MAX of those totals.
- * This gives the correct average and peak CCV for each group (platform/language/region).
+ * Three-level breakdown query: bucket by minute, MAX CCV per channel per minute,
+ * then per-minute group totals, then AVG/MAX of those totals per group.
+ * Works correctly with both 1x and 2x-per-minute polling.
  */
 async function getBreakdown(scope: Scope, dimension: string, filter?: ViewFilter): Promise<BreakdownResult[]> {
   const col = scopeColumnBare(scope);
@@ -288,15 +309,22 @@ async function getBreakdown(scope: Scope, dimension: string, filter?: ViewFilter
        ROUND(AVG(ts_total))::text AS avg_ccv,
        MAX(ts_total)::text AS peak_ccv
      FROM (
-       SELECT "timestamp", group_key, SUM(channel_ccv) AS ts_total
+       SELECT minute_bucket, group_key, SUM(channel_ccv) AS ts_total
        FROM (
-         SELECT "timestamp", channel_id, "${dimension}" AS group_key,
-           MAX(concurrent_viewers) AS channel_ccv
-         FROM viewership_snapshots
-         WHERE "${col}" = :id ${f.sql}
-         GROUP BY "timestamp", channel_id, "${dimension}"
+         SELECT minute_bucket, channel_id, group_key,
+           MAX(cycle_ccv) AS channel_ccv
+         FROM (
+           SELECT date_trunc('minute', "timestamp") AS minute_bucket,
+                  "timestamp" AS poll_ts, channel_id,
+                  "${dimension}" AS group_key,
+                  SUM(concurrent_viewers) AS cycle_ccv
+           FROM viewership_snapshots
+           WHERE "${col}" = :id ${f.sql}
+           GROUP BY minute_bucket, poll_ts, channel_id, "${dimension}"
+         ) per_cycle
+         GROUP BY minute_bucket, channel_id, group_key
        ) per_channel
-       GROUP BY "timestamp", group_key
+       GROUP BY minute_bucket, group_key
      ) per_ts
      GROUP BY group_key
      ORDER BY SUM(ts_total) DESC`,
@@ -317,32 +345,36 @@ export async function getRegionBreakdown(scope: Scope, filter?: ViewFilter): Pro
 }
 
 /**
- * Category/tier breakdown: joins channels to get tier, then applies the same
- * two-level aggregation (per-timestamp tier totals → AVG/MAX per tier).
+ * Category/tier breakdown: joins channels to get tier, then buckets by minute,
+ * MAX CCV per channel per minute, then per-minute tier totals → AVG/MAX per tier.
  */
 export async function getTierBreakdown(scope: Scope, filter?: ViewFilter): Promise<BreakdownResult[]> {
   const col = scopeColumnBare(scope);
   const f = buildFilterClauses(filter);
-  // Tier filter clauses need vs. prefix — rewrite filter SQL with alias
   const fSql = f.sql.replace(/\blanguage\b/g, 'vs.language').replace(/\bplatform\b/g, 'vs.platform');
-  // Three-level query: deduplicate per (timestamp, channel_id) using MAX,
-  // then sum per (timestamp, tier), then aggregate per tier.
   return db.raw(
     `SELECT group_key AS key,
        SUM(ts_total)::text AS total_ccv,
        ROUND(AVG(ts_total))::text AS avg_ccv,
        MAX(ts_total)::text AS peak_ccv
      FROM (
-       SELECT "timestamp", group_key, SUM(channel_ccv) AS ts_total
+       SELECT minute_bucket, group_key, SUM(channel_ccv) AS ts_total
        FROM (
-         SELECT vs."timestamp", vs.channel_id, c.tier AS group_key,
-           SUM(vs.concurrent_viewers) AS channel_ccv
-         FROM viewership_snapshots vs
-         JOIN channels c ON c.id = vs.channel_id
-         WHERE vs."${col}" = :id ${fSql}
-         GROUP BY vs."timestamp", vs.channel_id, c.tier
+         SELECT minute_bucket, channel_id, group_key,
+           MAX(cycle_ccv) AS channel_ccv
+         FROM (
+           SELECT date_trunc('minute', vs."timestamp") AS minute_bucket,
+                  vs."timestamp" AS poll_ts, vs.channel_id,
+                  c.tier AS group_key,
+                  SUM(vs.concurrent_viewers) AS cycle_ccv
+           FROM viewership_snapshots vs
+           JOIN channels c ON c.id = vs.channel_id
+           WHERE vs."${col}" = :id ${fSql}
+           GROUP BY minute_bucket, poll_ts, vs.channel_id, c.tier
+         ) per_cycle
+         GROUP BY minute_bucket, channel_id, group_key
        ) per_channel
-       GROUP BY "timestamp", group_key
+       GROUP BY minute_bucket, group_key
      ) per_ts
      GROUP BY group_key
      ORDER BY SUM(ts_total) DESC`,
@@ -351,8 +383,8 @@ export async function getTierBreakdown(scope: Scope, filter?: ViewFilter): Promi
 }
 
 export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: ViewFilter): Promise<LeaderboardEntry[]> {
-  // Deduplicate per (timestamp, channel_id) using MAX first, then aggregate per channel.
-  // This avoids inflated totals when a channel has rows under multiple broadcast days.
+  // Bucket by minute, MAX CCV per channel per minute, then aggregate per channel.
+  // Works correctly with both 1x and 2x-per-minute polling.
   const col = scopeColumnBare(scope);
   const f = buildFilterClauses(filter);
   return db.raw(
@@ -367,11 +399,17 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
        ROUND(AVG(pc.channel_ccv))::text AS avg_ccv,
        SUM(pc.channel_ccv)::text AS total_viewed_minutes
      FROM (
-       SELECT "timestamp", channel_id, platform,
-         MAX(concurrent_viewers) AS channel_ccv
-       FROM viewership_snapshots
-       WHERE "${col}" = :id ${f.sql}
-       GROUP BY "timestamp", channel_id, platform
+       SELECT minute_bucket, channel_id, platform,
+         MAX(cycle_ccv) AS channel_ccv
+       FROM (
+         SELECT date_trunc('minute', "timestamp") AS minute_bucket,
+                "timestamp" AS poll_ts, channel_id, platform,
+                SUM(concurrent_viewers) AS cycle_ccv
+         FROM viewership_snapshots
+         WHERE "${col}" = :id ${f.sql}
+         GROUP BY minute_bucket, poll_ts, channel_id, platform
+       ) per_cycle
+       GROUP BY minute_bucket, channel_id, platform
      ) pc
      JOIN channels c ON c.id = pc.channel_id
      GROUP BY pc.channel_id, c.display_name, c.channel_identifier, c.tier, c.language, pc.platform
@@ -384,37 +422,28 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
 export async function getTimeSeriesData(scope: Scope, intervalSeconds = 60, filter?: ViewFilter): Promise<TimeSeriesBucket[]> {
   const col = scopeColumnBare(scope);
   const f = buildFilterClauses(filter);
-  // Two-level dedup:
-  // 1. Inner: pick one poll cycle per bucket per channel (MAX timestamp) to
-  //    avoid double-counting when deploys/restarts cause two polls in one bucket.
-  // 2. Then: SUM the CCV at that chosen timestamp across all streams for the channel.
-  //    This correctly sums genuine multi-stream channels while ignoring stale stream_ids
-  //    from earlier poll cycles (whose stream_ids may differ).
+  // Three-level dedup: SUM multi-stream per poll cycle, MAX across poll cycles
+  // per bucket per channel (picks highest CCV), then SUM across channels.
+  // Works correctly with both 1x and 2x-per-minute polling.
   return db.raw(
     `SELECT bucket,
        SUM(channel_ccv)::text AS total_ccv,
        COUNT(*)::text AS channel_count
      FROM (
        SELECT bucket, channel_id,
-         MAX(concurrent_viewers) AS channel_ccv
+         MAX(cycle_ccv) AS channel_ccv
        FROM (
          SELECT
            date_trunc('minute', "timestamp")
              + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
              * interval '1 second' AS bucket,
+           "timestamp" AS poll_ts,
            channel_id,
-           concurrent_viewers,
-           "timestamp",
-           MAX("timestamp") OVER (PARTITION BY
-             date_trunc('minute', "timestamp")
-               + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
-               * interval '1 second',
-             channel_id
-           ) AS latest_ts
+           SUM(concurrent_viewers) AS cycle_ccv
          FROM viewership_snapshots
          WHERE "${col}" = :id ${f.sql}
-       ) with_latest
-       WHERE "timestamp" = latest_ts
+         GROUP BY bucket, poll_ts, channel_id
+       ) per_cycle
        GROUP BY bucket, channel_id
      ) per_channel
      GROUP BY bucket
@@ -443,7 +472,8 @@ export async function getGroupedTimeSeriesData(
   const col = scopeColumnBare(scope);
   const f = buildFilterClauses(filter);
 
-  // For 'tier', join with channels table; for others, use viewership_snapshots columns directly
+  // For 'tier', join with channels table; for others, use viewership_snapshots columns directly.
+  // All branches: SUM multi-stream per poll cycle, MAX across poll cycles per bucket per channel.
   if (groupBy === 'tier') {
     const fSql = f.sql.replace(/\blanguage\b/g, 'vs.language').replace(/\bplatform\b/g, 'vs.platform');
     return db.raw(
@@ -452,27 +482,21 @@ export async function getGroupedTimeSeriesData(
          COUNT(*)::text AS channel_count
        FROM (
          SELECT bucket, channel_id, group_key,
-           MAX(concurrent_viewers) AS channel_ccv
+           MAX(cycle_ccv) AS channel_ccv
          FROM (
            SELECT
              date_trunc('minute', vs."timestamp")
                + (EXTRACT(epoch FROM vs."timestamp" - date_trunc('minute', vs."timestamp"))::int / :interval * :interval)
                * interval '1 second' AS bucket,
+             vs."timestamp" AS poll_ts,
              vs.channel_id,
              c.tier AS group_key,
-             vs.concurrent_viewers,
-             vs."timestamp",
-             MAX(vs."timestamp") OVER (PARTITION BY
-               date_trunc('minute', vs."timestamp")
-                 + (EXTRACT(epoch FROM vs."timestamp" - date_trunc('minute', vs."timestamp"))::int / :interval * :interval)
-                 * interval '1 second',
-               vs.channel_id
-             ) AS latest_ts
+             SUM(vs.concurrent_viewers) AS cycle_ccv
            FROM viewership_snapshots vs
            JOIN channels c ON c.id = vs.channel_id
            WHERE vs."${col}" = :id ${fSql}
-         ) with_latest
-         WHERE "timestamp" = latest_ts
+           GROUP BY bucket, poll_ts, vs.channel_id, c.tier
+         ) per_cycle
          GROUP BY bucket, channel_id, group_key
        ) per_channel
        GROUP BY bucket, group_key
@@ -481,35 +505,27 @@ export async function getGroupedTimeSeriesData(
     ).then((r: { rows: GroupedTimeSeriesBucket[] }) => r.rows);
   }
 
-  // Two-level dedup: pick one poll cycle per bucket per channel (latest timestamp),
-  // then sum CCV across streams for that channel. Avoids double-counting when
-  // deploys/restarts cause two polls in one bucket with different stream_ids.
+  // Non-tier grouped time series (platform/language): same three-level approach.
   return db.raw(
     `SELECT bucket, group_key,
        SUM(channel_ccv)::text AS total_ccv,
        COUNT(*)::text AS channel_count
      FROM (
        SELECT bucket, channel_id, group_key,
-         MAX(concurrent_viewers) AS channel_ccv
+         MAX(cycle_ccv) AS channel_ccv
        FROM (
          SELECT
            date_trunc('minute', "timestamp")
              + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
              * interval '1 second' AS bucket,
+           "timestamp" AS poll_ts,
            channel_id,
            "${groupBy}" AS group_key,
-           concurrent_viewers,
-           "timestamp",
-           MAX("timestamp") OVER (PARTITION BY
-             date_trunc('minute', "timestamp")
-               + (EXTRACT(epoch FROM "timestamp" - date_trunc('minute', "timestamp"))::int / :interval * :interval)
-               * interval '1 second',
-             channel_id
-           ) AS latest_ts
+           SUM(concurrent_viewers) AS cycle_ccv
          FROM viewership_snapshots
          WHERE "${col}" = :id ${f.sql}
-       ) with_latest
-       WHERE "timestamp" = latest_ts
+         GROUP BY bucket, poll_ts, channel_id, "${groupBy}"
+       ) per_cycle
        GROUP BY bucket, channel_id, group_key
      ) per_channel
      GROUP BY bucket, group_key

@@ -249,8 +249,9 @@ router.get('/timeseries', async (req: Request, res: Response, next: NextFunction
     const joinClause = needsJoin ? 'JOIN channels c ON c.id = vs.channel_id' : '';
     const vsPrefix = needsJoin ? 'vs.' : '';
 
-    // Two-level dedup: pick one poll cycle per bucket per channel (latest timestamp),
-    // then sum CCV across streams. Avoids double-counting from deploy restarts.
+    // Three-level dedup: SUM multi-stream rows per poll cycle, then MAX across
+    // poll cycles per bucket per channel (picks the highest CCV), then SUM channels.
+    // Works correctly with both 1x and 2x-per-minute polling.
     const fClauses = filter ? ViewershipSnapshotModel.buildFilterClauses(filter) : { sql: '', bindings: {} };
     // Prefix filter SQL with vs. alias when using JOIN
     const fSql = needsJoin ? fClauses.sql.replace(/\b(language|platform|region)\b/g, 'vs.$1') : fClauses.sql;
@@ -260,27 +261,21 @@ router.get('/timeseries', async (req: Request, res: Response, next: NextFunction
          COUNT(*)::text AS channel_count
        FROM (
          SELECT bucket, channel_id, group_key,
-           SUM(concurrent_viewers) AS channel_ccv
+           MAX(cycle_ccv) AS channel_ccv
          FROM (
            SELECT
              date_trunc('minute', ${vsPrefix}"timestamp")
                + (EXTRACT(epoch FROM ${vsPrefix}"timestamp" - date_trunc('minute', ${vsPrefix}"timestamp"))::int / :interval * :interval)
                * interval '1 second' AS bucket,
+             ${vsPrefix}"timestamp" AS poll_ts,
              ${vsPrefix}channel_id,
              ${groupExpr} AS group_key,
-             ${vsPrefix}concurrent_viewers,
-             ${vsPrefix}"timestamp",
-             MAX(${vsPrefix}"timestamp") OVER (PARTITION BY
-               date_trunc('minute', ${vsPrefix}"timestamp")
-                 + (EXTRACT(epoch FROM ${vsPrefix}"timestamp" - date_trunc('minute', ${vsPrefix}"timestamp"))::int / :interval * :interval)
-                 * interval '1 second',
-               ${vsPrefix}channel_id
-             ) AS latest_ts
+             SUM(${vsPrefix}concurrent_viewers) AS cycle_ccv
            FROM viewership_snapshots ${needsJoin ? 'vs' : ''}
            ${joinClause}
            WHERE ${vsPrefix}"${scopeColumn}" = :id ${fSql}
-         ) with_latest
-         WHERE "timestamp" = latest_ts
+           GROUP BY bucket, poll_ts, ${vsPrefix}channel_id, group_key
+         ) per_cycle
          GROUP BY bucket, channel_id, group_key
        ) per_channel
        GROUP BY bucket, group_key
