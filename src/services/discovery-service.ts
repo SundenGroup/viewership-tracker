@@ -260,6 +260,19 @@ export class DiscoveryService {
     let belowThreshold = 0;
     let blocked = 0;
 
+    // Helper: check if a stream title/channel name matches any discovery keyword.
+    // Used to avoid storing metadata from non-relevant concurrent streams
+    // (e.g. a music stream on a channel that also streams PUBG).
+    const matchesKeywords = (title: string | null, channelName?: string): boolean => {
+      if (keywords.length === 0) return true; // No keywords = accept all
+      const titleLower = (title ?? '').toLowerCase();
+      const channelLower = (channelName ?? '').toLowerCase();
+      return keywords.some((kw) => {
+        const kwLower = kw.toLowerCase();
+        return titleLower.includes(kwLower) || channelLower.includes(kwLower);
+      });
+    };
+
     for (const { platform, streams } of searchResults) {
       for (const stream of streams) {
         discovered++;
@@ -289,8 +302,11 @@ export class DiscoveryService {
         if (disabledId) {
           try {
             const freshMeta: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
-            if (stream.title) freshMeta.stream_title = stream.title;
-            if (stream.concurrentViewers > 0) freshMeta.discovered_ccv = stream.concurrentViewers;
+            // Only store title/viewers if stream matches discovery keywords
+            // (multi-stream channels may have non-relevant concurrent streams)
+            const relevant = matchesKeywords(stream.title, stream.displayName);
+            if (stream.title && relevant) freshMeta.stream_title = stream.title;
+            if (stream.concurrentViewers > 0 && relevant) freshMeta.discovered_ccv = stream.concurrentViewers;
             await this.db('channels').where('id', disabledId)
               .update({ metadata: this.db.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [JSON.stringify(freshMeta)]) });
             trackedSet.add(lookupKey);
@@ -307,7 +323,8 @@ export class DiscoveryService {
         // New channel — insert as inactive (pending approval via Discovery Feed)
         try {
           const channelMetadata: Record<string, unknown> = {};
-          if (stream.title) channelMetadata.stream_title = stream.title;
+          const relevantNew = matchesKeywords(stream.title, stream.displayName);
+          if (stream.title && relevantNew) channelMetadata.stream_title = stream.title;
           if (stream.concurrentViewers > 0) channelMetadata.discovered_ccv = stream.concurrentViewers;
 
           await this.db('channels').insert({
@@ -371,8 +388,11 @@ export class DiscoveryService {
               );
               if (ch) {
                 const freshMeta: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
-                if (snap.title) freshMeta.stream_title = snap.title;
-                if (snap.concurrentViewers > 0) freshMeta.discovered_ccv = snap.concurrentViewers;
+                // Only store title/viewers if stream matches discovery keywords
+                // (multi-stream channels may have non-relevant concurrent streams)
+                const relevant = matchesKeywords(snap.title, snap.displayName ?? undefined);
+                if (snap.title && relevant) freshMeta.stream_title = snap.title;
+                if (snap.concurrentViewers > 0 && relevant) freshMeta.discovered_ccv = snap.concurrentViewers;
                 await this.db('channels').where('id', ch.id)
                   .update({ metadata: this.db.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [JSON.stringify(freshMeta)]) });
                 resurfaced++;
