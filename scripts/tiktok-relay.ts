@@ -146,15 +146,36 @@ const TIKTOK_CHANNELS = [
   'pubgthailandofficial',
 ];
 
+// Track last known viewers per channel to filter out scrape failures
+// (TikTok sometimes returns status=live but 0 viewers when page load is flaky)
+const lastKnownViewers = new Map<string, number>();
+
 async function runOnce() {
   log(`Polling ${TIKTOK_CHANNELS.length} TikTok channel(s)...`);
 
   const results = await Promise.all(TIKTOK_CHANNELS.map(fetchTikTokLive));
 
-  const live = results.filter((r) => r.isLive);
+  // Filter out likely scrape failures: channel was live with viewers, now shows 0
+  const filtered = results.map((r) => {
+    const lastViewers = lastKnownViewers.get(r.identifier) ?? 0;
+    if (r.isLive && r.viewers === 0 && lastViewers > 50) {
+      log(`  SKIP ${r.identifier}: reported 0 viewers but was ${lastViewers} last cycle (likely scrape failure)`);
+      return null; // Skip this channel this cycle
+    }
+    if (r.viewers > 0) {
+      lastKnownViewers.set(r.identifier, r.viewers);
+    } else if (!r.isLive) {
+      lastKnownViewers.delete(r.identifier); // Channel went offline — reset
+    }
+    return r;
+  }).filter((r): r is ChannelResult => r !== null);
+
+  const live = filtered.filter((r) => r.isLive);
   log(`  ${live.length}/${results.length} live — ${live.map((r) => `${r.identifier}=${r.viewers}`).join(', ') || 'none'}`);
 
-  await pushToServer(results);
+  if (filtered.length > 0) {
+    await pushToServer(filtered);
+  }
 }
 
 async function main() {
