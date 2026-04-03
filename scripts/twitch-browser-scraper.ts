@@ -47,22 +47,27 @@ const INTERVAL_MS = 60_000; // 60 seconds
 const CDP_PORT = 9224;
 const CDP_FILE = path.join(__dirname, '.twitch-browser-cdp');
 
-// Channels to track — will be auto-fetched from server, with fallback
-const FALLBACK_CHANNELS = [
+// Priority channels for browser scraping — official + top streamers only.
+// Kept small (~15) to avoid overloading the browser with too many tabs.
+// Auto-fetch from server is disabled; this curated list is the source of truth.
+const CHANNELS = [
+  // Official
   'pubg_battlegrounds',
   'pubgesportsmap',
-  'pubg_br',
+  'PUBG_BR',
   'pubg_cis',
   'pubgjapan',
-  'pubgthailandofficial',
+  'PUBGThailandOfficial',
   'pubgthailandofficial_2',
   'pubg_battlegroundstr',
   'pubg_taiwan',
+  // Top streamers (500+ peak CCV)
   'pokamolodoy',
   'tgltn',
-  'hwinn',
-  'kickstart',
-  'shrimzy',
+  'jacobpopularr',
+  'batulins',
+  'droogtv',
+  'belmoth_',
 ];
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -361,38 +366,11 @@ async function pushToServer(results: ChannelResult[]): Promise<void> {
   log(`  Pushed: ${result.matched} matched, ${result.updated} updated (higher)`);
 }
 
-// ── Fetch channel list from server ─────────────────────────────────────────
-
-async function fetchChannelList(): Promise<string[]> {
-  try {
-    const res = await fetch(`${RELAY_URL}/api/relay/twitch/channels`, {
-      headers: { Authorization: `Bearer ${RELAY_SECRET}` },
-    });
-    if (!res.ok) throw new Error(`${res.status}`);
-    const data = (await res.json()) as { channels: string[] };
-    return data.channels;
-  } catch {
-    log('  Could not fetch channel list from server, using fallback');
-    return FALLBACK_CHANNELS;
-  }
-}
-
 // ── Main ───────────────────────────────────────────────────────────────────
 
-let channelList: string[] = [];
-let lastChannelFetch = 0;
-const CHANNEL_REFRESH_MS = 5 * 60_000;
-
 async function runOnce() {
-  // Refresh channel list periodically
-  if (Date.now() - lastChannelFetch > CHANNEL_REFRESH_MS) {
-    channelList = await fetchChannelList();
-    lastChannelFetch = Date.now();
-    log(`Channel list: ${channelList.length} channels`);
-  }
-
   // Ensure all tabs are open
-  await ensureTabsOpen(channelList);
+  await ensureTabsOpen(CHANNELS);
 
   // Read viewer counts from all tabs
   const results: ChannelResult[] = [];
@@ -442,10 +420,8 @@ async function main() {
 
   if (LOOP_MODE) {
     // Initial setup — open all tabs with staggered loading
-    channelList = await fetchChannelList();
-    lastChannelFetch = Date.now();
-    log(`Opening ${channelList.length} channel tabs...`);
-    await ensureTabsOpen(channelList);
+    log(`Opening ${CHANNELS.length} channel tabs...`);
+    await ensureTabsOpen(CHANNELS);
     log(`All tabs open. Waiting 10s for pages to load...`);
     await sleep(10_000);
 
