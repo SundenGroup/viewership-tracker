@@ -145,4 +145,102 @@ router.post('/tiktok', requireRelayToken, async (req: Request, res: Response, ne
   }
 });
 
+/**
+ * POST /api/relay/twitch
+ *
+ * Receives Twitch viewer counts from an external relay (e.g. US-based server)
+ * and updates existing snapshots where the relay value is HIGHER than what
+ * we already have. This captures step values our EU server might miss.
+ *
+ * Body: {
+ *   platform: "twitch",
+ *   channels: [
+ *     { identifier: "pubg_battlegrounds", viewers: 5381 }
+ *   ]
+ * }
+ */
+router.post('/twitch', requireRelayToken, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { channels } = req.body;
+    if (!Array.isArray(channels) || channels.length === 0) {
+      res.status(400).json({ error: 'channels array required' });
+      return;
+    }
+
+    // Find the most recent bulk poll timestamp (within last 2 minutes)
+    const recentBulk = await db('viewership_snapshots')
+      .where('timestamp', '>', db.raw("NOW() - INTERVAL '2 minutes'"))
+      .groupBy('timestamp')
+      .having(db.raw('COUNT(*) > 1'))
+      .orderBy('timestamp', 'desc')
+      .limit(1)
+      .select('timestamp')
+      .first();
+
+    if (!recentBulk) {
+      res.json({ matched: 0, updated: 0, reason: 'no recent poll cycle found' });
+      return;
+    }
+
+    const pollTimestamp = new Date(recentBulk.timestamp);
+    let matched = 0;
+    let updated = 0;
+
+    for (const input of channels) {
+      const identifier = (input.identifier || '').toLowerCase();
+      const relayViewers = input.viewers ?? 0;
+      if (relayViewers <= 0) continue;
+
+      // Find all snapshots for this channel at the most recent poll timestamp
+      const rows = await db('viewership_snapshots as vs')
+        .join('channels as c', 'c.id', 'vs.channel_id')
+        .where('c.channel_identifier', identifier)
+        .where('c.platform', 'twitch')
+        .where('vs.timestamp', pollTimestamp)
+        .select('vs.id', 'vs.concurrent_viewers');
+
+      if (rows.length === 0) continue;
+      matched++;
+
+      // Update rows where relay value is higher
+      for (const row of rows) {
+        if (relayViewers > row.concurrent_viewers) {
+          await db('viewership_snapshots')
+            .where('id', row.id)
+            .update({ concurrent_viewers: relayViewers });
+          updated++;
+        }
+      }
+    }
+
+    logger.info(`[Relay] Twitch: ${matched} channels matched, ${updated} snapshots updated (higher)`);
+    res.json({ matched, updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/relay/twitch/channels
+ *
+ * Returns the list of active Twitch channel identifiers that the relay should poll.
+ * Only returns channels from series with active (live) broadcast days.
+ */
+router.get('/twitch/channels', requireRelayToken, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const channels = await db('channels as c')
+      .join('broadcast_days as bd', function () {
+        this.on('bd.series_id', 'c.series_id').andOn('bd.status', db.raw("'live'"));
+      })
+      .where('c.platform', 'twitch')
+      .where('c.is_active', true)
+      .distinct('c.channel_identifier')
+      .pluck('c.channel_identifier');
+
+    res.json({ channels });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
