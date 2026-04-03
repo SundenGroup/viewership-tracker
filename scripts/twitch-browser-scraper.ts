@@ -51,7 +51,7 @@ const CDP_FILE = path.join(__dirname, '.twitch-browser-cdp');
 // Kept small (~15) to avoid overloading the browser with too many tabs.
 // Auto-fetch from server is disabled; this curated list is the source of truth.
 const CHANNELS = [
-  // Official
+  // Official (9)
   'pubg_battlegrounds',
   'pubgesportsmap',
   'PUBG_BR',
@@ -61,13 +61,16 @@ const CHANNELS = [
   'pubgthailandofficial_2',
   'pubg_battlegroundstr',
   'pubg_taiwan',
-  // Top streamers (500+ peak CCV)
-  'pokamolodoy',
-  'tgltn',
-  'jacobpopularr',
-  'batulins',
-  'droogtv',
-  'belmoth_',
+  // Top streamers by avg CCV across series (9)
+  'pokamolodoy',     // avg 3506
+  'tgltn',           // avg 1671
+  'jacobpopularr',   // avg 708
+  'batulins',        // avg 509
+  'makatao',         // avg 495
+  'ibakhmet',        // avg 375
+  'droogtv',         // avg 359
+  'heawin',          // avg 327
+  'zuluxxman',       // avg 303
 ];
 
 // ── Helpers ────────────────────────────────────────────────────────────────
