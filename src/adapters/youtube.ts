@@ -239,17 +239,38 @@ export class YouTubeAdapter implements PlatformAdapter {
         }
       }
 
+      // Filter out videos that belong to OTHER channels (YouTube recommendations).
+      // Use the Videos API to verify ownership if we have quota, otherwise keep all.
+      let verifiedIds = liveVideoIds;
+      if (liveVideoIds.length > 0) {
+        // Quick check: look for channelId in nearby context for each video in the HTML
+        const ownedIds: string[] = [];
+        for (const vid of liveVideoIds) {
+          const vidPos = html.indexOf(`"videoId":"${vid}"`);
+          if (vidPos === -1) { ownedIds.push(vid); continue; } // Can't check, keep it
+          // Look for channelId in the 3000 chars around this videoId reference
+          const context = html.substring(Math.max(0, vidPos - 500), vidPos + 3000);
+          const chIdMatch = context.match(/"channelId":"(UC[a-zA-Z0-9_-]+)"/);
+          if (!chIdMatch || chIdMatch[1] === channelId) {
+            ownedIds.push(vid); // Belongs to this channel (or can't determine)
+          } else {
+            logger.debug(`YouTube: multi-stream scrape for ${channelId} — skipping video ${vid} (belongs to ${chIdMatch[1]})`);
+          }
+        }
+        verifiedIds = ownedIds;
+      }
+
       // Cache the result
       this.multiStreamCache.set(channelId, {
-        videoIds: liveVideoIds,
+        videoIds: verifiedIds,
         cachedAt: Date.now(),
       });
 
-      if (liveVideoIds.length > 0) {
-        logger.info(`YouTube: found ${liveVideoIds.length} live stream(s) on channel ${channelId}: ${liveVideoIds.join(', ')}`);
+      if (verifiedIds.length > 0) {
+        logger.info(`YouTube: found ${verifiedIds.length} live stream(s) on channel ${channelId}: ${verifiedIds.join(', ')}`);
       }
 
-      return liveVideoIds;
+      return verifiedIds;
     } catch (err) {
       const errMsg = (err as Error).message;
       if (errMsg.includes('timeout') || errMsg.includes('ECONNRESET')) {
@@ -388,6 +409,15 @@ export class YouTubeAdapter implements PlatformAdapter {
       }
 
       if (!videoId) return null; // Channel is not live
+
+      // ── Step 1b: Verify the video actually belongs to this channel ────
+      // YouTube's /live page can redirect to recommended streams from OTHER channels.
+      // Check channelId in videoDetails to avoid tracking the wrong stream.
+      const videoChannelMatch = html.match(/"videoDetails":\{[^}]*"channelId":"(UC[a-zA-Z0-9_-]+)"/);
+      if (videoChannelMatch && videoChannelMatch[1] !== channelId) {
+        logger.debug(`YouTube scrape: ${channelId} /live page shows video from different channel ${videoChannelMatch[1]}, treating as offline`);
+        return null;
+      }
 
       // Cache the video ID
       this.liveVideoCache.set(channelId, { videoId, cachedAt: Date.now() });
