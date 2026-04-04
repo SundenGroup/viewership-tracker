@@ -111,7 +111,18 @@ async function getTargets(): Promise<CDPTarget[]> {
 }
 
 async function createTab(url: string): Promise<CDPTarget> {
-  return cdpGet(`/json/new?${encodeURIComponent(url)}`) as Promise<CDPTarget>;
+  return new Promise((resolve, reject) => {
+    const reqUrl = `http://localhost:${CDP_PORT}/json/new?${encodeURIComponent(url)}`;
+    const req = http.request(reqUrl, { method: 'PUT' }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => (data += chunk));
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch { reject(new Error(`Invalid JSON: ${data.slice(0, 200)}`)); }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
 }
 
 // ── WebSocket CDP session for evaluating JS ────────────────────────────────
