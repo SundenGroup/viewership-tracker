@@ -194,7 +194,7 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
       // Find all snapshots for this channel at the most recent poll timestamp
       const rows = await db('viewership_snapshots as vs')
         .join('channels as c', 'c.id', 'vs.channel_id')
-        .where('c.channel_identifier', identifier)
+        .whereRaw('LOWER(c.channel_identifier) = ?', [identifier])
         .where('c.platform', 'twitch')
         .where('vs.timestamp', pollTimestamp)
         .select('vs.id', 'vs.concurrent_viewers');
