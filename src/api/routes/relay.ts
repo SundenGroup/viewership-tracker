@@ -133,13 +133,23 @@ router.post('/tiktok', requireRelayToken, async (req: Request, res: Response, ne
       }
     }
 
-    // Insert snapshots
+    // Insert snapshots — skip duplicates (same channel + timestamp)
+    let snapshotsInserted = 0;
     if (insertRows.length > 0) {
-      await db('viewership_snapshots').insert(insertRows);
+      for (const row of insertRows) {
+        const exists = await db('viewership_snapshots')
+          .where('channel_id', row.channel_id as string)
+          .where('timestamp', row.timestamp as Date)
+          .first();
+        if (!exists) {
+          await db('viewership_snapshots').insert(row);
+          snapshotsInserted++;
+        }
+      }
     }
 
-    logger.info(`[Relay] TikTok: ${matched} channels matched, ${insertRows.length} snapshots inserted`);
-    res.json({ matched, snapshotsInserted: insertRows.length });
+    logger.info(`[Relay] TikTok: ${matched} channels matched, ${snapshotsInserted} snapshots inserted`);
+    res.json({ matched, snapshotsInserted });
   } catch (err) {
     next(err);
   }
