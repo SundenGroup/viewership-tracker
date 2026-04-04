@@ -265,9 +265,29 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
     // Remove webdriver flag on each read (in case page navigated)
     await session.evaluate(`Object.defineProperty(navigator, 'webdriver', { get: () => false })`);
 
-    // Extract viewer count from the page DOM
-    // Twitch renders the viewer count in an element with data-a-target="animated-channel-viewers-count"
-    // or in a span near the live indicator
+    // First check if the stream is actually live — avoid reading stale/wrong numbers from offline pages
+    const isLive = await session.evaluate(`
+      (function() {
+        // Look for the live indicator (red LIVE badge)
+        if (document.querySelector('[data-a-target="animated-channel-viewers-count"]')) return true;
+        if (document.querySelector('[data-a-target="player-info-viewer-count"]')) return true;
+        if (document.querySelector('.live-indicator-container')) return true;
+        if (document.querySelector('[data-test-selector="stream-info-is-live"]')) return true;
+        // Check for "LIVE" text badge in the player
+        const badges = document.querySelectorAll('[data-a-target="player-info-tag-text"]');
+        for (const b of badges) {
+          if ((b.textContent || '').trim().toUpperCase() === 'LIVE') return true;
+        }
+        return false;
+      })()
+    `);
+
+    if (!isLive) {
+      session.close();
+      return { channel: tab.channel, viewers: 0, isLive: false };
+    }
+
+    // Stream is confirmed live — extract viewer count from the DOM
     const result = await session.evaluate(`
       (function() {
         // Method 1: data-a-target attribute (most reliable)
@@ -277,41 +297,18 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
           return parseViewerText(text);
         }
 
-        // Method 2: p.CoreText with viewer count near live indicator
-        // Look for the viewer count text that Twitch renders
-        const allText = document.querySelectorAll('p[data-a-target], span[data-a-target]');
-        for (const node of allText) {
-          const t = node.textContent || '';
-          if (/^[\\d,.]+[KkMm]?$/.test(t.trim()) && node.closest('[class*="stream-info"]')) {
-            return parseViewerText(t.trim());
-          }
-        }
-
-        // Method 3: aria-label containing "viewers"
+        // Method 2: aria-label containing "viewers"
         const ariaEl = document.querySelector('[aria-label*="viewer" i]');
         if (ariaEl) {
           const match = (ariaEl.getAttribute('aria-label') || '').match(/([\\d,]+)/);
           if (match) return parseInt(match[1].replace(/,/g, ''), 10);
         }
 
-        // Method 4: Search for viewer count pattern in live indicator area
+        // Method 3: player info viewer count
         const liveIndicator = document.querySelector('[data-a-target="player-info-viewer-count"]');
         if (liveIndicator) {
           const text = liveIndicator.textContent || '';
           return parseViewerText(text);
-        }
-
-        // Method 5: Broadest search — find any element with "Viewers" nearby
-        const spans = document.querySelectorAll('span, p');
-        for (const s of spans) {
-          const t = (s.textContent || '').trim();
-          if (/^[\\d,.]+[KkMm]?$/.test(t)) {
-            const parent = s.parentElement;
-            const parentText = parent?.textContent || '';
-            if (/viewer/i.test(parentText)) {
-              return parseViewerText(t);
-            }
-          }
         }
 
         return 0;
@@ -330,18 +327,8 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
     `);
 
     const viewers = typeof result === 'number' ? result : 0;
-
-    // Check if stream is actually live
-    const isLive = await session.evaluate(`
-      !!document.querySelector('[data-a-target="player-info-viewer-count"]') ||
-      !!document.querySelector('[data-a-target="animated-channel-viewers-count"]') ||
-      !!document.querySelector('.live-indicator') ||
-      !!document.querySelector('[data-test-selector="stream-info-is-live"]') ||
-      document.querySelector('video')?.readyState > 0
-    `);
-
     session.close();
-    return { channel: tab.channel, viewers, isLive: !!isLive };
+    return { channel: tab.channel, viewers, isLive: true };
   } catch (err) {
     session.close();
     log(`  ERROR reading ${tab.channel}: ${(err as Error).message}`);
