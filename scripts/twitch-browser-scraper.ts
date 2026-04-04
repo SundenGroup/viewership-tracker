@@ -193,6 +193,7 @@ interface ManagedTab {
 }
 
 const managedTabs = new Map<string, ManagedTab>();
+const tabLastReload = new Map<string, number>();
 
 async function ensureTabsOpen(channels: string[]): Promise<void> {
   const targets = await getTargets();
@@ -265,6 +266,15 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
     // Remove webdriver flag on each read (in case page navigated)
     await session.evaluate(`Object.defineProperty(navigator, 'webdriver', { get: () => false })`);
 
+    // Check if the tab is still on the correct channel page (Twitch SPA can redirect to homepage)
+    const currentUrl = await session.evaluate(`location.href`) as string;
+    if (!currentUrl?.toLowerCase().includes(tab.channel.toLowerCase())) {
+      log(`  ${tab.channel}: tab navigated away (${currentUrl?.slice(0, 50)}), reloading...`);
+      await session.send('Page.navigate', { url: `https://www.twitch.tv/${tab.channel}` });
+      session.close();
+      return { channel: tab.channel, viewers: 0, isLive: false };
+    }
+
     // First check if the stream is actually live — avoid reading stale/wrong numbers from offline pages
     const isLive = await session.evaluate(`
       (function() {
@@ -283,6 +293,14 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
     `);
 
     if (!isLive) {
+      // Reload the page every 5 minutes for offline tabs — the channel might have gone live
+      // but the stale SPA page won't show it
+      const lastReload = tabLastReload.get(tab.channel) ?? 0;
+      if (Date.now() - lastReload > 5 * 60_000) {
+        log(`  ${tab.channel}: not live, refreshing page...`);
+        await session.send('Page.reload', {});
+        tabLastReload.set(tab.channel, Date.now());
+      }
       session.close();
       return { channel: tab.channel, viewers: 0, isLive: false };
     }
