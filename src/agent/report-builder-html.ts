@@ -56,16 +56,24 @@ export interface HTMLReportData {
 
 const PLATFORM_COLORS: Record<string, string> = {
   twitch: '#9146ff',
-  youtube: '#ff0033',
+  youtube: '#ff0000',
   kick: '#53fc18',
-  tiktok: '#fe2c55',
+  tiktok: '#ee1d52',
+  steam: '#1b9ffc',
+  soop: '#0066ff',
+  chzzk: '#00ffa3',
+  trovo: '#30c67c',
 };
 
 const PLATFORM_COLORS_ALPHA: Record<string, string> = {
   twitch: 'rgba(145,70,255,0.12)',
-  youtube: 'rgba(255,0,51,0.12)',
+  youtube: 'rgba(255,0,0,0.12)',
   kick: 'rgba(83,252,24,0.12)',
-  tiktok: 'rgba(254,44,85,0.12)',
+  tiktok: 'rgba(238,29,82,0.12)',
+  steam: 'rgba(27,159,252,0.12)',
+  soop: 'rgba(0,102,255,0.12)',
+  chzzk: 'rgba(0,255,163,0.12)',
+  trovo: 'rgba(48,198,124,0.12)',
 };
 
 const LANGUAGE_COLORS: string[] = [
