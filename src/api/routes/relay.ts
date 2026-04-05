@@ -133,15 +133,19 @@ router.post('/tiktok', requireRelayToken, async (req: Request, res: Response, ne
       }
     }
 
-    // Insert snapshots — skip duplicates (same channel + timestamp)
+    // Insert snapshots — only one per channel per minute (prevents double-counting
+    // when multiple relays push data that lands on different poll timestamps)
     let snapshotsInserted = 0;
     if (insertRows.length > 0) {
       for (const row of insertRows) {
-        const exists = await db('viewership_snapshots')
+        const existsInMinute = await db('viewership_snapshots')
           .where('channel_id', row.channel_id as string)
-          .where('timestamp', row.timestamp as Date)
+          .whereRaw("date_trunc('minute', \"timestamp\") = date_trunc('minute', ?::timestamptz)", [
+            (row.timestamp as Date).toISOString(),
+          ])
+          .where('platform', 'tiktok')
           .first();
-        if (!exists) {
+        if (!existsInMinute) {
           await db('viewership_snapshots').insert(row);
           snapshotsInserted++;
         }
