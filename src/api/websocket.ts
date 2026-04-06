@@ -121,6 +121,7 @@ export class ViewershipWebSocketServer {
 
     this.wss = new WebSocketServer({
       port,
+      maxPayload: 64 * 1024, // 64KB max message size
       verifyClient: async (info, callback) => {
         try {
           const cookies = cookie.parse(info.req.headers.cookie ?? '');

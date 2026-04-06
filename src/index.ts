@@ -186,10 +186,17 @@ async function bootstrap(): Promise<void> {
     shutdown('uncaughtException').catch(() => process.exit(1));
   });
 
+  let unhandledRejectionCount = 0;
   process.on('unhandledRejection', (reason) => {
     const message = reason instanceof Error ? reason.message : String(reason);
-    logger.error('[CVT] Unhandled rejection', { reason: message });
-    // Don't shutdown on unhandled rejections — log and continue
+    const stack = reason instanceof Error ? reason.stack : undefined;
+    unhandledRejectionCount++;
+    logger.error('[CVT] Unhandled rejection', { reason: message, stack, count: unhandledRejectionCount });
+    // Shutdown after 5 unhandled rejections — indicates a systemic problem
+    if (unhandledRejectionCount >= 5) {
+      logger.error('[CVT] Too many unhandled rejections — shutting down');
+      shutdown('unhandledRejection').catch(() => process.exit(1));
+    }
   });
 
   // Export for testing / external consumers

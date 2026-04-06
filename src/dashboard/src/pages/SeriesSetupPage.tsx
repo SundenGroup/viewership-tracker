@@ -53,9 +53,10 @@ interface SeriesSetupPageProps {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-let nextTempId = 1;
+// Counter for temporary IDs (scoped per page instance via closure)
+let nextTempId = 0;
 function tempId(): string {
-  return `temp-${nextTempId++}`;
+  return `temp-${++nextTempId}`;
 }
 
 function makeStage(order: number): StageForm {

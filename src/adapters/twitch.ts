@@ -73,7 +73,10 @@ export class TwitchAdapter implements PlatformAdapter {
   private readonly client: AxiosInstance;
   private readonly gqlClient: AxiosInstance;
   private readonly gameIdCache = new Map<string, string>();
-  private gqlHealthy = true; // Track GQL availability for fallback
+  private static readonly GAME_ID_CACHE_MAX = 500;
+  private gqlHealthy = true;
+  private gqlBackoffMs = 5 * 60_000; // Start at 5 minutes, grows exponentially
+  private static readonly GQL_BACKOFF_MAX_MS = 60 * 60_000; // Max 1 hour
 
   constructor(clientId?: string, clientSecret?: string) {
     this.clientId = clientId ?? config.twitch.clientId;
@@ -167,14 +170,21 @@ export class TwitchAdapter implements PlatformAdapter {
     if (this.gqlHealthy) {
       try {
         const results = await this.getViewerCountsViaGQL(channelNames);
+        // Reset backoff on success
+        this.gqlBackoffMs = 5 * 60_000;
         return results;
       } catch (err) {
-        logger.warn('Twitch GQL failed, falling back to Helix API', {
+        logger.warn(`Twitch GQL failed, falling back to Helix API (retry in ${Math.round(this.gqlBackoffMs / 60_000)}m)`, {
           error: (err as Error).message,
         });
         this.gqlHealthy = false;
-        // Re-enable GQL after 5 minutes
-        setTimeout(() => { this.gqlHealthy = true; }, 5 * 60 * 1000);
+        const backoff = this.gqlBackoffMs;
+        // Exponential backoff: 5m → 10m → 20m → 40m → 60m max
+        this.gqlBackoffMs = Math.min(this.gqlBackoffMs * 2, TwitchAdapter.GQL_BACKOFF_MAX_MS);
+        setTimeout(() => {
+          this.gqlHealthy = true;
+          logger.info('Twitch GQL re-enabled for next poll cycle');
+        }, backoff);
       }
     }
 
@@ -372,6 +382,11 @@ export class TwitchAdapter implements PlatformAdapter {
     }
 
     const id = result[0].id;
+    // LRU eviction: remove oldest entries if cache exceeds max size
+    if (this.gameIdCache.size >= TwitchAdapter.GAME_ID_CACHE_MAX) {
+      const firstKey = this.gameIdCache.keys().next().value;
+      if (firstKey) this.gameIdCache.delete(firstKey);
+    }
     this.gameIdCache.set(gameName.toLowerCase(), id);
     return id;
   }

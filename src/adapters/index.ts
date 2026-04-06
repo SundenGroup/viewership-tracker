@@ -99,29 +99,20 @@ export class AdapterRegistry {
 
     // Call each platform adapter in parallel
     const platformPromises = Array.from(grouped.entries()).map(
-      async ([platform, identifiers]): Promise<{ platform: PlatformName; results: ChannelSnapshot[] }> => {
+      async ([platform, identifiers]): Promise<{ platform: PlatformName; results: ChannelSnapshot[]; failed: boolean }> => {
         try {
           const adapter = this.getAdapter(platform);
           const results = await adapter.getViewerCounts(identifiers);
-          return { platform, results };
+          return { platform, results, failed: false };
         } catch (err) {
-          logger.error(`AdapterRegistry: ${platform} adapter threw during getViewerCounts`, {
+          logger.error(`AdapterRegistry: ${platform} adapter FAILED — skipping ${identifiers.length} channels (no zeros inserted)`, {
             error: (err as Error).message,
             channelCount: identifiers.length,
           });
 
-          // Return offline snapshots for all channels on this platform
-          const offlineResults: ChannelSnapshot[] = identifiers.map((id) => ({
-            channelIdentifier: id,
-            displayName: id,
-            concurrentViewers: 0,
-            isLive: false,
-            language: null,
-            gameName: null,
-            title: null,
-            startedAt: null,
-          }));
-          return { platform, results: offlineResults };
+          // Return empty results with failed flag — orchestrator will skip these channels
+          // instead of inserting 0-viewer snapshots that corrupt the data
+          return { platform, results: [], failed: true };
         }
       },
     );

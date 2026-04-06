@@ -202,21 +202,48 @@ describe('Peak CCV calculation', () => {
 });
 
 describe('Duplicate TikTok relay handling', () => {
-  test('duplicate rows in same minute inflate SUM but not three-level dedup', async () => {
-    const ts1 = '2026-04-01T10:00:10Z';
-    const ts2 = '2026-04-01T10:00:40Z';
-
-    // TikTok: two relay pushes, same minute, different timestamps
+  test('database constraint prevents duplicate TikTok rows in same minute', async () => {
+    // First insert succeeds
     await insertSnapshot({
       channel_id: testData.tiktokChannel.id, platform: 'tiktok',
-      timestamp: ts1, concurrent_viewers: 300,
+      timestamp: '2026-04-01T10:00:10Z', concurrent_viewers: 300,
+    });
+
+    // Second insert in same minute is rejected by unique index
+    await expect(
+      insertSnapshot({
+        channel_id: testData.tiktokChannel.id, platform: 'tiktok',
+        timestamp: '2026-04-01T10:00:40Z', concurrent_viewers: 310,
+      }),
+    ).rejects.toThrow('duplicate key');
+  });
+
+  test('TikTok inserts in different minutes are allowed', async () => {
+    await insertSnapshot({
+      channel_id: testData.tiktokChannel.id, platform: 'tiktok',
+      timestamp: '2026-04-01T10:00:10Z', concurrent_viewers: 300,
     });
     await insertSnapshot({
       channel_id: testData.tiktokChannel.id, platform: 'tiktok',
-      timestamp: ts2, concurrent_viewers: 310,
+      timestamp: '2026-04-01T10:01:10Z', concurrent_viewers: 310,
     });
 
-    // Three-level dedup should take MAX (310), not SUM (610)
+    const count = await db('viewership_snapshots')
+      .where('broadcast_day_id', testData.broadcastDay.id)
+      .where('platform', 'tiktok')
+      .count('* as cnt');
+    expect(parseInt(count[0].cnt as string)).toBe(2);
+  });
+
+  test('non-TikTok platforms can have multiple rows in same minute', async () => {
+    // Twitch: two polls in same minute — both allowed
+    await insertSnapshot({
+      timestamp: '2026-04-01T10:00:10Z', concurrent_viewers: 400,
+    });
+    await insertSnapshot({
+      timestamp: '2026-04-01T10:00:40Z', concurrent_viewers: 500,
+    });
+
     const result = await db.raw(`
       SELECT SUM(channel_ccv)::int AS total FROM (
         SELECT channel_id, MAX(cycle_ccv) AS channel_ccv FROM (
@@ -228,6 +255,7 @@ describe('Duplicate TikTok relay handling', () => {
       ) per_channel
     `, [testData.broadcastDay.id]);
 
-    expect(result.rows[0].total).toBe(310);
+    // Should be 500 (MAX of two polls), not 900
+    expect(result.rows[0].total).toBe(500);
   });
 });
