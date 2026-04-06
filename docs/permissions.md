@@ -12,21 +12,24 @@ Three roles exist: **Admin**, **Editor**, and **Viewer**. Permissions are cumula
 | View dashboard, metrics, and charts | Yes | Yes | Yes |
 | View channel list and discovery feed | Yes | Yes | Yes |
 | **Exports & Reports** | | | |
-| Export data (CSV, JSON, HTML) | Yes | Yes | - |
-| Generate reports | Yes | Yes | - |
+| Export data (CSV, XLSX, JSON, HTML) | Yes | Yes | - |
+| Generate reports (with view group filters) | Yes | Yes | - |
 | **Series Management** | | | |
 | Create new series | Yes | - | - |
 | Edit series metadata | Yes | Yes | - |
 | Delete series | Yes | - | - |
 | Change series visibility | Yes | - | - |
 | Toggle series public access | Yes | - | - |
+| Configure view groups | Yes | Yes | - |
 | **Stages & Broadcast Days** | | | |
 | Add / edit / remove stages | Yes | Yes | - |
 | Add / edit / remove broadcast days | Yes | Yes | - |
 | Change broadcast day status (Go Live / Complete) | Yes | - | - |
+| Extend broadcast day end time | Yes | - | - |
 | **Channel Management** | | | |
 | Add channels (single or bulk) | Yes | Yes | - |
 | Edit channel metadata (name, language, region, tier, days) | Yes | Yes | - |
+| Promote discovered channels to Manual | Yes | Yes | - |
 | Disable / enable channel | Yes | Yes | - |
 | Delete channel (removes all data) | Yes | - | - |
 | **Discovery** | | | |
@@ -62,9 +65,19 @@ Channels can be managed with three distinct actions, each with different data im
 
 **Viewer** — Read-only access to the dashboard and all viewership data. Ideal for stakeholders who need to monitor metrics without making changes.
 
-**Editor** — Can manage channels (add, edit, disable, block), stages, broadcast days, and series metadata. Can export data and generate reports. Can approve and block discovered channels. Cannot delete channels, control polling/discovery, or change broadcast day status. Ideal for team members actively managing tournaments.
+**Editor** — Can manage channels (add, edit, disable, block, promote), stages, broadcast days, and series metadata. Can export data and generate reports with view group filters. Can approve and block discovered channels. Cannot delete channels, control polling/discovery, or change broadcast day status. Ideal for team members actively managing tournaments.
 
 **Admin** — Unrestricted access. Can delete channels (with data), control polling, discovery, broadcast day status, series lifecycle, visibility settings, and user accounts. Intended for operations leads.
+
+---
+
+## Security
+
+- **Authentication**: JWT-based with httpOnly secure cookies
+- **Rate limiting**: Login endpoint limited to 10 attempts per minute
+- **CORS**: Whitelisted to specific allowed origins
+- **Security headers**: helmet.js provides X-Frame-Options, CSP, HSTS, etc.
+- **Relay auth**: Bearer token with timing-safe comparison
 
 ---
 
