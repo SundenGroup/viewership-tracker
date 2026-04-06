@@ -1,6 +1,8 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import logger from '../utils/logger';
 
 import seriesRouter from './routes/series';
@@ -20,11 +22,41 @@ import { authenticate, requireRole } from './middleware/auth';
 export function createApp() {
   const app = express();
 
+  // ── Security ──────────────────────────────────────────────────────────
+
+  app.use(helmet({ contentSecurityPolicy: false })); // CSP disabled for inline Chart.js in reports
+
+  const allowedOrigins = (process.env.CORS_ORIGINS || 'https://tracker.clutch.game,https://stats.clutch.game')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  // In dev, also allow localhost
+  if (process.env.NODE_ENV !== 'production') {
+    allowedOrigins.push('http://localhost:5173', 'http://localhost:3000');
+  }
+  app.use(cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (server-to-server, curl, relay scripts)
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
+    credentials: true,
+  }));
+
   // ── Middleware ─────────────────────────────────────────────────────────
 
-  app.use(cors({ origin: true, credentials: true }));
-  app.use(express.json());
+  app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
+
+  // Rate limit login attempts
+  app.use('/api/auth/login', rateLimit({
+    windowMs: 60_000,
+    max: 10,
+    message: { error: 'Too many login attempts, try again in a minute' },
+  }));
 
   // Request logging
   app.use((req: Request, _res: Response, next: NextFunction) => {

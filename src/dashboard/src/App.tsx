@@ -7,6 +7,8 @@ import { SeriesSetupPage } from '@/pages/SeriesSetupPage';
 import { SeriesEditPage } from '@/pages/SeriesEditPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { UserManagementPage } from '@/pages/UserManagementPage';
+import { NotFoundPage } from '@/pages/NotFoundPage';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Spinner } from '@/components/common/Loader';
 import { useApi, usePollingApi } from '@/hooks/useApi';
 import { usePollingData } from '@/hooks/usePollingData';
@@ -58,13 +60,16 @@ function AuthGate() {
   }
 
   return (
-    <Routes>
-      <Route path="/new" element={<AppContent />} />
-      <Route path="/users" element={<AppContent />} />
-      <Route path="/:seriesId/edit" element={<AppContent />} />
-      <Route path="/:seriesId" element={<AppContent />} />
-      <Route path="/" element={<AppContent />} />
-    </Routes>
+    <ErrorBoundary>
+      <Routes>
+        <Route path="/new" element={<AppContent />} />
+        <Route path="/users" element={<AppContent />} />
+        <Route path="/:seriesId/edit" element={<AppContent />} />
+        <Route path="/:seriesId" element={<AppContent />} />
+        <Route path="/" element={<AppContent />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Routes>
+    </ErrorBoundary>
   );
 }
 

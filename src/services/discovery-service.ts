@@ -269,7 +269,9 @@ export class DiscoveryService {
       const channelLower = (channelName ?? '').toLowerCase();
       return keywords.some((kw) => {
         const kwLower = kw.toLowerCase();
-        return titleLower.includes(kwLower) || channelLower.includes(kwLower);
+        // Use word boundary matching to avoid partial matches (e.g. "rpg" matching "pubg")
+        const re = new RegExp(`\\b${kwLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+        return re.test(titleLower) || re.test(channelLower);
       });
     };
 

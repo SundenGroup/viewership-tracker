@@ -148,6 +148,13 @@ async function bootstrap(): Promise<void> {
     if (isShuttingDown) return;
     isShuttingDown = true;
 
+    // Force exit after 15 seconds if graceful shutdown hangs
+    const forceExitTimer = setTimeout(() => {
+      logger.error('[CVT] Graceful shutdown timed out after 15s — forcing exit');
+      process.exit(1);
+    }, 15_000);
+    forceExitTimer.unref(); // Don't keep process alive just for this timer
+
     logger.info(`[CVT] ${signal} received — initiating graceful shutdown...`);
 
     // Stop accepting new WebSocket connections and close existing ones

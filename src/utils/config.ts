@@ -33,11 +33,20 @@ export const config = {
     discoveryIntervalMs: parseInt(process.env.DISCOVERY_INTERVAL_MS || '120000', 10),
   },
   auth: {
-    jwtSecret: process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION',
+    jwtSecret: (() => {
+      const secret = process.env.JWT_SECRET;
+      if (!secret || secret === 'CHANGE_ME_IN_PRODUCTION') {
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error('JWT_SECRET must be set in production');
+        }
+        return 'dev-only-insecure-secret';
+      }
+      return secret;
+    })(),
     jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
     bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS || '12', 10),
     cookieName: 'cvt_token',
-    cookieSecure: process.env.COOKIE_SECURE === 'true',
+    cookieSecure: process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true',
     cookieMaxAgeMs: parseInt(
       process.env.COOKIE_MAX_AGE_MS || String(7 * 24 * 60 * 60 * 1000),
       10,

@@ -53,6 +53,8 @@ export class PollingOrchestrator {
   private lastPollTime: Date | null = null;
   private lastPollResult: PollCycleResult | null = null;
   private consecutiveZeroResults = 0;
+  private lastOrphanSweepTime = 0;
+  private static readonly ORPHAN_SWEEP_INTERVAL_MS = 10 * 60_000; // 10 minutes
   private activeSeriesIds = new Set<string>();
   private userStoppedDiscoveryIds = new Set<string>();
   private snapshotBroadcast: SnapshotBroadcastFn | null = null;
@@ -355,8 +357,14 @@ export class PollingOrchestrator {
       }
 
       // ── Periodic sweep: catch orphaned auto-discovered channels ──────
-      // Runs every cycle to catch channels that missed the transition auto-pause
+      // Runs every 10 minutes (not every cycle) to reduce DB load.
+      // Catches channels that missed the transition auto-pause
       // (e.g. due to deploy, restart, or race condition)
+      const sweepNow = Date.now();
+      if (sweepNow - this.lastOrphanSweepTime < PollingOrchestrator.ORPHAN_SWEEP_INTERVAL_MS) {
+        // Skip sweep this cycle
+      } else {
+      this.lastOrphanSweepTime = sweepNow;
       const orphaned = await this.db('channels')
         .where('is_active', true)
         .where('source', 'auto_discovered')
@@ -385,6 +393,7 @@ export class PollingOrchestrator {
           });
         logger.info(`[Poll] Periodic sweep: auto-paused ${orphanIds.length} orphaned auto-discovered channel(s)`);
       }
+      } // end orphan sweep interval check
     } catch (err) {
       logger.error('[Poll] Failed to transition broadcast day statuses', {
         error: (err as Error).message,

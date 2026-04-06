@@ -8,12 +8,13 @@
  * Auth: Bearer token via RELAY_SECRET env var.
  */
 import { Router, Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import db from '../../utils/db';
 import logger from '../../utils/logger';
 
 const router = Router();
 
-// Simple bearer-token auth for relay endpoints
+// Timing-safe bearer-token auth for relay endpoints
 function requireRelayToken(req: Request, res: Response, next: NextFunction) {
   const secret = process.env.RELAY_SECRET;
   if (!secret) {
@@ -22,7 +23,15 @@ function requireRelayToken(req: Request, res: Response, next: NextFunction) {
   }
 
   const auth = req.headers.authorization;
-  if (!auth || auth !== `Bearer ${secret}`) {
+  if (!auth || !auth.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Invalid relay token' });
+    return;
+  }
+
+  const token = auth.slice(7);
+  const tokenBuf = Buffer.from(token);
+  const secretBuf = Buffer.from(secret);
+  if (tokenBuf.length !== secretBuf.length || !crypto.timingSafeEqual(tokenBuf, secretBuf)) {
     res.status(401).json({ error: 'Invalid relay token' });
     return;
   }
