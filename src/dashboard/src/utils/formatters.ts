@@ -337,6 +337,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   trovo: 'Trovo',
   chzzk: 'CHZZK',
   soop: 'SOOP',
+  nimotv: 'NimoTV',
 };
 
 const PLATFORM_COLORS: Record<string, string> = {
@@ -348,6 +349,7 @@ const PLATFORM_COLORS: Record<string, string> = {
   trovo: '#30C67C',
   chzzk: '#00FFA3',
   soop: '#0066FF',
+  nimotv: '#FFD700',
 };
 
 export function platformLabel(platform: string): string {

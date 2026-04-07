@@ -7,6 +7,7 @@ export { SteamAdapter } from './steam';
 export { TrovoAdapter } from './trovo';
 export { ChzzkAdapter } from './chzzk';
 export { SoopAdapter } from './soop';
+export { NimoTVAdapter } from './nimotv';
 export type { QuotaUsage } from './youtube';
 
 import logger from '../utils/logger';
@@ -19,10 +20,11 @@ import { SteamAdapter } from './steam';
 import { TrovoAdapter } from './trovo';
 import { ChzzkAdapter } from './chzzk';
 import { SoopAdapter } from './soop';
+import { NimoTVAdapter } from './nimotv';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
-export type PlatformName = 'twitch' | 'youtube' | 'kick' | 'tiktok' | 'steam' | 'trovo' | 'chzzk' | 'soop';
+export type PlatformName = 'twitch' | 'youtube' | 'kick' | 'tiktok' | 'steam' | 'trovo' | 'chzzk' | 'soop' | 'nimotv';
 
 export interface MultiPlatformChannel {
   platform: PlatformName;
@@ -70,6 +72,8 @@ export class AdapterRegistry {
         return new ChzzkAdapter();
       case 'soop':
         return new SoopAdapter();
+      case 'nimotv':
+        return new NimoTVAdapter();
       default: {
         const _exhaustive: never = platform;
         throw new Error(`Unknown platform: ${_exhaustive}`);
@@ -181,6 +185,7 @@ export class AdapterRegistry {
           trovo: 'trovo',
           chzzk: 'cbd4d0e5c29062fdd4cfb2e8e3475dde', // Known Chzzk channel
           soop: 'aflol',  // Known Soop BJ
+          nimotv: 'pubgvn', // PUBG Vietnam — known NimoTV channel
         };
 
         const results = await adapter.getViewerCounts([testChannels[platform]]);

@@ -63,6 +63,7 @@ const PLATFORM_COLORS: Record<string, string> = {
   soop: '#0066ff',
   chzzk: '#00ffa3',
   trovo: '#30c67c',
+  nimotv: '#ffd700',
 };
 
 const PLATFORM_COLORS_ALPHA: Record<string, string> = {
@@ -74,6 +75,7 @@ const PLATFORM_COLORS_ALPHA: Record<string, string> = {
   soop: 'rgba(0,102,255,0.12)',
   chzzk: 'rgba(0,255,163,0.12)',
   trovo: 'rgba(48,198,124,0.12)',
+  nimotv: 'rgba(255,215,0,0.12)',
 };
 
 const LANGUAGE_COLORS: string[] = [
