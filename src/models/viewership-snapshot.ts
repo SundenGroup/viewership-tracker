@@ -215,7 +215,32 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
   }
   if (filter?.platforms?.length) query.whereIn('viewership_snapshots.platform', filter.platforms);
 
-  return query;
+  const results = await query;
+
+  // TikTok data arrives via relay a few seconds after the main poll cycle,
+  // so it's often missing from the bulk-poll timestamp. Include the most
+  // recent TikTok snapshot per channel (within last 2 minutes) to avoid
+  // the dashboard showing 0 TikTok viewers between relay pushes.
+  const hasTikTok = results.some((r: { platform: string }) => r.platform === 'tiktok');
+  if (!hasTikTok) {
+    const tiktokRows = await db.raw(`
+      SELECT DISTINCT ON (vs.channel_id)
+        vs.*, c.display_name, c.channel_identifier
+      FROM viewership_snapshots vs
+      JOIN channels c ON c.id = vs.channel_id
+      WHERE vs.series_id = :seriesId
+        AND vs.platform = 'tiktok'
+        AND vs."timestamp" > NOW() - INTERVAL '2 minutes'
+        AND vs.concurrent_viewers > 0
+      ORDER BY vs.channel_id, vs."timestamp" DESC
+    `, { seriesId }).then((r: { rows: Array<ViewershipSnapshot & { display_name: string; channel_identifier: string }> }) => r.rows);
+
+    if (tiktokRows.length > 0) {
+      results.push(...tiktokRows);
+    }
+  }
+
+  return results;
 }
 
 export async function getPeakCCV(scope: Scope, filter?: ViewFilter): Promise<PeakCCVResult | null> {

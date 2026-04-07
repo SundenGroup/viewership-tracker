@@ -39,6 +39,14 @@ function requireRelayToken(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+// Optional callback to trigger WebSocket broadcast after TikTok relay data arrives
+type RelayBroadcastFn = (seriesIds: string[]) => void;
+let relayBroadcast: RelayBroadcastFn | null = null;
+
+export function setRelayBroadcast(fn: RelayBroadcastFn): void {
+  relayBroadcast = fn;
+}
+
 /**
  * POST /api/relay/tiktok
  *
@@ -162,6 +170,17 @@ router.post('/tiktok', requireRelayToken, async (req: Request, res: Response, ne
     }
 
     logger.info(`[Relay] TikTok: ${matched} channels matched, ${snapshotsInserted} snapshots inserted`);
+
+    // Trigger WebSocket broadcast so dashboard gets updated TikTok numbers
+    if (snapshotsInserted > 0 && relayBroadcast) {
+      const affectedSeriesIds = [...new Set(insertRows.map((r) => r.series_id as string))];
+      try {
+        relayBroadcast(affectedSeriesIds);
+      } catch (err) {
+        logger.debug('[Relay] TikTok broadcast callback failed', { error: (err as Error).message });
+      }
+    }
+
     res.json({ matched, snapshotsInserted });
   } catch (err) {
     next(err);

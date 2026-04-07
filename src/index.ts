@@ -17,9 +17,9 @@
 import { config } from './utils/config';
 import logger from './utils/logger';
 import db from './utils/db';
-import { createApp, setOrchestrator, setDiscoveryService, setBroadcastDayDiscoveryService, setReportAgent } from './api';
+import { createApp, setOrchestrator, setDiscoveryService, setBroadcastDayDiscoveryService, setReportAgent, setRelayBroadcast } from './api';
 import { AdapterRegistry } from './adapters';
-import { PollingOrchestrator } from './services/polling-orchestrator';
+import { PollingOrchestrator, type PollCycleResult } from './services/polling-orchestrator';
 import { DiscoveryService } from './services/discovery-service';
 import { ReportAgent } from './agent/report-agent';
 import { ViewershipWebSocketServer } from './api/websocket';
@@ -116,6 +116,14 @@ async function bootstrap(): Promise<void> {
   setDiscoveryService(discoveryService);
   setBroadcastDayDiscoveryService(discoveryService);
   setReportAgent(reportAgent);
+
+  // Wire TikTok relay → WebSocket broadcast (so dashboard shows TikTok data immediately)
+  setRelayBroadcast((seriesIds) => {
+    for (const seriesId of seriesIds) {
+      wsServer.broadcastSnapshotUpdate({ timestamp: new Date() } as PollCycleResult, [seriesId])
+        .catch((err: Error) => logger.debug('[Relay] TikTok WS broadcast failed', { error: err.message }));
+    }
+  });
 
   // ── 8. Start Express API server ────────────────────────────────────────
   const app = createApp();
