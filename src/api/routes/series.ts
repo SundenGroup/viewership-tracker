@@ -44,7 +44,9 @@ router.post('/', requireRole('admin'), async (req: Request, res: Response, next:
   }
 });
 
-// GET /api/series/games/lookup?name=PUBG — Resolve game name to platform IDs
+// GET /api/series/games/lookup?name=PUBG — Search game/category names across platforms
+// Returns arrays of matches so users can pick the correct one from similar names
+// (e.g. "Counter-Strike: Source" vs "Counter-Strike 2")
 // Must be before /:id to avoid "games" being captured as a series ID
 router.get('/games/lookup', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -55,41 +57,40 @@ router.get('/games/lookup', requireRole('admin', 'editor'), async (req: Request,
     }
 
     const name = gameName.trim();
-    const results: Record<string, { id: string; name: string } | null> = {
-      twitch: null,
-      kick: null,
+    const results: Record<string, Array<{ id: string; name: string }>> = {
+      twitch: [],
+      kick: [],
     };
 
-    // Look up Twitch and Kick in parallel
+    // Search Twitch and Kick in parallel — return ALL matches
     const [twitchResult, kickResult] = await Promise.allSettled([
       (async () => {
         try {
           const registry = new AdapterRegistry();
           const adapter = registry.getAdapter('twitch') as TwitchAdapter;
-          const id = await adapter.getGameId(name);
-          return id ? { id, name } : null;
+          return await adapter.searchGames(name);
         } catch (err) {
-          logger.warn(`Game lookup: Twitch failed for "${name}"`, { error: (err as Error).message });
-          return null;
+          logger.warn(`Game lookup: Twitch search failed for "${name}"`, { error: (err as Error).message });
+          return [];
         }
       })(),
       (async () => {
         try {
           const registry = new AdapterRegistry();
           const adapter = registry.getAdapter('kick') as KickAdapter;
-          const cat = await adapter.getCategoryId(name);
-          return cat ? { id: String(cat.id), name: cat.name } : null;
+          const cats = await adapter.searchCategories(name);
+          return cats.map((c) => ({ id: String(c.id), name: c.name }));
         } catch (err) {
-          logger.warn(`Game lookup: Kick failed for "${name}"`, { error: (err as Error).message });
-          return null;
+          logger.warn(`Game lookup: Kick search failed for "${name}"`, { error: (err as Error).message });
+          return [];
         }
       })(),
     ]);
 
-    if (twitchResult.status === 'fulfilled' && twitchResult.value) {
+    if (twitchResult.status === 'fulfilled') {
       results.twitch = twitchResult.value;
     }
-    if (kickResult.status === 'fulfilled' && kickResult.value) {
+    if (kickResult.status === 'fulfilled') {
       results.kick = kickResult.value;
     }
 

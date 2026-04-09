@@ -379,6 +379,26 @@ export class KickAdapter implements PlatformAdapter {
     return { id: best.id, name: best.name };
   }
 
+  /**
+   * Search categories by name and return ALL matches (up to 10).
+   * Used by the game ID picker UI so users can choose the correct category
+   * when there are similar names (e.g. "Counter-Strike: Source" vs "Counter-Strike 2").
+   */
+  async searchCategories(query: string): Promise<Array<{ id: number; name: string }>> {
+    if (this.isCircuitOpen()) return [];
+
+    const result = await this.requestWithRetry(async () => {
+      const { data } = await this.client.get<{ data: Array<{ id: number; name: string }> }>(
+        '/public/v1/categories',
+        { params: { q: query } },
+      );
+      return data;
+    }, `searchCategories("${query}")`);
+
+    if (!result || !Array.isArray(result.data)) return [];
+    return result.data.slice(0, 10).map((c) => ({ id: c.id, name: c.name }));
+  }
+
   async searchLiveStreams(
     gameId?: string,
     keywords?: string[],

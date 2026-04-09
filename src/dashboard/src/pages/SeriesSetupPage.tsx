@@ -120,6 +120,8 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupResult, setLookupResult] = useState<string | null>(null);
+  const [twitchOptions, setTwitchOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [kickOptions, setKickOptions] = useState<Array<{ id: string; name: string }>>([]);
 
   // ── Field updaters ───────────────────────────────────────────────────
 
@@ -204,26 +206,26 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
 
     setLookingUp(true);
     setLookupResult(null);
+    setTwitchOptions([]);
+    setKickOptions([]);
 
     try {
       const result = await api.lookupGameIds(gameName);
+
+      setTwitchOptions(result.twitch);
+      setKickOptions(result.kick);
+
+      if (result.twitch.length === 1) {
+        updateField('discovery_game_ids_twitch', result.twitch[0].id);
+      }
+      if (result.kick.length === 1) {
+        updateField('discovery_game_ids_kick', result.kick[0].id);
+      }
+
       const msgs: string[] = [];
-
-      if (result.twitch) {
-        updateField('discovery_game_ids_twitch', result.twitch.id);
-        msgs.push(`Twitch: ${result.twitch.id}`);
-      } else {
-        msgs.push('Twitch: not found');
-      }
-
-      if (result.kick) {
-        updateField('discovery_game_ids_kick', result.kick.id);
-        msgs.push(`Kick: ${result.kick.id} (${result.kick.name})`);
-      } else {
-        msgs.push('Kick: not found');
-      }
-
-      setLookupResult(msgs.join(' · '));
+      msgs.push(`Twitch: ${result.twitch.length} match${result.twitch.length !== 1 ? 'es' : ''}`);
+      msgs.push(`Kick: ${result.kick.length} match${result.kick.length !== 1 ? 'es' : ''}`);
+      setLookupResult(msgs.join(' · ') + (result.twitch.length > 1 || result.kick.length > 1 ? ' — select below' : ''));
     } catch (err) {
       setLookupResult('Lookup failed — ' + (err instanceof Error ? err.message : 'unknown error'));
     } finally {
@@ -494,6 +496,36 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
             </div>
             {lookupResult && (
               <p className="mt-1 text-[10px] text-gray-500">{lookupResult}</p>
+            )}
+            {twitchOptions.length > 1 && (
+              <div className="mt-2">
+                <label className="mb-1 block text-[10px] font-medium text-gray-400">Select Twitch Game</label>
+                <select
+                  className="w-full rounded border border-navy-700 bg-navy-800 px-2 py-1.5 text-xs text-white"
+                  value={form.discovery_game_ids_twitch}
+                  onChange={(e) => updateField('discovery_game_ids_twitch', e.target.value)}
+                >
+                  <option value="">— Choose —</option>
+                  {twitchOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.name} (ID: {opt.id})</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {kickOptions.length > 1 && (
+              <div className="mt-2">
+                <label className="mb-1 block text-[10px] font-medium text-gray-400">Select Kick Category</label>
+                <select
+                  className="w-full rounded border border-navy-700 bg-navy-800 px-2 py-1.5 text-xs text-white"
+                  value={form.discovery_game_ids_kick}
+                  onChange={(e) => updateField('discovery_game_ids_kick', e.target.value)}
+                >
+                  <option value="">— Choose —</option>
+                  {kickOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.name} (ID: {opt.id})</option>
+                  ))}
+                </select>
+              </div>
             )}
             <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
               <FormField label="Twitch Game ID">

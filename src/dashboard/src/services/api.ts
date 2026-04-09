@@ -108,8 +108,8 @@ export function updateSeriesStatus(id: string, status: TournamentStatus) {
 // ── Game ID Lookup ────────────────────────────────────────────────────────
 
 export interface GameLookupResult {
-  twitch: { id: string; name: string } | null;
-  kick: { id: string; name: string } | null;
+  twitch: Array<{ id: string; name: string }>;
+  kick: Array<{ id: string; name: string }>;
 }
 
 export function lookupGameIds(gameName: string) {

@@ -390,6 +390,24 @@ export class TwitchAdapter implements PlatformAdapter {
     this.gameIdCache.set(gameName.toLowerCase(), id);
     return id;
   }
+
+  /**
+   * Search games/categories by name and return ALL matches (up to 10).
+   * Uses the /search/categories endpoint for fuzzy matching.
+   * Used by the game ID picker UI so users can choose the correct game.
+   */
+  async searchGames(query: string): Promise<Array<{ id: string; name: string }>> {
+    const result = await this.requestWithRetry(async () => {
+      const { data } = await this.client.get<TwitchPaginatedResponse<TwitchGameData>>(
+        '/search/categories',
+        { params: { query, first: 10 } },
+      );
+      return data.data;
+    }, `searchGames("${query}")`);
+
+    if (!result || result.length === 0) return [];
+    return result.map((g) => ({ id: g.id, name: g.name }));
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
