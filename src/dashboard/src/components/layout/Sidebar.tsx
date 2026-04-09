@@ -254,14 +254,17 @@ export function Sidebar({
                   {discoveryStatus.lastResults[seriesId]?.added ?? 0}
                 </span>
               </div>
-              {ytQuota && ytQuota.limit > 0 && (
-                <div className="flex justify-between">
-                  <span>YT Quota</span>
-                  <span className={ytQuota.percentage >= 80 ? 'text-accent-red' : ytQuota.percentage >= 50 ? 'text-yellow-400' : 'text-gray-400'}>
-                    {ytQuota.used.toLocaleString()}/{ytQuota.limit.toLocaleString()} ({ytQuota.percentage}%)
-                  </span>
-                </div>
-              )}
+            </div>
+          )}
+
+          {ytQuota && ytQuota.limit > 0 && (
+            <div className="mb-3 text-xs">
+              <div className="flex justify-between text-gray-500">
+                <span>YT Quota</span>
+                <span className={ytQuota.percentage >= 80 ? 'text-accent-red' : ytQuota.percentage >= 50 ? 'text-yellow-400' : 'text-gray-400'}>
+                  {ytQuota.used.toLocaleString()}/{ytQuota.limit.toLocaleString()} ({ytQuota.percentage}%)
+                </span>
+              </div>
             </div>
           )}
 
