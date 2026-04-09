@@ -388,63 +388,56 @@ export class KickAdapter implements PlatformAdapter {
       return [];
     }
 
-    // Try category-filtered request first (with pagination), fall back to all
-    // livestreams if empty. Kick's category_id filter is unreliable — sometimes
-    // returns 0 results even when streams exist under that category.
+    // Try category-filtered request first, fall back to all livestreams if empty.
+    // Kick's API has a hard limit of 100 results with no pagination support.
+    // Category filter is unreliable — sometimes returns 0 results even when
+    // streams exist under that category.
     let allStreams: DiscoveredStream[] = [];
 
-    const PAGE_SIZE = 100;
-    const MAX_PAGES_CATEGORY = 3;  // 300 streams with category filter
-    const MAX_PAGES_ALL = 3;       // 300 streams without category (deeper search for smaller co-streamers)
+    const params: Record<string, unknown> = {
+      limit: 100,
+      sort: 'viewer_count',
+    };
 
     if (gameId) {
       const numericId = parseInt(gameId, 10);
       if (!isNaN(numericId)) {
-        // Try with category filter (paginated)
-        for (let page = 1; page <= MAX_PAGES_CATEGORY; page++) {
-          const catResult = await this.requestWithRetry(async () => {
-            const { data } = await this.client.get<{ data: KickLivestreamResponse[] }>('/public/v1/livestreams', {
-              params: { limit: PAGE_SIZE, sort: 'viewer_count', category_id: numericId, page },
-            });
-            return data;
-          }, `livestreams(category,p${page})`);
+        // Try with category filter first
+        const catResult = await this.requestWithRetry(async () => {
+          const { data } = await this.client.get<{ data: KickLivestreamResponse[] }>('/public/v1/livestreams', {
+            params: { ...params, category_id: numericId },
+          });
+          return data;
+        }, 'livestreams(category)');
 
-          if (!catResult || !Array.isArray(catResult.data) || catResult.data.length === 0) break;
-          allStreams.push(...catResult.data.map((raw) => this.parseLivestreamResponse(raw)));
-          if (catResult.data.length < PAGE_SIZE) break; // Last page
-        }
-
-        if (allStreams.length === 0) {
+        if (catResult && Array.isArray(catResult.data) && catResult.data.length > 0) {
+          allStreams = catResult.data.map((raw) => this.parseLivestreamResponse(raw));
+        } else {
           logger.info(`Kick: category_id ${numericId} returned 0 results, falling back to all livestreams`);
         }
       }
     }
 
-    // If no results yet (category failed or no gameId), fetch all livestreams with pagination
+    // If no results yet (category failed or no gameId), fetch top 100 livestreams
     if (allStreams.length === 0) {
-      for (let page = 1; page <= MAX_PAGES_ALL; page++) {
-        const result = await this.requestWithRetry(async () => {
-          const { data } = await this.client.get<{ data: KickLivestreamResponse[] }>('/public/v1/livestreams', {
-            params: { limit: PAGE_SIZE, sort: 'viewer_count', page },
-          });
-          return data;
-        }, `livestreams(all,p${page})`);
+      const result = await this.requestWithRetry(async () => {
+        const { data } = await this.client.get<{ data: KickLivestreamResponse[] }>('/public/v1/livestreams', {
+          params,
+        });
+        return data;
+      }, 'livestreams(all)');
 
-        if (!result || !Array.isArray(result.data)) {
-          if (page === 1) {
-            logger.warn('Kick livestreams endpoint returned unexpected shape', {
-              rawShape: describeShape(result),
-            });
-          }
-          break;
-        }
-
-        allStreams.push(...result.data.map((raw) => this.parseLivestreamResponse(raw)));
-        if (result.data.length < PAGE_SIZE) break; // Last page
+      if (!result || !Array.isArray(result.data)) {
+        logger.warn('Kick livestreams endpoint returned unexpected shape', {
+          rawShape: describeShape(result),
+        });
+        return [];
       }
+
+      allStreams = result.data.map((raw) => this.parseLivestreamResponse(raw));
     }
 
-    logger.info(`Kick: fetched ${allStreams.length} total livestreams`);
+    logger.info(`Kick: fetched ${allStreams.length} livestreams (API max: 100, no pagination)`);
 
     // Filter by keywords in stream title (client-side), matching Twitch behaviour.
     // Kick's API doesn't support server-side keyword filtering, so we do it here.
