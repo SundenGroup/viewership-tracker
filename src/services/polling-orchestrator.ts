@@ -116,6 +116,18 @@ export class PollingOrchestrator {
     this.activeSeriesIds.add(seriesId);
   }
 
+  /**
+   * Get YouTube quota usage (for admin dashboard display).
+   */
+  getYouTubeQuota(): { used: number; limit: number } {
+    try {
+      const ytAdapter = this.registry.getAdapter('youtube') as import('../adapters/youtube').YouTubeAdapter;
+      return ytAdapter.getQuotaUsage();
+    } catch {
+      return { used: 0, limit: 0 };
+    }
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────────────────
 
   start(): void {

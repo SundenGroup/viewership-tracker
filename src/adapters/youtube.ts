@@ -1040,54 +1040,45 @@ export class YouTubeAdapter implements PlatformAdapter {
   }
 
   /**
-   * Searches for live streams by keywords (used by Discovery).
-   * This still uses the /search API (100 quota units per keyword) because
-   * discovery needs to find NEW channels we don't know about yet.
-   * However, discovery runs less frequently than polling, so the quota impact is manageable.
+   * Searches for live streams (used by Discovery).
+   *
+   * Quota-optimized: performs a SINGLE search using the game name (gameId field),
+   * then filters results client-side by keywords. No category filter — YouTube's
+   * search engine handles relevance well enough.
+   *
+   * If gameId is blank, falls back to searching each keyword individually.
+   *
+   * Up to 4 pages (200 results) per search term. Each page costs 100 quota units.
    */
   async searchLiveStreams(
     gameId?: string,
     keywords?: string[],
-    categoryIds?: string[],
+    _categoryIds?: string[],
   ): Promise<DiscoveredStream[]> {
-    // Build effective search terms by combining game name + keywords
-    // This mirrors Twitch's game-scoped discovery: filter by game, then by keyword
+    // Determine search term(s):
+    // - If gameId is set: single search for the game name (e.g. "Counter-Strike 2")
+    // - If no gameId: search each keyword individually (fallback)
     const searchTerms: string[] = [];
-    if (keywords && keywords.length > 0) {
-      if (gameId) {
-        // Combine game name with each keyword (e.g., "GeoGuessr watch party")
-        for (const kw of keywords) searchTerms.push(`${gameId} ${kw}`);
-      } else {
-        searchTerms.push(...keywords);
-      }
-    } else if (gameId) {
-      // Game name only — find all live streams for this game
+    if (gameId) {
       searchTerms.push(gameId);
+    } else if (keywords && keywords.length > 0) {
+      searchTerms.push(...keywords);
     } else {
       return [];
     }
 
-    // Determine which YouTube categories to search
-    // Default: Gaming (20) + Entertainment (24) + People & Blogs (22) when a game is configured
-    // Use ["none"] to disable category filtering entirely
-    const categories = categoryIds && categoryIds.length > 0
-      ? (categoryIds.includes('none') ? [undefined] : categoryIds)
-      : gameId ? ['20', '24', '22'] : [undefined];
-
-    // Search for each term × category combination, collect unique video IDs
     const seenVideoIds = new Set<string>();
     const searchResults: Array<{ videoId: string; snippet: YouTubeSearchItem['snippet'] }> = [];
+    const MAX_PAGES = 4; // 4 pages × 50 = up to 200 results per search term
 
     for (const searchTerm of searchTerms) {
-      for (const catId of categories) {
-      if (!this.consumeQuota(QUOTA_COST.search, `searchLiveStreams("${searchTerm}" cat=${catId ?? 'all'})`)) {
+      if (!this.consumeQuota(QUOTA_COST.search, `searchLiveStreams("${searchTerm}")`)) {
         break;
       }
 
       let nextPageToken: string | undefined;
-      const maxPages = 2; // 2 pages × 50 results = up to 100 per term
 
-      for (let page = 0; page < maxPages; page++) {
+      for (let page = 0; page < MAX_PAGES; page++) {
         const result = await this.requestWithRetry(async () => {
           const params: Record<string, string | number> = {
             q: searchTerm,
@@ -1096,7 +1087,6 @@ export class YouTubeAdapter implements PlatformAdapter {
             part: 'id,snippet',
             maxResults: 50,
           };
-          if (catId) params.videoCategoryId = catId;
           if (nextPageToken) params.pageToken = nextPageToken;
 
           const { data } = await this.client.get<YouTubeListResponse<YouTubeSearchItem>>(
@@ -1104,7 +1094,7 @@ export class YouTubeAdapter implements PlatformAdapter {
             { params },
           );
           return data;
-        }, `searchLiveStreams("${searchTerm}")`);
+        }, `searchLiveStreams("${searchTerm}" p${page + 1})`);
 
         if (!result || result.items.length === 0) break;
 
@@ -1116,14 +1106,13 @@ export class YouTubeAdapter implements PlatformAdapter {
         }
 
         nextPageToken = result.nextPageToken;
-        if (!nextPageToken) break;
+        if (!nextPageToken) break; // No more pages
 
         // Additional pages cost quota too
-        if (page < maxPages - 1 && !this.consumeQuota(QUOTA_COST.search, `searchLiveStreams("${searchTerm}") page ${page + 2}`)) {
+        if (page < MAX_PAGES - 1 && !this.consumeQuota(QUOTA_COST.search, `searchLiveStreams("${searchTerm}") p${page + 2}`)) {
           break;
         }
       }
-      } // end categories loop
     }
 
     if (searchResults.length === 0) return [];

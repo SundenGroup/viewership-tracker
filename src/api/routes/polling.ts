@@ -82,6 +82,23 @@ router.post('/stop', (_req: Request, res: Response, next: NextFunction) => {
   }
 });
 
+// GET /api/polling/youtube-quota — Get YouTube API quota usage (admin only)
+router.get('/youtube-quota', (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const orch = ensureOrchestrator(res);
+    if (!orch) return;
+    const quota = orch.getYouTubeQuota();
+    res.json({
+      used: quota.used,
+      limit: quota.limit,
+      remaining: quota.limit - quota.used,
+      percentage: quota.limit > 0 ? Math.round((quota.used / quota.limit) * 100) : 0,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── Discovery routes ──────────────────────────────────────────────────
 
 // GET /api/polling/discovery/status — Get discovery status

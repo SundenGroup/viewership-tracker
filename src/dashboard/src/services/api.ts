@@ -319,6 +319,17 @@ export function getPollingStatus() {
   return request<OrchestratorStatus>('/api/polling/status');
 }
 
+export interface YouTubeQuota {
+  used: number;
+  limit: number;
+  remaining: number;
+  percentage: number;
+}
+
+export function getYouTubeQuota() {
+  return request<YouTubeQuota>('/api/polling/youtube-quota');
+}
+
 export function triggerPollCycle() {
   return request<PollCycleResult>('/api/polling/trigger', { method: 'POST' });
 }

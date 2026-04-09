@@ -5,6 +5,8 @@ import { AddChannelForm } from '@/components/sidebar/AddChannelForm';
 import { BulkAddChannelModal } from '@/components/sidebar/BulkAddChannelModal';
 import { useAuth } from '@/hooks/useAuth';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
+import { usePollingApi } from '@/hooks/useApi';
+import * as api from '@/services/api';
 import type { OrchestratorStatus, DiscoveryStatus, SeriesWithStages, BroadcastStatus } from '@/types/api';
 import { formatTimeAgo, formatDuration } from '@/utils/formatters';
 
@@ -56,6 +58,13 @@ export function Sidebar({
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
 
   const isPollingRunning = pollingStatus?.state === 'running';
+
+  // YouTube quota (admin only, refreshes every 30s)
+  const { data: ytQuota } = usePollingApi<api.YouTubeQuota>(
+    () => isAdmin ? api.getYouTubeQuota() : Promise.resolve({ used: 0, limit: 0, remaining: 0, percentage: 0 }),
+    [isAdmin],
+    { intervalMs: 30_000, enabled: isAdmin },
+  );
   const isDiscoveryActive = seriesId
     ? discoveryStatus?.activeDiscoveries.includes(seriesId)
     : false;
@@ -174,6 +183,14 @@ export function Sidebar({
                   {pollingStatus.activeBroadcastDays}
                 </span>
               </div>
+              {isAdmin && ytQuota && ytQuota.limit > 0 && (
+                <div className="flex justify-between">
+                  <span>YT Quota</span>
+                  <span className={ytQuota.percentage >= 80 ? 'text-accent-red' : ytQuota.percentage >= 50 ? 'text-yellow-400' : 'text-gray-400'}>
+                    {ytQuota.used.toLocaleString()}/{ytQuota.limit.toLocaleString()} ({ytQuota.percentage}%)
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
