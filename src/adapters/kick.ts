@@ -388,37 +388,55 @@ export class KickAdapter implements PlatformAdapter {
       return [];
     }
 
-    // The official API supports browsing livestreams with optional category_id filter
-    const params: Record<string, unknown> = {
+    // Try category-filtered request first, fall back to all livestreams if empty.
+    // Kick's category_id filter on /livestreams is unreliable — sometimes returns 0
+    // results even when streams exist under that category. Client-side keyword
+    // filtering catches them from the full list.
+    let allStreams: DiscoveredStream[] = [];
+
+    const baseParams: Record<string, unknown> = {
       limit: 100,
       sort: 'viewer_count',
     };
 
     if (gameId) {
-      // gameId should be a numeric category ID for the official API
       const numericId = parseInt(gameId, 10);
       if (!isNaN(numericId)) {
-        params.category_id = numericId;
-      } else {
-        logger.info(`Kick: gameId "${gameId}" is not numeric — cannot filter by category. Fetching all livestreams.`);
+        // Try with category filter first
+        const catResult = await this.requestWithRetry(async () => {
+          const { data } = await this.client.get<{ data: KickLivestreamResponse[] }>('/public/v1/livestreams', {
+            params: { ...baseParams, category_id: numericId },
+          });
+          return data;
+        }, 'livestreams(category)');
+
+        if (catResult && Array.isArray(catResult.data) && catResult.data.length > 0) {
+          allStreams = catResult.data.map((raw) => this.parseLivestreamResponse(raw));
+        } else {
+          // Category filter returned empty — fall back to all livestreams
+          logger.info(`Kick: category_id ${numericId} returned 0 results, falling back to all livestreams`);
+        }
       }
     }
 
-    const result = await this.requestWithRetry(async () => {
-      const { data } = await this.client.get<{ data: KickLivestreamResponse[] }>('/public/v1/livestreams', {
-        params,
-      });
-      return data;
-    }, 'livestreams');
+    // If no results yet (category failed or no gameId), fetch all livestreams
+    if (allStreams.length === 0) {
+      const result = await this.requestWithRetry(async () => {
+        const { data } = await this.client.get<{ data: KickLivestreamResponse[] }>('/public/v1/livestreams', {
+          params: baseParams,
+        });
+        return data;
+      }, 'livestreams(all)');
 
-    if (!result || !Array.isArray(result.data)) {
-      logger.warn('Kick livestreams endpoint returned unexpected shape', {
-        rawShape: describeShape(result),
-      });
-      return [];
+      if (!result || !Array.isArray(result.data)) {
+        logger.warn('Kick livestreams endpoint returned unexpected shape', {
+          rawShape: describeShape(result),
+        });
+        return [];
+      }
+
+      allStreams = result.data.map((raw) => this.parseLivestreamResponse(raw));
     }
-
-    const allStreams = result.data.map((raw) => this.parseLivestreamResponse(raw));
 
     // Filter by keywords in stream title (client-side), matching Twitch behaviour.
     // Kick's API doesn't support server-side keyword filtering, so we do it here.
