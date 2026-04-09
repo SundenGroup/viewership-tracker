@@ -39,6 +39,7 @@ export function DiscoveryFeedPanel({
   const [expanded, setExpanded] = useLocalStorage<boolean>('cvt:discoveryExpanded', false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [sortBy, setSortBy] = useLocalStorage<'recent' | 'viewers' | 'platform' | 'name' | 'lang'>('cvt:discoverySortBy', 'recent');
   const { data: channels, loading, refetch } = useApi(
     () =>
       seriesId
@@ -57,7 +58,7 @@ export function DiscoveryFeedPanel({
     );
   }
 
-  // Sort by added_at descending (most recent first), filter out stale disabled channels
+  // Filter out stale disabled channels, then sort by selected criteria
   const sorted = [...(channels ?? [])]
     .filter((ch) => {
       // Hide disabled channels unless re-discovered streaming or auto-paused
@@ -67,14 +68,29 @@ export function DiscoveryFeedPanel({
       return true;
     })
     .sort((a, b) => {
-      // Re-surfaced channels (with last_seen_at) sort first by last_seen_at
-      const aLive = a.metadata?.last_seen_at as string | undefined;
-      const bLive = b.metadata?.last_seen_at as string | undefined;
-      if (aLive && !bLive) return -1;
-      if (!aLive && bLive) return 1;
-      if (aLive && bLive) return new Date(bLive).getTime() - new Date(aLive).getTime();
-      // Then by added_at
-      return new Date(b.added_at).getTime() - new Date(a.added_at).getTime();
+      switch (sortBy) {
+        case 'viewers': {
+          const aCcv = (a.metadata?.discovered_ccv as number) ?? 0;
+          const bCcv = (b.metadata?.discovered_ccv as number) ?? 0;
+          return bCcv - aCcv; // Highest first
+        }
+        case 'platform':
+          return (a.platform ?? '').localeCompare(b.platform ?? '') || (a.display_name ?? '').localeCompare(b.display_name ?? '');
+        case 'name':
+          return (a.display_name ?? '').localeCompare(b.display_name ?? '');
+        case 'lang':
+          return (a.language ?? 'zzz').localeCompare(b.language ?? 'zzz') || ((b.metadata?.discovered_ccv as number) ?? 0) - ((a.metadata?.discovered_ccv as number) ?? 0);
+        case 'recent':
+        default: {
+          // Re-surfaced channels (with last_seen_at) sort first by last_seen_at
+          const aLive = a.metadata?.last_seen_at as string | undefined;
+          const bLive = b.metadata?.last_seen_at as string | undefined;
+          if (aLive && !bLive) return -1;
+          if (!aLive && bLive) return 1;
+          if (aLive && bLive) return new Date(bLive).getTime() - new Date(aLive).getTime();
+          return new Date(b.added_at).getTime() - new Date(a.added_at).getTime();
+        }
+      }
     });
 
   // Take most recent 100
@@ -150,6 +166,31 @@ export function DiscoveryFeedPanel({
       collapsible
       storageKey="cvt:panel:discovery"
     >
+      {/* Sort controls */}
+      {sorted.length > 0 && (
+        <div className="mb-2 flex items-center gap-1">
+          <span className="mr-1 text-[10px] text-gray-600">Sort:</span>
+          {([
+            ['recent', 'Recent'],
+            ['viewers', 'Viewers'],
+            ['platform', 'Platform'],
+            ['name', 'Name'],
+            ['lang', 'Lang'],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setSortBy(key)}
+              className={`rounded px-1.5 py-0.5 text-[10px] transition-colors ${
+                sortBy === key
+                  ? 'bg-accent-red/20 text-accent-red'
+                  : 'text-gray-500 hover:bg-navy-700 hover:text-gray-300'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
       {loading && recent.length === 0 ? (
         <LoadingOverlay />
       ) : recent.length === 0 ? (
