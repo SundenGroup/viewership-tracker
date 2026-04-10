@@ -41,6 +41,7 @@ interface SeriesForm {
   discovery_game_ids_twitch: string;
   discovery_game_ids_youtube: string;
   discovery_game_ids_kick: string;
+  discovery_interval_ms: string;
   status: 'draft' | 'active' | 'completed';
   min_role: UserRole;
   stages: StageForm[];
@@ -105,6 +106,7 @@ const INITIAL_FORM: SeriesForm = {
   discovery_game_ids_twitch: '',
   discovery_game_ids_youtube: '',
   discovery_game_ids_kick: '',
+  discovery_interval_ms: '',
   status: 'draft',
   min_role: 'viewer',
   stages: [],
@@ -270,6 +272,7 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
         end_date: form.end_date || undefined,
         discovery_keywords: keywords.length > 0 ? keywords : undefined,
         discovery_game_ids: Object.keys(gameIds).length > 0 ? gameIds : undefined,
+        discovery_interval_ms: form.discovery_interval_ms ? parseInt(form.discovery_interval_ms, 10) : undefined,
       });
 
       // 2. Create stages sequentially
@@ -475,6 +478,23 @@ export function SeriesSetupPage({ onCreated, onCancel }: SeriesSetupPageProps) {
               placeholder="Comma-separated: PEC, PUBG Championship, pubg esports"
               rows={2}
             />
+          </FormField>
+
+          <FormField label="Discovery Interval">
+            <Select
+              value={form.discovery_interval_ms}
+              onChange={(e) => updateField('discovery_interval_ms', e.target.value)}
+              options={[
+                { value: '', label: 'Default (global config)' },
+                { value: '120000', label: '2 minutes' },
+                { value: '300000', label: '5 minutes' },
+                { value: '600000', label: '10 minutes' },
+                { value: '900000', label: '15 minutes' },
+              ]}
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              How often to search for new streams. Longer intervals use less YouTube quota.
+            </p>
           </FormField>
 
           {/* Discovery Game IDs */}

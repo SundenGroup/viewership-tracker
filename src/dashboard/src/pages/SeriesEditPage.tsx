@@ -63,6 +63,7 @@ interface SeriesForm {
   discovery_game_ids_youtube: string;
   discovery_game_ids_kick: string;
   discovery_default_tier: string;
+  discovery_interval_ms: string;
   status: TournamentStatus;
   min_role: UserRole;
   stages: StageForm[];
@@ -153,6 +154,7 @@ function seriesDetailToForm(detail: SeriesWithStages): SeriesForm {
     discovery_game_ids_youtube: gameIds.youtube ?? '',
     discovery_game_ids_kick: gameIds.kick ?? '',
     discovery_default_tier: detail.discovery_default_tier ?? 'watch_party',
+    discovery_interval_ms: detail.discovery_interval_ms ? String(detail.discovery_interval_ms) : '',
     status: detail.status,
     min_role: detail.min_role ?? 'viewer',
     stages: detail.stages.map((stage) => ({
@@ -430,6 +432,7 @@ export function SeriesEditPage({
         discovery_keywords: keywords.length > 0 ? keywords : [],
         discovery_game_ids: gameIds,
         discovery_default_tier: form.discovery_default_tier,
+        discovery_interval_ms: form.discovery_interval_ms ? parseInt(form.discovery_interval_ms, 10) : null,
         metadata: updatedMetadata,
       });
 
@@ -752,6 +755,23 @@ export function SeriesEditPage({
               />
               <p className="mt-1 text-xs text-gray-500">
                 Category assigned when approving channels from the discovery feed
+              </p>
+            </FormField>
+
+            <FormField label="Discovery Interval">
+              <Select
+                value={form.discovery_interval_ms}
+                onChange={(e) => updateField('discovery_interval_ms', e.target.value)}
+                options={[
+                  { value: '', label: 'Default (global config)' },
+                  { value: '120000', label: '2 minutes' },
+                  { value: '300000', label: '5 minutes' },
+                  { value: '600000', label: '10 minutes' },
+                  { value: '900000', label: '15 minutes' },
+                ]}
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                How often to search for new streams. Longer intervals use less YouTube quota.
               </p>
             </FormField>
           </div>

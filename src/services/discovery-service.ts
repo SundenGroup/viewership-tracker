@@ -69,14 +69,27 @@ export class DiscoveryService {
    * Start a discovery interval for the given series.
    * Only runs while the series has at least one broadcast day with status 'live'.
    */
-  startDiscovery(seriesId: string): void {
+  async startDiscovery(seriesId: string): Promise<void> {
     if (this.intervals.has(seriesId)) {
       logger.debug(`[Discovery] Already running for series ${seriesId}`);
       return;
     }
 
-    const intervalMs = config.polling.discoveryIntervalMs;
-    logger.info(`[Discovery] Starting discovery for series ${seriesId} (interval: ${intervalMs}ms)`);
+    // Read per-series interval, fall back to global config
+    let intervalMs = config.polling.discoveryIntervalMs;
+    try {
+      const series = await this.db('tournament_series')
+        .where('id', seriesId)
+        .select('discovery_interval_ms')
+        .first();
+      if (series?.discovery_interval_ms) {
+        intervalMs = series.discovery_interval_ms;
+      }
+    } catch {
+      // Fall back to global config
+    }
+
+    logger.info(`[Discovery] Starting discovery for series ${seriesId} (interval: ${intervalMs / 1000}s)`);
 
     // Run the first cycle immediately
     this.runCycleIfLive(seriesId);

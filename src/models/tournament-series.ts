@@ -16,6 +16,7 @@ export interface TournamentSeries {
   discovery_keywords: string[];
   discovery_game_ids: Record<string, string>;
   discovery_default_tier: string;
+  discovery_interval_ms: number | null;
   is_public: boolean;
   metadata: Record<string, unknown>;
   created_at: Date;
@@ -35,6 +36,7 @@ export interface CreateTournamentSeries {
   discovery_keywords?: string[];
   discovery_game_ids?: Record<string, string>;
   discovery_default_tier?: string;
+  discovery_interval_ms?: number | null;
   is_public?: boolean;
   metadata?: Record<string, unknown>;
 }
