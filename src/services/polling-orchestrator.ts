@@ -117,6 +117,34 @@ export class PollingOrchestrator {
   }
 
   /**
+   * Generate a display name for a multi-stream child channel.
+   */
+  private generateMultiStreamChildName(
+    parentName: string,
+    streamTitle: string | null,
+    streamIndex: number,
+  ): string {
+    if (!streamTitle) return `${parentName} (Stream ${streamIndex})`;
+
+    const titleLower = streamTitle.toLowerCase();
+
+    // Known patterns
+    if (titleLower.includes('map')) return `${parentName} Map`;
+    if (titleLower.includes('secondary')) return `${parentName} Secondary`;
+    if (titleLower.includes('companion')) return `${parentName} Companion`;
+
+    // If title is just a number (round/match number), use generic name
+    if (/^\d{1,3}$/.test(streamTitle.trim())) return `${parentName} (Stream ${streamIndex})`;
+
+    // If title is very short or seems like a number, use generic
+    if (streamTitle.trim().length <= 3) return `${parentName} (Stream ${streamIndex})`;
+
+    // Otherwise use the stream title itself (truncated)
+    const cleanTitle = streamTitle.trim().slice(0, 50);
+    return cleanTitle;
+  }
+
+  /**
    * Get YouTube quota usage (for admin dashboard display).
    */
   getYouTubeQuota(): { used: number; limit: number } {
@@ -585,6 +613,120 @@ export class PollingOrchestrator {
       snapshotMap.set(key, list);
     }
 
+    // ── 6b. Auto-split multi-stream YouTube channels ──────────────────
+    // For channels with multi_stream=true and 2+ snapshots, create/find
+    // child channel entries so each stream is tracked separately.
+    // Highest-viewer stream stays with parent; others get child channels.
+    const multiStreamParents = channelList.filter(
+      (ch) => ch.platform === 'youtube' && (ch.metadata as Record<string, unknown>)?.multi_stream === true,
+    );
+
+    // Cache of child channels per parent (loaded once, reused across poll cycles)
+    const childChannelCache = new Map<string, Array<{ id: string; metadata: Record<string, unknown>; display_name: string }>>();
+
+    for (const parent of multiStreamParents) {
+      const key = `${parent.platform}:${parent.channel_identifier.toLowerCase()}`;
+      const parentSnapshots = snapshotMap.get(key);
+      if (!parentSnapshots || parentSnapshots.length <= 1) continue;
+
+      // Sort by viewers DESC — highest stays with parent
+      const sorted = [...parentSnapshots].sort(
+        (a, b) => (b.concurrentViewers ?? 0) - (a.concurrentViewers ?? 0),
+      );
+
+      // Load existing children for this parent
+      if (!childChannelCache.has(parent.id)) {
+        const children = await this.db('channels')
+          .where('series_id', parent.series_id)
+          .whereRaw("metadata->>'multi_stream_parent' = ?", [parent.id])
+          .select('id', 'metadata', 'display_name');
+        childChannelCache.set(parent.id, children);
+      }
+      const existingChildren = childChannelCache.get(parent.id)!;
+
+      // Keep first (highest CCV) as parent, reassign the rest
+      const reassigned: ChannelSnapshot[] = [sorted[0]]; // Parent keeps this one
+      for (let i = 1; i < sorted.length; i++) {
+        const snap = sorted[i];
+        const streamIndex = i + 1; // Stream 2, 3, etc.
+
+        // Find existing child for this index
+        let child = existingChildren.find(
+          (c) => (c.metadata as Record<string, unknown>)?.multi_stream_index === streamIndex,
+        );
+
+        if (!child) {
+          // Auto-create child channel
+          const childName = this.generateMultiStreamChildName(
+            parent.display_name,
+            snap.streamTitle ?? snap.title,
+            streamIndex,
+          );
+
+          try {
+            const [created] = await this.db('channels').insert({
+              series_id: parent.series_id,
+              platform: 'youtube',
+              channel_identifier: `${parent.channel_identifier}:stream-${streamIndex}`,
+              display_name: childName,
+              language: parent.language,
+              region: parent.region,
+              tier: parent.tier,
+              source: 'auto_discovered',
+              is_active: true,
+              metadata: JSON.stringify({
+                multi_stream_parent: parent.id,
+                multi_stream_index: streamIndex,
+              }),
+            }).returning('*');
+
+            child = { id: created.id, metadata: created.metadata, display_name: created.display_name };
+            existingChildren.push(child);
+            // Also add to channelList so it gets day assignments
+            channelList.push(created);
+
+            logger.info(`[Poll] Multi-stream: auto-created child "${childName}" for parent ${parent.display_name}`);
+          } catch (err) {
+            // Unique constraint — child already exists (race condition)
+            const existing = await this.db('channels')
+              .where('series_id', parent.series_id)
+              .where('channel_identifier', `${parent.channel_identifier}:stream-${streamIndex}`)
+              .first();
+            if (existing) {
+              child = { id: existing.id, metadata: existing.metadata, display_name: existing.display_name };
+              existingChildren.push(child);
+            } else {
+              logger.warn(`[Poll] Multi-stream: failed to create child for ${parent.display_name}`, {
+                error: (err as Error).message,
+              });
+              continue;
+            }
+          }
+        }
+
+        // Reassign this snapshot to the child channel
+        // We'll create a new entry in the snapshot map for the child
+        const childKey = `youtube:${parent.channel_identifier.toLowerCase()}:stream-${streamIndex}`;
+        snapshotMap.set(childKey, [snap]);
+
+        // Also add the child to the channelList iteration so it gets insert rows
+        // (using a temporary lookup that the insert loop below will use)
+        if (!channelList.find((c) => c.id === child!.id)) {
+          channelList.push({
+            ...parent,
+            id: child.id,
+            channel_identifier: `${parent.channel_identifier}:stream-${streamIndex}`,
+            display_name: child.display_name,
+            source: 'auto_discovered',
+            metadata: child.metadata,
+          } as typeof parent);
+        }
+      }
+
+      // Update parent's snapshot map to only contain the highest-viewer stream
+      snapshotMap.set(key, [sorted[0]]);
+    }
+
     const insertRows: SnapshotInsertRow[] = [];
     let totalCCV = 0;
 
@@ -631,7 +773,6 @@ export class PollingOrchestrator {
           });
         }
 
-        // Sum CCV across all streams for this channel
         totalCCV += viewers;
       }
     }
