@@ -286,6 +286,55 @@ router.get('/twitch/channels', requireRelayToken, async (_req: Request, res: Res
 });
 
 /**
+ * GET /api/relay/twitch/browser-channels
+ *
+ * Returns the top Twitch channels for browser-based scraping.
+ * Officials first, then top channels by historical avg CCV. Max 20.
+ */
+router.get('/twitch/browser-channels', requireRelayToken, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Get all active Twitch channels from series with live broadcast days
+    const activeChannels = await db('channels as c')
+      .join('broadcast_days as bd', function () {
+        this.on('bd.series_id', 'c.series_id').andOn('bd.status', db.raw("'live'"));
+      })
+      .where('c.platform', 'twitch')
+      .where('c.is_active', true)
+      .distinct('c.channel_identifier', 'c.tier')
+      .select('c.channel_identifier', 'c.tier');
+
+    // Split into officials and others
+    const officials = activeChannels.filter((c: { tier: string }) => c.tier === 'official');
+    const others = activeChannels.filter((c: { tier: string }) => c.tier !== 'official');
+
+    // For non-officials, get avg CCV to rank them
+    const channelIds = others.map((c: { channel_identifier: string }) => c.channel_identifier);
+    let ranked: Array<{ channel_identifier: string }> = [];
+
+    if (channelIds.length > 0) {
+      ranked = await db('viewership_snapshots as vs')
+        .join('channels as c', 'c.id', 'vs.channel_id')
+        .where('c.platform', 'twitch')
+        .whereIn('c.channel_identifier', channelIds)
+        .where('vs.concurrent_viewers', '>', 0)
+        .groupBy('c.channel_identifier')
+        .orderByRaw('AVG(vs.concurrent_viewers) DESC')
+        .limit(20 - officials.length)
+        .select('c.channel_identifier');
+    }
+
+    const result = [
+      ...officials.map((c: { channel_identifier: string }) => c.channel_identifier),
+      ...ranked.map((c) => c.channel_identifier),
+    ].slice(0, 20);
+
+    res.json({ channels: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * GET /api/relay/tiktok/channels
  *
  * Returns the list of active TikTok channel identifiers that the relay should track.

@@ -72,17 +72,40 @@ interface TrackedChannel {
 
 const trackedChannels = new Map<string, TrackedChannel>();
 
-// Shared Euler signer instance (reused across all connections)
+// Shared signer instance (reused across all connections)
+// Prefers browser-based signing (self-hosted, no external dependency)
+// Falls back to Euler if browser is not available
 let sharedSigner: unknown = null;
 async function getOrCreateSigner(): Promise<unknown> {
   if (sharedSigner) return sharedSigner;
+
+  // Try browser signer first (self-hosted, no external dependency)
+  const USE_BROWSER = process.argv.includes('--browser') || !EULER_API_KEY;
+  if (USE_BROWSER) {
+    try {
+      const { BrowserSigner } = await import('./lib/browser-signer');
+      const signer = new BrowserSigner();
+      await signer.initialize();
+      sharedSigner = signer;
+      log('Using browser-based signing (self-hosted, no Euler)');
+      return sharedSigner;
+    } catch (err) {
+      log(`Browser signer failed: ${(err as Error).message}`);
+      if (!EULER_API_KEY) {
+        throw new Error('Browser signer unavailable and no EULER_API_KEY set. Start the browser server (npx tsx scripts/twitch-browser-server.ts) or set EULER_API_KEY.');
+      }
+      log('Falling back to Euler signing');
+    }
+  }
+
+  // Fall back to Euler
   const { EulerSigner } = await import('tiktok-live-connector');
   const signerConfig: Record<string, unknown> = {};
   if (EULER_API_KEY) {
     signerConfig.apiKey = EULER_API_KEY;
-    log('Using Euler API key for TikTok signatures');
   }
   sharedSigner = new EulerSigner(signerConfig);
+  log('Using Euler API for TikTok signatures');
   return sharedSigner;
 }
 
