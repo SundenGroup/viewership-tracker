@@ -1,4 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
+import * as fs from 'fs';
+import * as path from 'path';
 import logger from '../utils/logger';
 import { config } from '../utils/config';
 import type { PlatformAdapter, ChannelSnapshot, DiscoveredStream } from './types';
@@ -97,10 +99,14 @@ export class YouTubeAdapter implements PlatformAdapter {
   private quotaUsed = 0;
   private quotaResetDate: string = todayDateString();
   private readonly quotaLimit: number;
+  private static readonly QUOTA_FILE = path.resolve(process.cwd(), '.youtube-quota.json');
 
   constructor(apiKey?: string, quotaLimit?: number) {
     this.apiKey = apiKey ?? config.youtube.apiKey;
     this.quotaLimit = quotaLimit ?? DEFAULT_DAILY_QUOTA;
+
+    // Restore quota counter from disk (survives PM2 restarts)
+    this.loadQuotaFromDisk();
 
     this.client = axios.create({
       baseURL: API_BASE,
@@ -134,6 +140,7 @@ export class YouTubeAdapter implements PlatformAdapter {
       });
       this.quotaUsed = 0;
       this.quotaResetDate = today;
+      this.saveQuotaToDisk();
     }
   }
 
@@ -150,7 +157,39 @@ export class YouTubeAdapter implements PlatformAdapter {
       logger.warn(`YouTube quota at ${((this.quotaUsed / this.quotaLimit) * 100).toFixed(1)}%: ${this.quotaUsed}/${this.quotaLimit}`);
     }
 
+    // Persist to disk every time quota changes (small file, fast write)
+    this.saveQuotaToDisk();
+
     return true;
+  }
+
+  private loadQuotaFromDisk(): void {
+    try {
+      if (fs.existsSync(YouTubeAdapter.QUOTA_FILE)) {
+        const raw = fs.readFileSync(YouTubeAdapter.QUOTA_FILE, 'utf-8');
+        const data = JSON.parse(raw) as { date: string; used: number };
+        if (data.date === todayDateString()) {
+          this.quotaUsed = data.used;
+          this.quotaResetDate = data.date;
+          logger.info(`YouTube quota restored from disk: ${data.used}/${this.quotaLimit}`);
+        } else {
+          logger.info('YouTube quota file is from a previous day, starting fresh');
+        }
+      }
+    } catch {
+      // File doesn't exist or is corrupt — start fresh
+    }
+  }
+
+  private saveQuotaToDisk(): void {
+    try {
+      fs.writeFileSync(
+        YouTubeAdapter.QUOTA_FILE,
+        JSON.stringify({ date: this.quotaResetDate, used: this.quotaUsed }),
+      );
+    } catch {
+      // Non-critical — quota counter will just reset on next restart
+    }
   }
 
   // ── Multi-stream management ──────────────────────────────────────────
