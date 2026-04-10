@@ -285,4 +285,27 @@ router.get('/twitch/channels', requireRelayToken, async (_req: Request, res: Res
   }
 });
 
+/**
+ * GET /api/relay/tiktok/channels
+ *
+ * Returns the list of active TikTok channel identifiers that the relay should track.
+ * Only returns channels from series with active (live) broadcast days.
+ */
+router.get('/tiktok/channels', requireRelayToken, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const channels = await db('channels as c')
+      .join('broadcast_days as bd', function () {
+        this.on('bd.series_id', 'c.series_id').andOn('bd.status', db.raw("'live'"));
+      })
+      .where('c.platform', 'tiktok')
+      .where('c.is_active', true)
+      .distinct('c.channel_identifier', 'c.display_name')
+      .select('c.channel_identifier', 'c.display_name');
+
+    res.json({ channels });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
