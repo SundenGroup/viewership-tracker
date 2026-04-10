@@ -150,9 +150,12 @@ router.post('/tiktok', requireRelayToken, async (req: Request, res: Response, ne
       }
     }
 
-    // Insert snapshots — only one per channel per minute (prevents double-counting
-    // when multiple relays push data that lands on different poll timestamps)
+    // Insert or update snapshots — one per channel per minute.
+    // If a row already exists for this minute, update it ONLY if the new value is higher.
+    // This allows multiple TikTok relays (scraper + WS tracker) to both contribute,
+    // with the highest viewer count winning.
     let snapshotsInserted = 0;
+    let snapshotsUpdated = 0;
     if (insertRows.length > 0) {
       for (const row of insertRows) {
         const existsInMinute = await db('viewership_snapshots')
@@ -165,14 +168,20 @@ router.post('/tiktok', requireRelayToken, async (req: Request, res: Response, ne
         if (!existsInMinute) {
           await db('viewership_snapshots').insert(row);
           snapshotsInserted++;
+        } else if ((row.concurrent_viewers as number) > existsInMinute.concurrent_viewers) {
+          // New value is higher — update existing row
+          await db('viewership_snapshots')
+            .where('id', existsInMinute.id)
+            .update({ concurrent_viewers: row.concurrent_viewers });
+          snapshotsUpdated++;
         }
       }
     }
 
-    logger.info(`[Relay] TikTok: ${matched} channels matched, ${snapshotsInserted} snapshots inserted`);
+    logger.info(`[Relay] TikTok: ${matched} matched, ${snapshotsInserted} inserted, ${snapshotsUpdated} updated (higher)`);
 
     // Trigger WebSocket broadcast so dashboard gets updated TikTok numbers
-    if (snapshotsInserted > 0 && relayBroadcast) {
+    if ((snapshotsInserted > 0 || snapshotsUpdated > 0) && relayBroadcast) {
       const affectedSeriesIds = [...new Set(insertRows.map((r) => r.series_id as string))];
       try {
         relayBroadcast(affectedSeriesIds);
@@ -181,7 +190,7 @@ router.post('/tiktok', requireRelayToken, async (req: Request, res: Response, ne
       }
     }
 
-    res.json({ matched, snapshotsInserted });
+    res.json({ matched, snapshotsInserted, snapshotsUpdated });
   } catch (err) {
     next(err);
   }
