@@ -41,6 +41,7 @@ if (fs.existsSync(envPath)) {
 
 const RELAY_URL = process.env.RELAY_URL || 'https://tracker.clutch.game';
 const RELAY_SECRET = process.env.RELAY_SECRET || '';
+const EULER_API_KEY = process.env.EULER_API_KEY || '';
 const LOOP_MODE = process.argv.includes('--loop');
 const PUSH_INTERVAL_MS = 60_000;       // Push to server every 60 seconds
 const CHANNEL_REFRESH_MS = 5 * 60_000; // Re-fetch channel list every 5 minutes
@@ -71,6 +72,20 @@ interface TrackedChannel {
 
 const trackedChannels = new Map<string, TrackedChannel>();
 
+// Shared Euler signer instance (reused across all connections)
+let sharedSigner: unknown = null;
+async function getOrCreateSigner(): Promise<unknown> {
+  if (sharedSigner) return sharedSigner;
+  const { EulerSigner } = await import('tiktok-live-connector');
+  const signerConfig: Record<string, unknown> = {};
+  if (EULER_API_KEY) {
+    signerConfig.apiKey = EULER_API_KEY;
+    log('Using Euler API key for TikTok signatures');
+  }
+  sharedSigner = new EulerSigner(signerConfig);
+  return sharedSigner;
+}
+
 // ── Fetch channel list from server ────────────────────────────────────────
 
 async function fetchChannelList(): Promise<Array<{ channel_identifier: string; display_name: string }>> {
@@ -98,13 +113,14 @@ async function connectChannel(identifier: string, displayName: string): Promise<
 
   try {
     const { TikTokLiveConnection } = await import('tiktok-live-connector');
+    const signer = await getOrCreateSigner();
 
     const connection = new TikTokLiveConnection(clean, {
       processInitialData: true,
       fetchRoomInfoOnConnect: true,
       enableRequestPolling: true,
       requestPollingIntervalMs: 5000,
-    });
+    }, signer as any);
 
     const channel: TrackedChannel = {
       identifier,
