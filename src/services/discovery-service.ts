@@ -316,12 +316,19 @@ export class DiscoveryService {
         const disabledId = disabledMap.get(lookupKey);
         if (disabledId) {
           try {
-            const freshMeta: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
-            // Only store title/viewers if stream matches discovery keywords
-            // (multi-stream channels may have non-relevant concurrent streams)
             const relevant = matchesKeywords(stream.title, stream.displayName);
-            if (stream.title && relevant) freshMeta.stream_title = stream.title;
-            if (stream.concurrentViewers > 0 && relevant) freshMeta.discovered_ccv = stream.concurrentViewers;
+
+            // Skip re-surfacing if the stream title doesn't match keywords
+            // (e.g., streamer switched from PGL to "Just Chatting" — not relevant anymore)
+            if (!relevant) {
+              trackedSet.add(lookupKey);
+              alreadyTracked++;
+              continue;
+            }
+
+            const freshMeta: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
+            if (stream.title) freshMeta.stream_title = stream.title;
+            if (stream.concurrentViewers > 0) freshMeta.discovered_ccv = stream.concurrentViewers;
             await this.db('channels').where('id', disabledId)
               .update({ metadata: this.db.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [JSON.stringify(freshMeta)]) });
             trackedSet.add(lookupKey);
@@ -402,12 +409,14 @@ export class DiscoveryService {
                 (c) => c.channel_identifier.toLowerCase() === snap.channelIdentifier.toLowerCase(),
               );
               if (ch) {
-                const freshMeta: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
-                // Only store title/viewers if stream matches discovery keywords
-                // (multi-stream channels may have non-relevant concurrent streams)
+                // Skip if stream title doesn't match keywords
+                // (streamer may have switched to a non-relevant game/topic)
                 const relevant = matchesKeywords(snap.title, snap.displayName ?? undefined);
-                if (snap.title && relevant) freshMeta.stream_title = snap.title;
-                if (snap.concurrentViewers > 0 && relevant) freshMeta.discovered_ccv = snap.concurrentViewers;
+                if (!relevant) continue;
+
+                const freshMeta: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
+                if (snap.title) freshMeta.stream_title = snap.title;
+                if (snap.concurrentViewers > 0) freshMeta.discovered_ccv = snap.concurrentViewers;
                 await this.db('channels').where('id', ch.id)
                   .update({ metadata: this.db.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [JSON.stringify(freshMeta)]) });
                 resurfaced++;
