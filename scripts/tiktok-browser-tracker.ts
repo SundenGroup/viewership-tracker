@@ -1,12 +1,14 @@
 #!/usr/bin/env npx tsx
 /**
- * TikTok Browser Tracker — reads live viewer counts from TikTok tabs.
+ * TikTok Browser Tracker — self-hosted, no external dependencies.
  *
- * Same approach as the Twitch browser scraper: opens a Chrome tab per channel,
- * TikTok's own JavaScript handles all auth/signing, we just read the DOM.
+ * Opens TikTok live pages in Chrome, intercepts the WebSocket connection
+ * that TikTok's own JS creates, and connects to it from Node.js for
+ * real-time viewer count updates. Falls back to DOM reading if WebSocket
+ * interception fails.
  *
- * NO external dependencies (no Euler, no tiktok-live-connector).
- * Requires the Chrome browser server running (npx tsx scripts/twitch-browser-server.ts).
+ * NO Euler, NO tiktok-live-connector. Just Chrome + Node.js.
+ * Requires: Chrome browser server on port 9224, logged-in TikTok session.
  *
  * Auto-fetches active TikTok channels from the server API.
  *
@@ -20,7 +22,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { TikTokBrowserClient } from './lib/tiktok-client';
+import { TikTokWSInterceptClient } from './lib/tiktok-ws-client';
 
 // ── Load .env ─────────────────────────────────────────────────────────────
 
@@ -133,13 +135,13 @@ async function main() {
 
   log(`TikTok Browser Tracker → ${RELAY_URL}`);
   log(`Mode: ${LOOP_MODE ? 'continuous (60s)' : 'single run'}`);
-  log('No external dependencies — using Chrome browser for everything');
+  log('Self-hosted: Chrome WebSocket interception + DOM fallback. No Euler.');
 
-  const client = new TikTokBrowserClient();
+  const client = new TikTokWSInterceptClient();
   let lastChannelFetch = 0;
   let channelList: Array<{ channel_identifier: string; display_name: string }> = [];
 
-  async function refreshAndOpenChannels() {
+  async function refreshAndConnect() {
     if (Date.now() - lastChannelFetch < CHANNEL_REFRESH_MS && channelList.length > 0) return;
 
     channelList = await fetchChannelList();
@@ -151,39 +153,41 @@ async function main() {
       const clean = ch.channel_identifier.replace(/^@/, '');
       activeUsernames.add(clean);
       try {
-        await client.openChannel(ch.channel_identifier, ch.display_name);
+        await client.connectChannel(ch.channel_identifier, ch.display_name);
       } catch (err) {
-        log(`  Error opening ${ch.display_name}: ${(err as Error).message}`);
+        log(`  Error connecting ${ch.display_name}: ${(err as Error).message}`);
       }
     }
 
-    // Close tabs for channels no longer active
-    for (const username of client.getChannels()) {
+    // Disconnect channels no longer active
+    for (const username of client.getTrackedUsernames()) {
       if (!activeUsernames.has(username)) {
-        await client.closeChannel(username);
-        log(`  Closed tab for ${username} (no longer active)`);
+        await client.disconnectChannel(username);
+        log(`  Disconnected ${username} (no longer active)`);
       }
     }
   }
 
   async function runOnce() {
-    await refreshAndOpenChannels();
+    // Refresh DOM-based viewer counts for channels without active WebSocket
+    await client.refreshViewerCounts();
 
+    const states = client.getChannelStates();
     const results: Array<{ identifier: string; viewers: number; displayName: string }> = [];
 
-    for (const ch of channelList) {
-      const data = await client.readViewerCount(ch.channel_identifier);
-      if (data.isLive && data.viewers > 0) {
+    for (const ch of states) {
+      if (ch.isLive && ch.viewers > 0) {
         results.push({
-          identifier: ch.channel_identifier,
-          viewers: data.viewers,
-          displayName: data.displayName,
+          identifier: `@${ch.username}`,
+          viewers: ch.viewers,
+          displayName: ch.displayName,
         });
       }
     }
 
+    const wsCount = states.filter((s) => s.wsConnected).length;
     const liveCount = results.length;
-    log(`${liveCount}/${channelList.length} live — ${results.map((r) => `${r.displayName}=${r.viewers}`).join(', ') || 'none'}`);
+    log(`${liveCount}/${states.length} live (${wsCount} via WebSocket) — ${results.map((r) => `${r.displayName}=${r.viewers}`).join(', ') || 'none'}`);
 
     if (results.length > 0) {
       await pushToServer(results);
@@ -191,16 +195,27 @@ async function main() {
   }
 
   if (!LOOP_MODE) {
+    await refreshAndConnect();
+    await sleep(15000); // Wait for WebSocket interception
     await runOnce();
     process.exit(0);
   }
 
-  // Initial setup
-  await refreshAndOpenChannels();
-  log(`Tabs open. Waiting 5s for pages to load...`);
-  await sleep(5000);
+  // Initial setup — connect to all channels
+  await refreshAndConnect();
+  log(`Waiting 10s for WebSocket connections...`);
+  await sleep(10_000);
 
-  // Main loop
+  // Channel refresh loop (every 5 minutes)
+  setInterval(async () => {
+    try {
+      await refreshAndConnect();
+    } catch (err) {
+      log(`Channel refresh error: ${(err as Error).message}`);
+    }
+  }, CHANNEL_REFRESH_MS);
+
+  // Main push loop
   while (true) {
     try {
       await runOnce();
