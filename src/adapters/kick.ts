@@ -459,8 +459,7 @@ export class KickAdapter implements PlatformAdapter {
 
     logger.info(`Kick: fetched ${allStreams.length} livestreams (API max: 100, no pagination)`);
 
-    // Filter by keywords in stream title (client-side), matching Twitch behaviour.
-    // Kick's API doesn't support server-side keyword filtering, so we do it here.
+    // Filter by keywords in stream title/channel name (client-side).
     const streams = allStreams.filter((stream) => {
       if (!keywords || keywords.length === 0) return true;
       const title = (stream.title ?? '').toLowerCase();
