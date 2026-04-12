@@ -268,13 +268,15 @@ export class KickAdapter implements PlatformAdapter {
     }
   }
 
-  private parseLivestreamResponse(raw: KickLivestreamResponse): DiscoveredStream {
+  private parseLivestreamResponse(raw: KickLivestreamResponse): DiscoveredStream & { categoryId?: number; categoryName?: string } {
     return {
       channelIdentifier: raw.slug ?? 'unknown',
       displayName: raw.slug ?? 'unknown',
       concurrentViewers: raw.viewer_count ?? 0,
       language: raw.language ?? null,
       title: raw.stream_title ?? 'Untitled',
+      categoryId: raw.category?.id,
+      categoryName: raw.category?.name,
     };
   }
 
@@ -460,13 +462,42 @@ export class KickAdapter implements PlatformAdapter {
     logger.info(`Kick: fetched ${allStreams.length} livestreams (API max: 100, no pagination)`);
 
     // Filter by keywords in stream title/channel name (client-side).
-    const streams = allStreams.filter((stream) => {
+    // When category filter worked, results are already game-scoped — keyword match is enough.
+    // When falling back to all livestreams, also check the stream's category matches our
+    // target game. This prevents generic keywords like "watch party" from matching
+    // Dota streamers when searching for GeoGuessr watch parties.
+    const targetCategoryId = gameId ? parseInt(gameId, 10) : NaN;
+    const categoryFilterWorked = allStreams.length > 0 && !isNaN(targetCategoryId)
+      && allStreams.every((s) => (s as { categoryId?: number }).categoryId === targetCategoryId);
+
+    const streams = (allStreams as Array<DiscoveredStream & { categoryId?: number; categoryName?: string }>).filter((stream) => {
       if (!keywords || keywords.length === 0) return true;
       const title = (stream.title ?? '').toLowerCase();
       const displayName = stream.displayName.toLowerCase();
-      return keywords.some(
+      const matchesKeyword = keywords.some(
         (kw) => title.includes(kw.toLowerCase()) || displayName.includes(kw.toLowerCase()),
       );
+      if (!matchesKeyword) return false;
+
+      // If we used the category filter successfully, all results are already game-scoped
+      if (categoryFilterWorked) return true;
+
+      // Falling back to all livestreams — verify the stream's category matches our target
+      if (!isNaN(targetCategoryId) && stream.categoryId !== undefined) {
+        if (stream.categoryId !== targetCategoryId) {
+          // Stream is in a different category — only allow if channel name matches a keyword
+          // (the channel itself is relevant, just streaming under a different category)
+          const nameMatchesKeyword = keywords.some(
+            (kw) => displayName.includes(kw.toLowerCase()),
+          );
+          if (!nameMatchesKeyword) {
+            logger.debug(`Kick: skipping ${stream.displayName} — category "${stream.categoryName}" doesn't match target, title keyword match only`);
+            return false;
+          }
+        }
+      }
+
+      return true;
     });
 
     logger.debug(`Kick searchLiveStreams: ${allStreams.length} total, ${streams.length} matched keywords`, {
