@@ -253,9 +253,11 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
       if (rows.length === 0) continue;
       matched++;
 
-      // Update rows where relay value is higher
+      // Browser scraper data is real per-minute — more accurate than the API's
+      // 3-5 minute stepped cache. Always use the scraper value (replace, not max).
+      // The API data is only kept as fallback when the scraper has no data.
       for (const row of rows) {
-        if (relayViewers > row.concurrent_viewers) {
+        if (relayViewers !== row.concurrent_viewers) {
           await db('viewership_snapshots')
             .where('id', row.id)
             .update({ concurrent_viewers: relayViewers });
@@ -264,7 +266,7 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
       }
     }
 
-    logger.info(`[Relay] Twitch: ${matched} channels matched, ${updated} snapshots updated (higher)`);
+    logger.info(`[Relay] Twitch: ${matched} matched, ${updated} replaced with browser data`);
     res.json({ matched, updated });
   } catch (err) {
     next(err);
