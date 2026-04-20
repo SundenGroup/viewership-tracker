@@ -26,7 +26,7 @@ export function InteractiveMainChart({
   width = 1020,
   initialDimension = 'platform',
   initialMode = 'line',
-  showTotal = true,
+  initialShowTotal = true,
 }: {
   series: DimensionSeries;
   totalData: number[];
@@ -34,11 +34,12 @@ export function InteractiveMainChart({
   width?: number;
   initialDimension?: ChartDimension;
   initialMode?: ChartMode;
-  showTotal?: boolean;
+  initialShowTotal?: boolean;
 }) {
   const [dimension, setDimension] = useState<ChartDimension>(initialDimension);
   const [mode, setMode] = useState<ChartMode>(initialMode);
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
+  const [showTotal, setShowTotal] = useState(initialShowTotal);
 
   useEffect(() => {
     setHidden(new Set());
@@ -93,15 +94,41 @@ export function InteractiveMainChart({
           )}
         </Row>
         <Row gap={6}>
-          <Tab active={mode === 'stacked'} onClick={() => setMode('stacked')}>
-            Stacked
-          </Tab>
           <Tab active={mode === 'line'} onClick={() => setMode('line')}>
             Line
           </Tab>
+          <Tab active={mode === 'stacked'} onClick={() => setMode('stacked')}>
+            Stacked
+          </Tab>
+          {dimension !== 'total' && (
+            <button
+              type="button"
+              onClick={() => setShowTotal((v) => !v)}
+              className="btn btn-xs"
+              title="Overlay event total on the chart"
+              style={{
+                background: showTotal ? 'var(--bg-card)' : 'transparent',
+                borderColor: showTotal ? 'var(--border-strong)' : 'var(--border)',
+                color: showTotal ? 'var(--fg)' : 'var(--fg-muted)',
+                marginLeft: 4,
+              }}
+            >
+              <span
+                style={{
+                  width: 14,
+                  height: 0,
+                  display: 'inline-block',
+                  marginRight: 6,
+                  verticalAlign: 'middle',
+                  borderTop: `1px dashed ${showTotal ? 'var(--fg)' : 'var(--fg-dim)'}`,
+                }}
+              />
+              Show total
+            </button>
+          )}
         </Row>
       </Row>
-      <div style={{ height }}>
+      <div style={{ height, position: 'relative' }}>
         {dimension === 'total' ? (
           // Total dimension always renders a single filled area chart.
           <AreaChart data={stackTotals.length ? stackTotals : totalData} width={width} height={height} />
@@ -110,6 +137,24 @@ export function InteractiveMainChart({
         ) : (
           // Line mode — one line per visible series.
           <LineChart series={visible} width={width} height={height} />
+        )}
+        {/* Dashed total overlay — always shows the event's overall curve on top */}
+        {dimension !== 'total' && showTotal && totalData.length > 0 && (
+          <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+            <LineChart
+              series={[
+                {
+                  id: '__total',
+                  name: 'Total',
+                  color: 'var(--fg-muted)',
+                  data: totalData,
+                  dash: true,
+                },
+              ]}
+              width={width}
+              height={height}
+            />
+          </div>
         )}
       </div>
       {dimension !== 'total' && activeSeries.length > 1 && (

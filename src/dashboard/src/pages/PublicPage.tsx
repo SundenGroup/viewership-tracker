@@ -367,46 +367,61 @@ function PublicLive({
         </div>
       </div>
 
-      {/* Region tiles (category) */}
-      {model.regionBreakdown.length > 0 && (
-        <div style={{ padding: '0 32px 16px' }}>
-          <div className="eyebrow" style={{ marginBottom: 10 }}>
-            By category
-          </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: `repeat(auto-fit, minmax(180px, 1fr))`,
-              gap: 10,
-            }}
-          >
-            {model.regionBreakdown.slice(0, 8).map((r) => {
-              const key = (r.region ?? r.key ?? '').toLowerCase();
-              const meta = REGION_LABELS[key] ?? { label: key.toUpperCase() || '—', desc: '' };
-              const v = r.totalCCV ?? Number(r.total_ccv ?? 0) ?? 0;
-              const pct = model.liveTotal > 0 ? v / model.liveTotal : 0;
-              return (
-                <div
-                  key={key + r.key}
-                  className="card"
-                  style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 4 }}
-                >
-                  <Row justify="space-between">
-                    <span style={{ fontSize: 12, fontWeight: 600 }}>{meta.label}</span>
-                    <span style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>
-                      {(pct * 100).toFixed(1)}%
-                    </span>
-                  </Row>
-                  <div className="tabular" style={{ fontSize: 28, fontWeight: 500, letterSpacing: '-0.02em' }}>
-                    {fmtCompact(v)}
-                  </div>
-                  <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>{meta.desc}</div>
-                </div>
-              );
-            })}
-          </div>
+      {/* By category (tier breakdown) */}
+      <div style={{ padding: '0 32px 16px' }}>
+        <div className="eyebrow" style={{ marginBottom: 10 }}>
+          By category
         </div>
-      )}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, 1fr)',
+            gap: 10,
+          }}
+        >
+          {model.tierRows.map((t) => (
+            <div
+              key={t.key}
+              className="card"
+              style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 4 }}
+            >
+              <Row justify="space-between">
+                <span style={{ fontSize: 12, fontWeight: 600 }}>{t.label}</span>
+                <span
+                  className="tabular"
+                  style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}
+                >
+                  {(t.share * 100).toFixed(0)}%
+                </span>
+              </Row>
+              <div
+                className="tabular"
+                style={{ fontSize: 26, fontWeight: 500, letterSpacing: '-0.02em' }}
+              >
+                {fmtCompact(t.ccv)}
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>Live CCV</div>
+              <div
+                style={{
+                  marginTop: 8,
+                  height: 4,
+                  background: 'var(--bg-sunken)',
+                  borderRadius: 2,
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: t.share * 100 + '%',
+                    height: '100%',
+                    background: t.color,
+                  }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Platform tiles */}
       <div style={{ padding: '8px 32px 0' }}>
@@ -639,47 +654,62 @@ function PublicRecap({
         </div>
       </section>
 
-      {/* By category (region breakdown) */}
-      {model.regionBreakdown.length > 0 && (
-        <section style={{ padding: '0 40px 32px' }}>
-          <div className="eyebrow" style={{ marginBottom: 12 }}>
-            By category
-          </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: `repeat(auto-fit, minmax(220px, 1fr))`,
-              gap: 10,
-            }}
-          >
-            {model.regionBreakdown.slice(0, 8).map((r) => {
-              const key = (r.region ?? r.key ?? '').toLowerCase();
-              const meta = REGION_LABELS[key] ?? { label: key.toUpperCase() || '—', desc: '' };
-              const v = r.peakCCV ?? Number(r.peak_ccv ?? 0) ?? r.totalCCV ?? Number(r.total_ccv ?? 0) ?? 0;
-              return (
-                <div key={key + r.key} className="card" style={{ padding: 16 }}>
-                  <Row justify="space-between">
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>{meta.label}</span>
-                    <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>{meta.desc}</span>
-                  </Row>
-                  <div
-                    className="tabular"
-                    style={{
-                      fontSize: 30,
-                      fontWeight: 500,
-                      letterSpacing: '-0.02em',
-                      marginTop: 6,
-                    }}
-                  >
-                    {fmtCompact(v)}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Peak concurrent</div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+      {/* By category (tier breakdown) */}
+      <section style={{ padding: '0 40px 32px' }}>
+        <div className="eyebrow" style={{ marginBottom: 12 }}>
+          By category
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, 1fr)',
+            gap: 10,
+          }}
+        >
+          {model.tierRows.map((t) => (
+            <div key={t.key} className="card" style={{ padding: 16 }}>
+              <Row justify="space-between">
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</span>
+                <span
+                  className="tabular"
+                  style={{ fontSize: 11, color: 'var(--fg-dim)' }}
+                >
+                  {(t.share * 100).toFixed(0)}%
+                </span>
+              </Row>
+              <div
+                className="tabular"
+                style={{
+                  fontSize: 28,
+                  fontWeight: 500,
+                  letterSpacing: '-0.02em',
+                  marginTop: 6,
+                }}
+              >
+                {fmtCompact(t.peak || t.ccv)}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Peak concurrent</div>
+              <div
+                style={{
+                  marginTop: 10,
+                  height: 5,
+                  background: 'var(--bg-sunken)',
+                  borderRadius: 2,
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: t.share * 100 + '%',
+                    height: '100%',
+                    background: t.color,
+                  }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {/* Timeline */}
       <section style={{ padding: '0 40px 32px' }}>
@@ -839,7 +869,10 @@ function SortableChannelTable({
     </button>
   );
 
-  const cols = '28px 1.7fr 90px 80px 60px 80px 90px 90px';
+  // Column order per design v4: Channel · Region · Tier · Lang · [Live (live view only) · Peak · Avg · Hours]
+  const cols = live
+    ? '28px 1.7fr 90px 90px 60px 80px 80px 80px 90px'
+    : '28px 1.7fr 90px 90px 60px 80px 80px 90px';
   const regions = Array.from(new Set(channels.map((c) => c.region).filter(Boolean))) as string[];
   const filtersControlled = !!onRegionChange || !!onPlatformChange;
 
@@ -912,7 +945,7 @@ function SortableChannelTable({
         <H k="region">Region</H>
         <H k="tier">Tier</H>
         <H k="language">Lang</H>
-        {live ? <H k="live" align="right">Live</H> : <H k="peak" align="right">Peak</H>}
+        {live && <H k="live" align="right">Live</H>}
         <H k="peak" align="right">Peak</H>
         <H k="avg" align="right">Avg</H>
         <H k="hours" align="right">Hours</H>
@@ -970,7 +1003,7 @@ function SortableChannelTable({
             <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
               {(c.language ?? '').toUpperCase() || '—'}
             </div>
-            {live ? (
+            {live && (
               <div
                 className="tabular"
                 style={{
@@ -980,13 +1013,6 @@ function SortableChannelTable({
                 }}
               >
                 {c.live ? fmtCompact(c.live) : <span style={{ fontSize: 11 }}>offline</span>}
-              </div>
-            ) : (
-              <div
-                className="tabular"
-                style={{ textAlign: 'right', color: 'var(--fg-muted)' }}
-              >
-                {fmtCompact(c.peak)}
               </div>
             )}
             <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>

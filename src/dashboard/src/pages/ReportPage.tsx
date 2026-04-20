@@ -312,36 +312,52 @@ function SimpleReport({
         )}
       </div>
 
-      {model.regionBreakdown.length > 0 && (
-        <>
-          <div className="eyebrow" style={{ marginBottom: 8 }}>
-            By category
+      <div className="eyebrow" style={{ marginBottom: 8 }}>
+        By category
+      </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(5, 1fr)',
+          gap: 10,
+          marginBottom: 28,
+        }}
+      >
+        {model.tierRows.map((t) => (
+          <div key={t.key} className="card" style={{ padding: 14 }}>
+            <Row justify="space-between">
+              <div style={{ fontSize: 12, fontWeight: 600 }}>{t.label}</div>
+              <span
+                className="tabular"
+                style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}
+              >
+                {(t.share * 100).toFixed(0)}%
+              </span>
+            </Row>
+            <div className="tabular" style={{ fontSize: 24, fontWeight: 500, marginTop: 4 }}>
+              {fmtCompact(t.peak || t.ccv)}
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>Peak CCV</div>
+            <div
+              style={{
+                marginTop: 8,
+                height: 4,
+                background: 'var(--bg-sunken)',
+                borderRadius: 2,
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  width: t.share * 100 + '%',
+                  height: '100%',
+                  background: t.color,
+                }}
+              />
+            </div>
           </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: `repeat(auto-fit, minmax(180px, 1fr))`,
-              gap: 10,
-              marginBottom: 28,
-            }}
-          >
-            {model.regionBreakdown.slice(0, 8).map((r) => {
-              const key = (r.region ?? r.key ?? '').toLowerCase();
-              const meta = REGION_LABELS[key] ?? { label: key.toUpperCase() || '—', desc: '' };
-              const v = r.peakCCV ?? Number(r.peak_ccv ?? 0) ?? r.totalCCV ?? 0;
-              return (
-                <div key={key + r.key} className="card" style={{ padding: 14 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600 }}>{meta.label}</div>
-                  <div className="tabular" style={{ fontSize: 24, fontWeight: 500, marginTop: 4 }}>
-                    {fmtCompact(v)}
-                  </div>
-                  <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>Peak CCV</div>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
+        ))}
+      </div>
 
       <div style={{ marginTop: 40, fontSize: 10, color: 'var(--fg-dim)' }}>
         Clutch Viewership Tracker · tracker.clutch.game/public/{shortName}
@@ -556,47 +572,60 @@ function DetailedReport({
 
       <div style={{ height: 24 }} />
 
-      {/* Section 02 — regions */}
-      {model.regionBreakdown.length > 0 && (
-        <>
-          <Section eyebrow="02 · By category" title="Peak concurrent by region">
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: `repeat(auto-fit, minmax(220px, 1fr))`,
-                gap: 10,
-              }}
-            >
-              {model.regionBreakdown.slice(0, 8).map((r) => {
-                const key = (r.region ?? r.key ?? '').toLowerCase();
-                const meta = REGION_LABELS[key] ?? { label: key.toUpperCase() || '—', desc: '' };
-                const v = r.peakCCV ?? Number(r.peak_ccv ?? 0) ?? r.totalCCV ?? 0;
-                return (
-                  <div key={key + r.key} className="card" style={{ padding: 16 }}>
-                    <Row justify="space-between">
-                      <span style={{ fontSize: 13, fontWeight: 600 }}>{meta.label}</span>
-                      <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>{meta.desc}</span>
-                    </Row>
-                    <div
-                      className="tabular"
-                      style={{
-                        fontSize: 28,
-                        fontWeight: 500,
-                        marginTop: 6,
-                        letterSpacing: '-0.02em',
-                      }}
-                    >
-                      {fmtCompact(v)}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Peak CCV</div>
-                  </div>
-                );
-              })}
+      {/* Section 02 — By category (tier breakdown) */}
+      <Section eyebrow="02 · By category" title="Peak concurrent by tier">
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, 1fr)',
+            gap: 10,
+          }}
+        >
+          {model.tierRows.map((t) => (
+            <div key={t.key} className="card" style={{ padding: 16 }}>
+              <Row justify="space-between">
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</span>
+                <span
+                  className="tabular"
+                  style={{ fontSize: 11, color: 'var(--fg-dim)' }}
+                >
+                  {(t.share * 100).toFixed(0)}%
+                </span>
+              </Row>
+              <div
+                className="tabular"
+                style={{
+                  fontSize: 28,
+                  fontWeight: 500,
+                  marginTop: 6,
+                  letterSpacing: '-0.02em',
+                }}
+              >
+                {fmtCompact(t.peak || t.ccv)}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Peak CCV</div>
+              <div
+                style={{
+                  marginTop: 10,
+                  height: 5,
+                  background: 'var(--bg-sunken)',
+                  borderRadius: 2,
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: t.share * 100 + '%',
+                    height: '100%',
+                    background: t.color,
+                  }}
+                />
+              </div>
             </div>
-          </Section>
-          <div style={{ height: 24 }} />
-        </>
-      )}
+          ))}
+        </div>
+      </Section>
+      <div style={{ height: 24 }} />
 
       {/* Section 03 + 04 — platforms + languages side-by-side */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>

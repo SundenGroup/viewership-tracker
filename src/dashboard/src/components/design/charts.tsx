@@ -120,6 +120,8 @@ export interface SeriesData {
   color: string;
   data: number[];
   sum?: number;
+  /** Render with a dashed stroke (used for the "Show total" overlay). */
+  dash?: boolean;
 }
 
 export function StackedAreaChart({
@@ -372,7 +374,8 @@ export function LineChart({
             d={d}
             fill="none"
             stroke={s.color}
-            strokeWidth="1.6"
+            strokeWidth={s.dash ? 1.25 : 1.6}
+            strokeDasharray={s.dash ? '4 4' : undefined}
             strokeLinejoin="round"
           />
         );

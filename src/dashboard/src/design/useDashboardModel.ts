@@ -41,6 +41,18 @@ export interface PlatformRow {
   share: number;
 }
 
+export interface TierRow {
+  key: string;
+  label: string;
+  color: string;
+  /** Current live CCV across this tier's channels. */
+  ccv: number;
+  /** Peak CCV across this tier's channels (from metrics). */
+  peak: number;
+  /** Share of current total live CCV (0..1). */
+  share: number;
+}
+
 export interface DashboardModel {
   liveTotal: number;
   peakTotal: number | null;
@@ -54,6 +66,8 @@ export interface DashboardModel {
   /** Breakdown rows (region / language) straight from metrics. */
   regionBreakdown: BreakdownEntry[];
   languageBreakdown: BreakdownEntry[];
+  /** Tier rows (5 tiers, sorted by share desc) computed from the leaderboard. */
+  tierRows: TierRow[];
   /** Top-10 live channels, sorted by live CCV desc. */
   topChannels: ChannelRow[];
   /** Full leaderboard (live rows enriched with peak/avg from metrics). */
@@ -139,6 +153,32 @@ export function useDashboardModel({
     }
     platformRowsRaw.sort((a, b) => b.ccv - a.ccv);
 
+    // Tier breakdown — computed from the full leaderboard (live CCV + metrics peak).
+    const TIER_ORDER: Array<{ key: string; label: string; color: string }> = [
+      { key: 'official', label: 'Official', color: 'var(--red)' },
+      { key: 'partner', label: 'Partner', color: 'var(--info)' },
+      { key: 'player', label: 'Player POV', color: 'var(--warn)' },
+      { key: 'community', label: 'Community', color: 'var(--live)' },
+      { key: 'watch_party', label: 'Watch Party', color: 'var(--tiktok)' },
+    ];
+    const tierCcv = new Map<string, number>();
+    const tierPeak = new Map<string, number>();
+    for (const c of leaderboard) {
+      const t = c.tier || 'community';
+      tierCcv.set(t, (tierCcv.get(t) ?? 0) + (c.live ?? 0));
+      tierPeak.set(t, (tierPeak.get(t) ?? 0) + (c.peak ?? 0));
+    }
+    const tierRows: TierRow[] = TIER_ORDER.map((t) => {
+      const ccv = tierCcv.get(t.key) ?? 0;
+      const peak = tierPeak.get(t.key) ?? 0;
+      return {
+        ...t,
+        ccv,
+        peak,
+        share: liveTotal > 0 ? ccv / liveTotal : 0,
+      };
+    });
+
     // Live day
     let liveDay: BroadcastDay | null = null;
     if (seriesDetail) {
@@ -158,6 +198,7 @@ export function useDashboardModel({
       peakTotalAt: metrics?.peakCCV?.timestamp ?? null,
       avgTotal: metrics?.avgCCV ?? null,
       viewedHours: metrics?.totalViewedHours ?? null,
+      tierRows,
       liveChannelCount: liveCCV?.liveChannels ?? 0,
       trackedChannelCount: liveCCV?.channelCount ?? leaderboard.length,
       platformRows: platformRowsRaw,

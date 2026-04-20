@@ -131,3 +131,15 @@ export const IconList = (p: IconProps) => (
 export const IconSparkle = (p: IconProps) => (
   <Icon {...p} d="M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z" />
 );
+export const IconEdit = (p: IconProps) => (
+  <Icon {...p} d="M12 20h9M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+);
+export const IconTrash = (p: IconProps) => (
+  <Icon
+    {...p}
+    d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14ZM10 11v6M14 11v6"
+  />
+);
+export const IconExternal = (p: IconProps) => (
+  <Icon {...p} d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+);
