@@ -13,7 +13,7 @@ export interface SortableState<T> {
  * Sort-by-column hook. Returns the current sort key/dir, a toggle function,
  * and the sorted array. Initial click on a new key defaults to 'desc'.
  */
-export function useSortable<T extends Record<string, unknown>>(
+export function useSortable<T>(
   rows: T[],
   initialKey: keyof T,
   initialDir: SortDir = 'desc',
@@ -23,8 +23,8 @@ export function useSortable<T extends Record<string, unknown>>(
 
   const sorted = useMemo(() => {
     return [...rows].sort((a, b) => {
-      const av = a[sort];
-      const bv = b[sort];
+      const av = (a as Record<string, unknown>)[sort as string];
+      const bv = (b as Record<string, unknown>)[sort as string];
       const aVal = av ?? '';
       const bVal = bv ?? '';
       if (typeof aVal === 'string' && typeof bVal === 'string') {

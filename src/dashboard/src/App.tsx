@@ -2,7 +2,10 @@ import { useState, useCallback, useMemo } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Header, Sidebar, MainLayout } from '@/components/layout';
 import { EditorDesktop } from '@/pages/EditorDesktop';
+import { EditorMobile } from '@/pages/EditorMobile';
+import { useViewportBelow } from '@/hooks/useViewport';
 import { PublicPage } from '@/pages/PublicPage';
+import { ReportPage } from '@/pages/ReportPage';
 import { SeriesSetupPage } from '@/pages/SeriesSetupPage';
 import { SeriesEditPage } from '@/pages/SeriesEditPage';
 import { LoginPage } from '@/pages/LoginPage';
@@ -31,6 +34,14 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           {/* Public routes — no auth required */}
+          <Route
+            path="/public/:shortName/report/simple"
+            element={<ReportPage variant="simple" />}
+          />
+          <Route
+            path="/public/:shortName/report/detailed"
+            element={<ReportPage variant="detailed" />}
+          />
           <Route path="/public/:shortName/*" element={<PublicPage />} />
           <Route path="/public/:shortName" element={<PublicPage />} />
 
@@ -79,6 +90,7 @@ function AppContent() {
   const { seriesId: urlSeriesId } = useParams<{ seriesId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const isMobile = useViewportBelow(900);
 
   // Derive selected series and current view from URL
   const selectedSeriesId = urlSeriesId;
@@ -269,10 +281,28 @@ function AppContent() {
 
   // ── Render ─────────────────────────────────────────────────────────────
 
-  // Editor Desktop is a self-contained surface with its own shell (left rail
-  // with series selector + schedule, main, right rail). The legacy
-  // Header/Sidebar/MainLayout is only kept for the edit/setup/users routes.
+  // Editor Desktop / Mobile are self-contained surfaces with their own shell.
+  // The legacy Header/Sidebar/MainLayout is only kept for the edit/setup/users routes.
   if (!isUsersPage && !isNewPage && !isEditPage && selectedSeriesId) {
+    if (isMobile) {
+      return (
+        <EditorMobile
+          seriesId={selectedSeriesId}
+          seriesList={seriesList ?? []}
+          seriesDetail={seriesDetail}
+          pollingData={pollingData}
+          pollingStatus={pollingStatus}
+          discoveryStatus={discoveryStatus}
+          onSeriesChange={handleSeriesChange}
+          onExtendBroadcast={handleExtendBroadcast}
+          onBroadcastDayStatusChange={handleBroadcastDayStatusChange}
+          onTriggerPoll={handleTriggerPoll}
+          onStartPolling={handleStartPolling}
+          onStopPolling={handleStopPolling}
+          pollLoading={pollLoading}
+        />
+      );
+    }
     return (
       <EditorDesktop
         seriesId={selectedSeriesId}
