@@ -25,7 +25,7 @@ import {
   Kpi,
   ThemeToggle,
 } from '@/components/design';
-import { fmtCompact, fmtN } from '@/design/format';
+import { fmtCompact, fmtN, fmtDateLong } from '@/design/format';
 import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
 import { usePublicPollingData } from '@/hooks/usePublicPollingData';
@@ -243,9 +243,9 @@ function SimpleReport({
       </h1>
       <div style={{ fontSize: 14, color: 'var(--fg-muted)', marginBottom: 28 }}>
         {seriesInfo.startDate && seriesInfo.endDate
-          ? `${seriesInfo.startDate} – ${seriesInfo.endDate} · `
+          ? `${fmtDateLong(seriesInfo.startDate)} – ${fmtDateLong(seriesInfo.endDate)} · `
           : seriesInfo.startDate
-            ? `From ${seriesInfo.startDate} · `
+            ? `From ${fmtDateLong(seriesInfo.startDate)} · `
             : ''}
         {model.trackedChannelCount} channels · {model.platformRows.length} platforms ·{' '}
         {model.languageBreakdown.length} languages · {totalDayCount} broadcast{' '}
@@ -439,7 +439,7 @@ function DetailedReport({
       </h1>
       <div style={{ fontSize: 15, color: 'var(--fg-muted)', marginBottom: 32, maxWidth: 760 }}>
         {seriesInfo.startDate && seriesInfo.endDate
-          ? `${seriesInfo.startDate} – ${seriesInfo.endDate} · `
+          ? `${fmtDateLong(seriesInfo.startDate)} – ${fmtDateLong(seriesInfo.endDate)} · `
           : ''}
         {model.trackedChannelCount} tracked channels · {model.platformRows.length} platforms ·{' '}
         {model.languageBreakdown.length} languages · {fmtN(model.peakTotal)} peak concurrent.

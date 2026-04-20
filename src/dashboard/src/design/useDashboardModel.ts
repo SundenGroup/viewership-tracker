@@ -227,6 +227,23 @@ export function buildChartSeries({
     return k.charAt(0).toUpperCase() + k.slice(1);
   };
 
+  // Friendly labels for tier keys (the "Category" dimension is wired to tier).
+  const TIER_LABELS: Record<string, string> = {
+    official: 'Official',
+    partner: 'Partner',
+    player: 'Player',
+    community: 'Community',
+    watch_party: 'Watch Party',
+  };
+  // Consistent tier colour palette (roughly matches the post-event tier bars).
+  const TIER_COLORS: Record<string, string> = {
+    official: 'var(--red)',
+    partner: 'var(--info)',
+    player: 'var(--warn)',
+    community: 'var(--live)',
+    watch_party: 'var(--tiktok)',
+  };
+
   const platform = buildSeries(
     platformBuckets,
     (key, i) => getPlatform(key)?.color ?? palette[i % palette.length]!,
@@ -234,8 +251,8 @@ export function buildChartSeries({
   );
   const region = buildSeries(
     regionBuckets,
-    (_k, i) => palette[i % palette.length]!,
-    (k) => safeCap(k),
+    (key, i) => TIER_COLORS[key] ?? palette[i % palette.length]!,
+    (k) => TIER_LABELS[k] ?? safeCap(k),
   );
   const language = buildSeries(
     languageBuckets,

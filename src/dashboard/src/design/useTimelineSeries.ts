@@ -78,8 +78,10 @@ export function useTimelineSeries({
     { intervalMs: refreshMs, enabled },
   );
 
-  const { data: regionData } = usePollingApi<TimeSeriesResponse>(
-    () => fetchFor('region'),
+  // "Category" dimension is wired to tier (Official / Partner / Player / Community / Watch Party)
+  // because it's richer than region for these tournaments.
+  const { data: tierData } = usePollingApi<TimeSeriesResponse>(
+    () => fetchFor('tier'),
     [qs, publicShortName, languages?.join(','), platforms?.join(',')],
     { intervalMs: refreshMs, enabled },
   );
@@ -105,7 +107,8 @@ export function useTimelineSeries({
     const built = buildChartSeries({
       totalBuckets: total,
       platformBuckets: pickGrouped(platformData),
-      regionBuckets: pickGrouped(regionData),
+      // "Category" in the chart UI = tier breakdown
+      regionBuckets: pickGrouped(tierData),
       languageBuckets: pickGrouped(languageData),
     });
 
@@ -113,5 +116,5 @@ export function useTimelineSeries({
       ...built,
       loading: totalLoading,
     };
-  }, [totalData, platformData, regionData, languageData, totalLoading]);
+  }, [totalData, platformData, tierData, languageData, totalLoading]);
 }

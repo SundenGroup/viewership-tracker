@@ -35,7 +35,7 @@ export function LogoImg({
     >
       {/* Dark logo (black) — visible on light theme */}
       <img
-        src="/brand/clutch-group-black.png"
+        src={`${import.meta.env.BASE_URL}brand/clutch-group-black.png`}
         alt="Clutch Group"
         className="clutch-logo clutch-logo-dark"
         style={{
@@ -51,7 +51,7 @@ export function LogoImg({
       />
       {/* Light logo (white) — visible on dark theme */}
       <img
-        src="/brand/clutch-group-white.png"
+        src={`${import.meta.env.BASE_URL}brand/clutch-group-white.png`}
         alt=""
         aria-hidden="true"
         className="clutch-logo clutch-logo-light"

@@ -24,7 +24,7 @@ import {
   InteractiveMainChart,
   ThemeToggle,
 } from '@/components/design';
-import { fmtCompact, fmtN, fmtPct } from '@/design/format';
+import { fmtCompact, fmtN, fmtDateLong } from '@/design/format';
 import { PLATFORMS, getPlatform } from '@/design/platforms';
 import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
@@ -551,9 +551,9 @@ function PublicRecap({
               <div style={{ fontSize: 11.5, color: 'var(--fg-dim)' }}>
                 Final recap
                 {seriesInfo.startDate && seriesInfo.endDate
-                  ? ` · ${seriesInfo.startDate} – ${seriesInfo.endDate}`
+                  ? ` · ${fmtDateLong(seriesInfo.startDate)} – ${fmtDateLong(seriesInfo.endDate)}`
                   : seriesInfo.startDate
-                    ? ` · ${seriesInfo.startDate}`
+                    ? ` · ${fmtDateLong(seriesInfo.startDate)}`
                     : ''}
               </div>
             </Col>

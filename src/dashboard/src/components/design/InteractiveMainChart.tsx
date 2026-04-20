@@ -25,7 +25,7 @@ export function InteractiveMainChart({
   height = 260,
   width = 1020,
   initialDimension = 'platform',
-  initialMode = 'stacked',
+  initialMode = 'line',
   showTotal = true,
 }: {
   series: DimensionSeries;
