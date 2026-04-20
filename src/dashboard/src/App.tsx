@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Header, Sidebar, MainLayout } from '@/components/layout';
 import { EditorDesktop } from '@/pages/EditorDesktop';
-import { PublicDashboardPage } from '@/pages/PublicDashboardPage';
+import { PublicPage } from '@/pages/PublicPage';
 import { SeriesSetupPage } from '@/pages/SeriesSetupPage';
 import { SeriesEditPage } from '@/pages/SeriesEditPage';
 import { LoginPage } from '@/pages/LoginPage';
@@ -31,8 +31,8 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           {/* Public routes — no auth required */}
-          <Route path="/public/:shortName/*" element={<PublicDashboardPage />} />
-          <Route path="/public/:shortName" element={<PublicDashboardPage />} />
+          <Route path="/public/:shortName/*" element={<PublicPage />} />
+          <Route path="/public/:shortName" element={<PublicPage />} />
 
           {/* Authenticated routes — behind auth gate */}
           <Route path="/*" element={<AuthGate />} />
