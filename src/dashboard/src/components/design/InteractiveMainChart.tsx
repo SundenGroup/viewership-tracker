@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Row } from './Layout';
 import { Tab } from './Tab';
 import { AreaChart, LineChart, StackedAreaChart, type SeriesData } from './charts';
+import { PlatformPip } from './PlatformPip';
 import { fmtCompact } from '@/design/format';
 
 export type ChartDimension = 'platform' | 'region' | 'language' | 'total';
@@ -162,6 +163,7 @@ export function InteractiveMainChart({
           {activeSeries.map((s) => {
             const off = hidden.has(s.id);
             const sum = s.sum ?? s.data.reduce((a, b) => Math.max(a, b), 0);
+            const isPlatform = dimension === 'platform';
             return (
               <button
                 key={s.id}
@@ -172,20 +174,26 @@ export function InteractiveMainChart({
                   opacity: off ? 0.4 : 1,
                   borderColor: off ? 'var(--border)' : 'var(--border-strong)',
                   background: off ? 'transparent' : 'var(--bg-card)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
                 }}
               >
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 2,
-                    background: s.color,
-                    display: 'inline-block',
-                    marginRight: 4,
-                  }}
-                />
+                {isPlatform ? (
+                  <PlatformPip id={s.id} size={11} />
+                ) : (
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 2,
+                      background: s.color,
+                      display: 'inline-block',
+                    }}
+                  />
+                )}
                 {s.name ?? s.id}
-                <span className="tabular" style={{ color: 'var(--fg-dim)', marginLeft: 6 }}>
+                <span className="tabular" style={{ color: 'var(--fg-dim)' }}>
                   {fmtCompact(sum)}
                 </span>
               </button>

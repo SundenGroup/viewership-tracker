@@ -7,6 +7,7 @@ export * from './Kpi';
 export * from './Tab';
 export * from './Logo';
 export * from './PlatformPip';
+export * from './PlatformLogo';
 export * from './charts';
 export * from './useSortable';
 export * from './SortHeader';

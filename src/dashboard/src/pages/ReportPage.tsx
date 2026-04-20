@@ -461,11 +461,11 @@ function DetailedReport({
         {model.languageBreakdown.length} languages · {fmtN(model.peakTotal)} peak concurrent.
       </div>
 
-      {/* KPI grid */}
+      {/* KPI grid — 3-up per v5 */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
+          gridTemplateColumns: 'repeat(3, 1fr)',
           gap: 0,
           border: '1px solid var(--border)',
           borderRadius: 'var(--r-md)',
@@ -476,7 +476,6 @@ function DetailedReport({
           ['Peak CCV', fmtN(model.peakTotal), 'single highest moment'],
           ['Avg CCV', fmtCompact(model.avgTotal), 'across broadcast hours'],
           ['Hours watched', fmtCompact(model.viewedHours), 'live viewing only'],
-          ['Peak-to-avg ratio', concurrency, 'concurrency spikiness'],
         ].map(([l, v, sub], i, a) => (
           <div
             key={l}
@@ -490,55 +489,55 @@ function DetailedReport({
         ))}
       </div>
 
-      {/* Leaders strip */}
+      {/* Leaders strip — 3 cards per v5, with PlatformPip on relevant cards */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
+          gridTemplateColumns: 'repeat(3, 1fr)',
           gap: 10,
           marginBottom: 32,
         }}
       >
         {[
-          topChannel && [
-            'Top channel',
-            topChannel.name,
-            `${fmtCompact(topChannel.peak)} peak · ${(topChannel.language ?? '').toUpperCase() || '—'}`,
-          ],
-          topPlatform && [
-            'Top platform',
-            topPlatform.name,
-            `${fmtCompact(topPlatform.ccv)} · ${(topPlatform.share * 100).toFixed(0)}% share`,
-          ],
-          topLang && [
-            'Top language',
-            (topLang.language ?? topLang.key ?? '').toUpperCase() || '—',
-            `${fmtCompact(topLang.peakCCV ?? Number(topLang.peak_ccv ?? 0) ?? topLang.totalCCV)} peak CCV`,
-          ],
-          topRegion && [
-            'Top category',
-            REGION_LABELS[(topRegion.region ?? topRegion.key ?? '').toLowerCase()]?.label ??
-              (topRegion.region ?? topRegion.key ?? '—').toUpperCase(),
-            `${fmtCompact(topRegion.peakCCV ?? Number(topRegion.peak_ccv ?? 0) ?? topRegion.totalCCV)} peak CCV`,
-          ],
+          topChannel && {
+            label: 'Top channel',
+            value: topChannel.name,
+            sub: `${fmtCompact(topChannel.peak)} peak · ${(topChannel.language ?? '').toUpperCase() || '—'}`,
+            pip: topChannel.platform,
+          },
+          topPlatform && {
+            label: 'Top platform',
+            value: topPlatform.name,
+            sub: `${fmtCompact(topPlatform.ccv)} · ${(topPlatform.share * 100).toFixed(0)}% share`,
+            pip: topPlatform.id,
+          },
+          topLang && {
+            label: 'Top language',
+            value: (topLang.language ?? topLang.key ?? '').toUpperCase() || '—',
+            sub: `${fmtCompact(topLang.peakCCV ?? Number(topLang.peak_ccv ?? 0) ?? topLang.totalCCV)} peak CCV`,
+            pip: null,
+          },
         ]
-          .filter(Boolean)
+          .filter((e): e is { label: string; value: string; sub: string; pip: string | null } => Boolean(e))
           .map((entry) => {
-            const [l, v, sub] = entry as [string, string, string];
+            const { label: l, value: v, sub, pip } = entry;
             return (
               <div key={l} className="card" style={{ padding: '14px 16px' }}>
                 <div className="eyebrow" style={{ fontSize: 9, marginBottom: 4 }}>
                   {l}
                 </div>
-                <div
-                  style={{
-                    fontSize: 18,
-                    fontWeight: 600,
-                    letterSpacing: '-0.01em',
-                  }}
-                >
-                  {v}
-                </div>
+                <Row gap={8}>
+                  {pip && <PlatformPip id={pip} size={14} />}
+                  <div
+                    style={{
+                      fontSize: 18,
+                      fontWeight: 600,
+                      letterSpacing: '-0.01em',
+                    }}
+                  >
+                    {v}
+                  </div>
+                </Row>
                 <div style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 2 }}>{sub}</div>
               </div>
             );

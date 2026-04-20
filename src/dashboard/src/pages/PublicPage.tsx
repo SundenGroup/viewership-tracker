@@ -29,6 +29,8 @@ import { PLATFORMS, getPlatform } from '@/design/platforms';
 import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
 import { usePublicPollingData } from '@/hooks/usePublicPollingData';
+import { useViewportBelow } from '@/hooks/useViewport';
+import { PublicMobile } from './PublicMobile';
 import { Spinner } from '@/components/common/Loader';
 import * as api from '@/services/api';
 import type { PublicSeriesInfo } from '@/services/api';
@@ -45,6 +47,7 @@ const REGION_LABELS: Record<string, { label: string; desc: string }> = {
 
 export function PublicPage() {
   const { shortName } = useParams<{ shortName: string }>();
+  const isMobile = useViewportBelow(900);
 
   const [seriesInfo, setSeriesInfo] = useState<PublicSeriesInfo | null>(null);
   const [seriesLoading, setSeriesLoading] = useState(true);
@@ -175,6 +178,18 @@ export function PublicPage() {
       })),
     };
   }, [seriesInfo]);
+
+  if (isMobile) {
+    return (
+      <PublicMobile
+        seriesInfo={seriesInfo}
+        seriesDetail={seriesDetail}
+        pollingData={pollingData}
+        shortName={shortName}
+        mode={liveDay ? 'live' : 'recap'}
+      />
+    );
+  }
 
   if (liveDay) {
     return <PublicLive seriesInfo={seriesInfo} seriesDetail={seriesDetail} pollingData={pollingData} shortName={shortName} />;
@@ -441,13 +456,11 @@ function PublicLive({
               className="card"
               style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 6 }}
             >
-              <Row justify="space-between">
+              <Row gap={6}>
+                <PlatformPip id={p.id} size={12} />
                 <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg-muted)' }}>
                   {p.name}
                 </span>
-                <span
-                  style={{ width: 8, height: 8, borderRadius: 4, background: p.color }}
-                />
               </Row>
               <div
                 className="tabular"
@@ -455,9 +468,29 @@ function PublicLive({
               >
                 {fmtCompact(p.ccv)}
               </div>
-              <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>
-                {(p.share * 100).toFixed(1)}%
-              </div>
+              <Row style={{ alignItems: 'center' }}>
+                <span style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>
+                  {(p.share * 100).toFixed(1)}%
+                </span>
+                <div
+                  style={{
+                    flex: 1,
+                    marginLeft: 8,
+                    height: 3,
+                    background: 'var(--bg-sunken)',
+                    borderRadius: 2,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: p.share * 100 + '%',
+                      height: '100%',
+                      background: p.color,
+                    }}
+                  />
+                </div>
+              </Row>
             </div>
           ))}
         </div>
@@ -604,12 +637,12 @@ function PublicRecap({
         </div>
       </section>
 
-      {/* KPI strip */}
+      {/* KPI strip — 3-up per v5 (Channels + Languages removed) */}
       <section style={{ padding: '0 40px 32px' }}>
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: `repeat(auto-fit, minmax(180px, 1fr))`,
+            gridTemplateColumns: 'repeat(3, 1fr)',
             gap: 0,
             border: '1px solid var(--border)',
             borderRadius: 'var(--r-md)',
@@ -621,8 +654,6 @@ function PublicRecap({
             { label: 'Peak CCV', value: fmtN(model.peakTotal), sub: 'single highest moment' },
             { label: 'Avg CCV', value: fmtCompact(model.avgTotal), sub: 'across broadcast hours' },
             { label: 'Hours watched', value: fmtCompact(model.viewedHours), sub: 'of live broadcast' },
-            { label: 'Channels tracked', value: fmtN(model.trackedChannelCount), sub: `across ${model.platformRows.length} platforms` },
-            { label: 'Languages', value: String(model.languageBreakdown.length), sub: 'detected' },
           ].map((k, i, arr) => (
             <div
               key={k.label}
