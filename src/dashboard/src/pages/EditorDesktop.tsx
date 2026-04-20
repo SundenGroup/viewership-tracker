@@ -4,7 +4,7 @@
  * and wired to the real Clutch Tracker API via usePollingData + useDashboardModel.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Row,
@@ -31,9 +31,6 @@ import {
   IconPlus,
   IconBolt,
   IconPause,
-  IconCheck,
-  IconX,
-  IconFilter,
 } from '@/components/design';
 import { PLATFORMS, getPlatform } from '@/design/platforms';
 import { fmtCompact, fmtN, fmtDuration, fmtRelative, fmtPct, fmtDateMD } from '@/design/format';
@@ -41,6 +38,8 @@ import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
 import { useApi, usePollingApi } from '@/hooks/useApi';
 import * as api from '@/services/api';
+import { ChannelsSection } from '@/components/editor/ChannelsSection';
+import { DiscoveryFeedSection } from '@/components/editor/DiscoveryFeedSection';
 import type {
   TournamentSeries,
   SeriesWithStages,
@@ -149,59 +148,12 @@ export function EditorDesktop({
 
   const lb = useSortable(model.leaderboard, 'live', 'desc');
 
-  // ── Discovery feed (auto-discovered channels) ─────────────────────────
+  // ── All channels (feeds both Channels section + Discovery feed) ──────
 
-  const { data: discoveryChannels } = usePollingApi<Channel[]>(
-    () => api.listChannels(seriesId, { source: 'auto_discovered' }),
+  const { data: allChannels, refetch: refetchChannels } = usePollingApi<Channel[]>(
+    () => api.listChannels(seriesId),
     [seriesId, pollingData.lastDiscoveryResult?.timestamp],
     { intervalMs: 30_000 },
-  );
-
-  const [discSource, setDiscSource] = useState<string>('all');
-
-  const discoveryRows = useMemo(() => {
-    const rows = (discoveryChannels ?? []).map((c) => {
-      const md = c.metadata as { stream_title?: string; discovered_ccv?: number; source?: string; last_seen_at?: string };
-      return {
-        id: c.id,
-        name: c.display_name,
-        platform: c.platform,
-        lang: c.language ?? '',
-        title: md.stream_title ?? '',
-        ccv: Number(md.discovered_ccv ?? 0) || 0,
-        source: md.source ?? 'keyword',
-        ago: md.last_seen_at ? fmtRelative(md.last_seen_at) : '—',
-        channelIdentifier: c.channel_identifier,
-        tier: c.tier,
-        isActive: c.is_active,
-      };
-    });
-    if (discSource === 'all') return rows;
-    return rows.filter((r) => r.source === discSource);
-  }, [discoveryChannels, discSource]);
-
-  const disc = useSortable(discoveryRows, 'ccv', 'desc');
-
-  const handleApprove = useCallback(
-    async (channelId: string) => {
-      try {
-        await api.promoteChannel(channelId, seriesDetail?.discovery_default_tier ?? 'community');
-      } catch {
-        /* ignore */
-      }
-    },
-    [seriesDetail],
-  );
-
-  const handleBlock = useCallback(
-    async (channelId: string) => {
-      try {
-        await api.blockChannel(seriesId, channelId);
-      } catch {
-        /* ignore */
-      }
-    },
-    [seriesId],
   );
 
   // ── YouTube quota (for adapter-health warnings) ───────────────────────
@@ -1124,167 +1076,21 @@ export function EditorDesktop({
           </div>
         </CollapsibleSection>
 
-        {/* ── Discovery feed ──────────────────────────────────────────── */}
-        <CollapsibleSection
-          storageKey="ct-discovery"
-          eyebrow="Discovery feed"
-          title={`${discoveryRows.length} candidates detected`}
-          right={
-            <Row gap={6}>
-              <select
-                value={discSource}
-                onChange={(e) => setDiscSource(e.target.value)}
-                style={{
-                  background: 'var(--bg-card)',
-                  border: '1px solid var(--border)',
-                  color: 'var(--fg)',
-                  fontSize: 11,
-                  padding: '4px 8px',
-                  borderRadius: 4,
-                }}
-              >
-                <option value="all">All sources</option>
-                {Array.from(new Set(discoveryRows.map((r) => r.source))).map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-              <button className="btn btn-xs" type="button">
-                <IconFilter size={11} /> Keywords
-              </button>
-            </Row>
-          }
-        >
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '28px 1.6fr 90px 60px 1fr 90px 90px 110px',
-              gap: 0,
-              padding: '0 4px 6px',
-              borderBottom: '1px solid var(--border)',
-            }}
-          >
-            <div />
-            <SortHeader sort={disc.sort as string} dir={disc.dir} onClick={disc.toggle as (k: string) => void} id="name">
-              Channel
-            </SortHeader>
-            <SortHeader sort={disc.sort as string} dir={disc.dir} onClick={disc.toggle as (k: string) => void} id="platform">
-              Platform
-            </SortHeader>
-            <SortHeader sort={disc.sort as string} dir={disc.dir} onClick={disc.toggle as (k: string) => void} id="lang">
-              Lang
-            </SortHeader>
-            <SortHeader sort={disc.sort as string} dir={disc.dir} onClick={disc.toggle as (k: string) => void} id="title">
-              Title
-            </SortHeader>
-            <SortHeader sort={disc.sort as string} dir={disc.dir} onClick={disc.toggle as (k: string) => void} id="ccv" align="right">
-              CCV
-            </SortHeader>
-            <SortHeader sort={disc.sort as string} dir={disc.dir} onClick={disc.toggle as (k: string) => void} id="source" align="right">
-              Source
-            </SortHeader>
-            <div
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 10.5,
-                letterSpacing: '0.08em',
-                textTransform: 'uppercase',
-                color: 'var(--fg-dim)',
-                textAlign: 'center',
-              }}
-            >
-              Action
-            </div>
-          </div>
-          <div style={{ maxHeight: 380, overflowY: 'auto' }}>
-            {disc.sorted.map((d) => (
-              <div
-                key={d.id}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '28px 1.6fr 90px 60px 1fr 90px 90px 110px',
-                  padding: '6px 4px',
-                  borderBottom: '1px solid var(--border-faint)',
-                  fontSize: 12,
-                  alignItems: 'center',
-                }}
-              >
-                <input type="checkbox" style={{ accentColor: 'var(--red)' }} />
-                <Row gap={8} style={{ minWidth: 0 }}>
-                  <PlatformPip id={d.platform} />
-                  <span
-                    style={{
-                      fontWeight: 500,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {d.name}
-                  </span>
-                </Row>
-                <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
-                  {getPlatform(d.platform)?.name ?? d.platform}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
-                  {d.lang.toUpperCase() || '—'}
-                </div>
-                <div
-                  style={{
-                    fontSize: 11,
-                    color: 'var(--fg-muted)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                  title={d.title}
-                >
-                  {d.title || '—'}
-                </div>
-                <div className="tabular" style={{ textAlign: 'right' }}>
-                  {fmtCompact(d.ccv)}
-                </div>
-                <div
-                  style={{
-                    textAlign: 'right',
-                    fontSize: 10.5,
-                    color: 'var(--fg-dim)',
-                    fontFamily: 'var(--font-mono)',
-                  }}
-                >
-                  {d.source}
-                </div>
-                <Row gap={4} justify="center">
-                  <button
-                    className="btn btn-xs"
-                    style={{ padding: '3px 8px', color: 'var(--live)' }}
-                    onClick={() => handleApprove(d.id)}
-                    type="button"
-                  >
-                    <IconCheck size={11} /> Add
-                  </button>
-                  <button
-                    className="btn btn-xs"
-                    style={{ padding: '3px 6px', color: 'var(--danger)' }}
-                    onClick={() => handleBlock(d.id)}
-                    type="button"
-                  >
-                    <IconX size={11} />
-                  </button>
-                </Row>
-              </div>
-            ))}
-            {disc.sorted.length === 0 && (
-              <div
-                className="placeholder"
-                style={{ margin: 12, height: 80 }}
-              >
-                No discovery candidates
-              </div>
-            )}
-          </div>
-        </CollapsibleSection>
+        {/* ── Channels (curated) ──────────────────────────────────────── */}
+        <ChannelsSection
+          seriesId={seriesId}
+          seriesDetail={seriesDetail}
+          channels={allChannels ?? []}
+          onMutate={refetchChannels}
+        />
+
+        {/* ── Discovery feed (auto-paused candidates) ─────────────────── */}
+        <DiscoveryFeedSection
+          seriesId={seriesId}
+          channels={allChannels ?? []}
+          defaultTier={seriesDetail?.discovery_default_tier ?? 'community'}
+          onMutate={refetchChannels}
+        />
       </main>
 
       {/* ── Right rail ───────────────────────────────────────────────── */}
