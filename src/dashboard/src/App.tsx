@@ -4,6 +4,7 @@ import { Header, Sidebar, MainLayout } from '@/components/layout';
 import { EditorDesktop } from '@/pages/EditorDesktop';
 import { EditorMobile } from '@/pages/EditorMobile';
 import { useViewportBelow } from '@/hooks/useViewport';
+import { SurfaceThemeProvider } from '@/design/SurfaceTheme';
 import { PublicPage } from '@/pages/PublicPage';
 import { ReportPage } from '@/pages/ReportPage';
 import { SeriesSetupPage } from '@/pages/SeriesSetupPage';
@@ -31,23 +32,25 @@ export default function App() {
 
   return (
     <AuthContext.Provider value={auth}>
-      <BrowserRouter>
-        <Routes>
-          {/* Public routes — no auth required */}
-          <Route
-            path="/public/:shortName/report/simple"
-            element={<ReportPage variant="simple" />}
-          />
-          <Route
-            path="/public/:shortName/report/detailed"
-            element={<ReportPage variant="detailed" />}
-          />
-          <Route path="/public/:shortName/*" element={<PublicPage />} />
-          <Route path="/public/:shortName" element={<PublicPage />} />
+      <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+        <SurfaceThemeProvider>
+          <Routes>
+            {/* Public routes — no auth required */}
+            <Route
+              path="/public/:shortName/report/simple"
+              element={<ReportPage variant="simple" />}
+            />
+            <Route
+              path="/public/:shortName/report/detailed"
+              element={<ReportPage variant="detailed" />}
+            />
+            <Route path="/public/:shortName/*" element={<PublicPage />} />
+            <Route path="/public/:shortName" element={<PublicPage />} />
 
-          {/* Authenticated routes — behind auth gate */}
-          <Route path="/*" element={<AuthGate />} />
-        </Routes>
+            {/* Authenticated routes — behind auth gate */}
+            <Route path="/*" element={<AuthGate />} />
+          </Routes>
+        </SurfaceThemeProvider>
       </BrowserRouter>
     </AuthContext.Provider>
   );

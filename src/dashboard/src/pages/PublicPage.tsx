@@ -23,7 +23,6 @@ import {
   Section,
   InteractiveMainChart,
   ThemeToggle,
-  IconShare,
 } from '@/components/design';
 import { fmtCompact, fmtN, fmtPct } from '@/design/format';
 import { PLATFORMS, getPlatform } from '@/design/platforms';
@@ -209,6 +208,14 @@ function PublicLive({
 
   const timeline = useTimelineSeries({ scope, interval: 60, publicShortName: shortName });
 
+  // Filters lifted from the channel table into the header per design v2.
+  const [region, setRegion] = useState<string>('all');
+  const [platform, setPlatform] = useState<string>('all');
+  const regionOptions = useMemo(
+    () => Array.from(new Set(model.leaderboard.map((c) => c.region).filter(Boolean))) as string[],
+    [model.leaderboard],
+  );
+
   const liveCount = seriesInfo.stages.reduce(
     (acc, s) => acc + s.broadcast_days.filter((d) => d.status === 'live').length,
     0,
@@ -250,24 +257,44 @@ function PublicLive({
             ● Live
             {totalDayCount > 0 ? ` · Day ${currentDayNumber} of ${totalDayCount}` : ''}
           </Pill>
-          <button
-            type="button"
-            className="btn btn-xs"
-            onClick={() => {
-              const url = window.location.href;
-              if (navigator.share) {
-                navigator.share({ title: seriesInfo.name, url }).catch(() => {
-                  /* ignore */
-                });
-              } else {
-                navigator.clipboard.writeText(url).catch(() => {
-                  /* ignore */
-                });
-              }
+          <select
+            value={region}
+            onChange={(e) => setRegion(e.target.value)}
+            style={{
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              color: 'var(--fg)',
+              fontSize: 12,
+              padding: '5px 10px',
+              borderRadius: 4,
             }}
           >
-            <IconShare size={12} /> Share
-          </button>
+            <option value="all">All regions</option>
+            {regionOptions.map((r) => (
+              <option key={r} value={r}>
+                {REGION_LABELS[r.toLowerCase()]?.label ?? r.toUpperCase()}
+              </option>
+            ))}
+          </select>
+          <select
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value)}
+            style={{
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              color: 'var(--fg)',
+              fontSize: 12,
+              padding: '5px 10px',
+              borderRadius: 4,
+            }}
+          >
+            <option value="all">All platforms</option>
+            {PLATFORMS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
           <ThemeToggle />
         </Row>
       </header>
@@ -447,7 +474,14 @@ function PublicLive({
       {/* Sortable channel table */}
       <div style={{ padding: '0 32px 40px' }}>
         <Section eyebrow="Live now" title={`All ${model.leaderboard.length} tracked channels`}>
-          <SortableChannelTable channels={model.leaderboard} live />
+          <SortableChannelTable
+            channels={model.leaderboard}
+            live
+            region={region}
+            platform={platform}
+            onRegionChange={setRegion}
+            onPlatformChange={setPlatform}
+          />
         </Section>
       </div>
 
@@ -515,10 +549,12 @@ function PublicRecap({
             <Col gap={1}>
               <div style={{ fontSize: 15, fontWeight: 600 }}>{seriesInfo.name}</div>
               <div style={{ fontSize: 11.5, color: 'var(--fg-dim)' }}>
+                Final recap
                 {seriesInfo.startDate && seriesInfo.endDate
-                  ? `${seriesInfo.startDate} – ${seriesInfo.endDate}`
-                  : seriesInfo.startDate ?? ''}{' '}
-                {seriesInfo.game ? `· ${seriesInfo.game}` : ''}
+                  ? ` · ${seriesInfo.startDate} – ${seriesInfo.endDate}`
+                  : seriesInfo.startDate
+                    ? ` · ${seriesInfo.startDate}`
+                    : ''}
               </div>
             </Col>
           </Row>
@@ -723,11 +759,30 @@ function PublicRecap({
 
 // ── Sortable channel table (shared between Live + Recap) ─────────────────
 
-function SortableChannelTable({ channels, live }: { channels: ChannelRow[]; live: boolean }) {
+function SortableChannelTable({
+  channels,
+  live,
+  region: controlledRegion,
+  platform: controlledPlatform,
+  onRegionChange,
+  onPlatformChange,
+}: {
+  channels: ChannelRow[];
+  live: boolean;
+  region?: string;
+  platform?: string;
+  onRegionChange?: (v: string) => void;
+  onPlatformChange?: (v: string) => void;
+}) {
   const [sort, setSort] = useState<keyof ChannelRow>(live ? 'live' : 'peak');
   const [dir, setDir] = useState<'asc' | 'desc'>('desc');
-  const [region, setRegion] = useState<string>('all');
-  const [platform, setPlatform] = useState<string>('all');
+  const [internalRegion, setInternalRegion] = useState<string>('all');
+  const [internalPlatform, setInternalPlatform] = useState<string>('all');
+
+  const region = controlledRegion ?? internalRegion;
+  const platform = controlledPlatform ?? internalPlatform;
+  const setRegion = onRegionChange ?? setInternalRegion;
+  const setPlatform = onPlatformChange ?? setInternalPlatform;
 
   const filtered = channels
     .filter((c) => (region === 'all' ? true : c.region === region))
@@ -786,53 +841,62 @@ function SortableChannelTable({ channels, live }: { channels: ChannelRow[]; live
 
   const cols = '28px 1.7fr 90px 80px 60px 80px 90px 90px';
   const regions = Array.from(new Set(channels.map((c) => c.region).filter(Boolean))) as string[];
+  const filtersControlled = !!onRegionChange || !!onPlatformChange;
 
   return (
     <div>
-      <Row gap={8} style={{ marginBottom: 12, flexWrap: 'wrap' }}>
-        <select
-          value={region}
-          onChange={(e) => setRegion(e.target.value)}
-          style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border)',
-            color: 'var(--fg)',
-            fontSize: 12,
-            padding: '5px 10px',
-            borderRadius: 4,
-          }}
-        >
-          <option value="all">All regions</option>
-          {regions.map((r) => (
-            <option key={r} value={r}>
-              {REGION_LABELS[r.toLowerCase()]?.label ?? r.toUpperCase()}
-            </option>
-          ))}
-        </select>
-        <select
-          value={platform}
-          onChange={(e) => setPlatform(e.target.value)}
-          style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border)',
-            color: 'var(--fg)',
-            fontSize: 12,
-            padding: '5px 10px',
-            borderRadius: 4,
-          }}
-        >
-          <option value="all">All platforms</option>
-          {PLATFORMS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <div style={{ flex: 1 }} />
-        <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
-          {sorted.length} channels · sort any column
-        </div>
-      </Row>
+      {!filtersControlled ? (
+        <Row gap={8} style={{ marginBottom: 12, flexWrap: 'wrap' }}>
+          <select
+            value={region}
+            onChange={(e) => setRegion(e.target.value)}
+            style={{
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              color: 'var(--fg)',
+              fontSize: 12,
+              padding: '5px 10px',
+              borderRadius: 4,
+            }}
+          >
+            <option value="all">All regions</option>
+            {regions.map((r) => (
+              <option key={r} value={r}>
+                {REGION_LABELS[r.toLowerCase()]?.label ?? r.toUpperCase()}
+              </option>
+            ))}
+          </select>
+          <select
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value)}
+            style={{
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              color: 'var(--fg)',
+              fontSize: 12,
+              padding: '5px 10px',
+              borderRadius: 4,
+            }}
+          >
+            <option value="all">All platforms</option>
+            {PLATFORMS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <div style={{ flex: 1 }} />
+          <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+            {sorted.length} channels · sort any column
+          </div>
+        </Row>
+      ) : (
+        <Row justify="flex-end" style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+            {sorted.length} channels · sort any column
+          </div>
+        </Row>
+      )}
 
       <div
         style={{

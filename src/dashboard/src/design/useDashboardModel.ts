@@ -191,15 +191,18 @@ export function buildChartSeries({
   const timestamps = totalBuckets.map((b) => b.timestamp);
 
   const buildSeries = (
-    buckets: Array<{ timestamp: string; groupKey: string; totalCCV: number }>,
+    buckets: Array<{ timestamp: string; groupKey: string | null; totalCCV: number }>,
     colorFor: (key: string, idx: number) => string,
     nameFor: (key: string) => string,
   ): SeriesData[] => {
-    // Group by groupKey → map of ts → value
+    // Group by groupKey → map of ts → value.
+    // Coerce null/empty groupKeys to a shared "Other" bucket rather than
+    // crashing or scattering null-keyed series.
     const perGroup = new Map<string, Map<string, number>>();
     for (const b of buckets) {
-      if (!perGroup.has(b.groupKey)) perGroup.set(b.groupKey, new Map());
-      perGroup.get(b.groupKey)!.set(b.timestamp, Number(b.totalCCV) || 0);
+      const key = b.groupKey && String(b.groupKey).trim() ? String(b.groupKey) : '—';
+      if (!perGroup.has(key)) perGroup.set(key, new Map());
+      perGroup.get(key)!.set(b.timestamp, Number(b.totalCCV) || 0);
     }
     const groups = Array.from(perGroup.entries());
     // Sort groups by peak desc
@@ -219,20 +222,25 @@ export function buildChartSeries({
 
   const palette = ['var(--red)', 'var(--info)', 'var(--warn)', 'var(--live)', 'var(--twitch)', 'var(--tiktok)', 'var(--youtube)', 'var(--kick)'];
 
+  const safeCap = (k: string) => {
+    if (!k) return '—';
+    return k.charAt(0).toUpperCase() + k.slice(1);
+  };
+
   const platform = buildSeries(
     platformBuckets,
     (key, i) => getPlatform(key)?.color ?? palette[i % palette.length]!,
-    (key) => getPlatform(key)?.name ?? key,
+    (key) => getPlatform(key)?.name ?? safeCap(key),
   );
   const region = buildSeries(
     regionBuckets,
     (_k, i) => palette[i % palette.length]!,
-    (k) => k.charAt(0).toUpperCase() + k.slice(1),
+    (k) => safeCap(k),
   );
   const language = buildSeries(
     languageBuckets,
     (_k, i) => palette[i % palette.length]!,
-    (k) => k.toUpperCase(),
+    (k) => (k ? k.toUpperCase() : '—'),
   );
 
   return {
