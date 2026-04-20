@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Row } from './Layout';
 import { Tab } from './Tab';
-import { AreaChart, StackedAreaChart, type SeriesData } from './charts';
+import { AreaChart, LineChart, StackedAreaChart, type SeriesData } from './charts';
 import { fmtCompact } from '@/design/format';
 
 export type ChartDimension = 'platform' | 'region' | 'language' | 'total';
-export type ChartMode = 'stacked' | 'total';
+/** `stacked` = stacked areas per series. `line` = one line per series. */
+export type ChartMode = 'stacked' | 'line';
 
 export interface DimensionSeries {
   platform: SeriesData[];
@@ -95,16 +96,20 @@ export function InteractiveMainChart({
           <Tab active={mode === 'stacked'} onClick={() => setMode('stacked')}>
             Stacked
           </Tab>
-          <Tab active={mode === 'total'} onClick={() => setMode('total')}>
+          <Tab active={mode === 'line'} onClick={() => setMode('line')}>
             Line
           </Tab>
         </Row>
       </Row>
       <div style={{ height }}>
-        {mode === 'total' || dimension === 'total' ? (
-          <AreaChart data={stackTotals} width={width} height={height} />
-        ) : (
+        {dimension === 'total' ? (
+          // Total dimension always renders a single filled area chart.
+          <AreaChart data={stackTotals.length ? stackTotals : totalData} width={width} height={height} />
+        ) : mode === 'stacked' ? (
           <StackedAreaChart series={visible} width={width} height={height} />
+        ) : (
+          // Line mode — one line per visible series.
+          <LineChart series={visible} width={width} height={height} />
         )}
       </div>
       {dimension !== 'total' && activeSeries.length > 1 && (

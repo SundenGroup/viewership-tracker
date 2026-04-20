@@ -26,6 +26,28 @@ export function fmtDuration(ms: number | null | undefined): string {
   return `${s}s`;
 }
 
+/**
+ * Format a broadcast-day date as `MM-DD` regardless of whether the DB returned
+ * a `YYYY-MM-DD` string or a full ISO timestamp (e.g. `2026-04-25T00:00:00.000Z`).
+ */
+export function fmtDateMD(dateStr: string | null | undefined): string {
+  if (!dateStr) return '—';
+  // Take the first 10 chars ("YYYY-MM-DD") then drop the year prefix.
+  const ymd = dateStr.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd.slice(5);
+  return dateStr;
+}
+
+/** Format a broadcast-day date as `MMM D` (e.g. `Apr 25`). */
+export function fmtDateLong(dateStr: string | null | undefined): string {
+  if (!dateStr) return '—';
+  const ymd = dateStr.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return dateStr;
+  const d = new Date(ymd + 'T00:00:00Z');
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
 export function fmtRelative(isoOrMs: string | number | Date | null | undefined): string {
   if (isoOrMs == null) return '—';
   const ts = typeof isoOrMs === 'number' ? isoOrMs : new Date(isoOrMs).getTime();

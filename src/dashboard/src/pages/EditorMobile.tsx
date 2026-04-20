@@ -25,7 +25,7 @@ import {
   IconX,
 } from '@/components/design';
 import { PLATFORMS } from '@/design/platforms';
-import { fmtCompact, fmtN, fmtDuration } from '@/design/format';
+import { fmtCompact, fmtN, fmtDuration, fmtDateMD } from '@/design/format';
 import { useDashboardModel } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
 import { usePollingApi } from '@/hooks/useApi';
@@ -315,7 +315,7 @@ export function EditorMobile({
                             marginTop: 2,
                           }}
                         >
-                          {d.date}
+                          {fmtDateMD(d.date)}
                         </div>
                       </div>
                     ))}
@@ -473,7 +473,7 @@ export function EditorMobile({
             {liveDay ? (
               <Section
                 eyebrow="Broadcast day"
-                title={`${liveDay.label} · ${liveDay.date.slice(5)}`}
+                title={`${liveDay.label} · ${fmtDateMD(liveDay.date)}`}
                 compact
                 right={
                   liveDay.status === 'live' ? (

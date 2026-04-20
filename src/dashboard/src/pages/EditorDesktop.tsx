@@ -36,7 +36,7 @@ import {
   IconFilter,
 } from '@/components/design';
 import { PLATFORMS, getPlatform } from '@/design/platforms';
-import { fmtCompact, fmtN, fmtDuration, fmtRelative, fmtPct } from '@/design/format';
+import { fmtCompact, fmtN, fmtDuration, fmtRelative, fmtPct, fmtDateMD } from '@/design/format';
 import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
 import { useApi, usePollingApi } from '@/hooks/useApi';
@@ -421,7 +421,7 @@ export function EditorDesktop({
                         className="mono"
                         style={{ fontSize: 10, color: 'var(--fg-dim)' }}
                       >
-                        {d.date.slice(5)}
+                        {fmtDateMD(d.date)}
                       </span>
                     </button>
                   );
@@ -1375,7 +1375,7 @@ export function EditorDesktop({
                 >
                   <Row justify="space-between">
                     <div style={{ fontSize: 13, fontWeight: 500 }}>
-                      {activeDay.label} · {activeDay.date.slice(5)}
+                      {activeDay.label} · {fmtDateMD(activeDay.date)}
                     </div>
                     {activeDay.status === 'live' && (
                       <Pill tone="live">Live · {fmtDuration(broadcastDuration)}</Pill>
