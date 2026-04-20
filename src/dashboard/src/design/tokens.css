@@ -1,0 +1,272 @@
+/* ============================================================
+   Clutch Viewership Tracker — Design Tokens
+   Anchors: Clutch Red (#FF154D) with near-neutral backgrounds.
+   Every color defined in both light and dark schemes.
+   Ported from design_handoff_clutch_tracker/reference/assets/tokens.css
+   ============================================================ */
+
+:root,
+:root[data-theme="dark"] {
+  /* Surfaces — warm-neutral black, almost zero blue */
+  --bg:           #0A0B0D;
+  --bg-raised:   #111316;
+  --bg-card:     #16181C;
+  --bg-sunken:   #07080A;
+  --bg-hover:    #1C1F24;
+
+  /* Foreground */
+  --fg:          #EBEFF4;
+  --fg-muted:    #9AA1AB;
+  --fg-dim:      #6B7280;
+  --fg-faint:    #3F4651;
+
+  /* Borders + separators */
+  --border:      #20242A;
+  --border-strong: #2A2F36;
+  --border-faint: #161A1F;
+
+  /* Brand */
+  --red:         #FF154D;
+  --red-soft:    #FF4D7A;
+  --red-wash:    rgba(255, 21, 77, 0.12);
+  --red-glow:    rgba(255, 21, 77, 0.35);
+
+  /* Accents (functional) */
+  --live:        #34D399;
+  --warn:        #FBBF24;
+  --info:        #60A5FA;
+  --danger:      #F87171;
+
+  /* Chart palette (consistent both themes) */
+  --twitch:      #9146FF;
+  --youtube:     #FF3B3B;
+  --kick:        #53FC18;
+  --tiktok:      #FF2D68;
+  --steam:       #3B9AFC;
+  --soop:        #2E6BFF;
+  --chzzk:       #00FFA3;
+  --trovo:       #30C67C;
+  --nimotv:      #FF9F2E;
+
+  /* Shadows */
+  --shadow-sm:   0 1px 2px rgba(0,0,0,0.40);
+  --shadow-md:   0 4px 14px rgba(0,0,0,0.45);
+  --shadow-lg:   0 12px 32px rgba(0,0,0,0.55);
+
+  /* Radii */
+  --r-xs: 4px; --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-xl: 20px;
+
+  /* Type */
+  --font-sans: 'Inter Tight', 'DM Sans', -apple-system, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  --font-display: 'Inter Tight', 'DM Sans', -apple-system, system-ui, sans-serif;
+}
+
+:root[data-theme="light"] {
+  --bg:          #FAFAF8;
+  --bg-raised:   #FFFFFF;
+  --bg-card:     #FFFFFF;
+  --bg-sunken:   #F2F1EE;
+  --bg-hover:    #EDECE8;
+
+  --fg:          #0B0C0E;
+  --fg-muted:    #555962;
+  --fg-dim:      #7A7F89;
+  --fg-faint:    #B7BAC0;
+
+  --border:      #E5E3DE;
+  --border-strong: #D6D3CC;
+  --border-faint: #EFEDE8;
+
+  --red:         #E50E42;
+  --red-soft:    #FF4D7A;
+  --red-wash:    rgba(229, 14, 66, 0.08);
+  --red-glow:    rgba(229, 14, 66, 0.18);
+
+  --live:        #10A472;
+  --warn:        #B97B00;
+  --info:        #2563EB;
+  --danger:      #DC2626;
+
+  --shadow-sm:   0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md:   0 4px 14px rgba(0,0,0,0.08);
+  --shadow-lg:   0 12px 32px rgba(0,0,0,0.10);
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv11","ss01","ss03";
+  font-synthesis: none;
+  transition: background-color .25s ease, color .25s ease;
+}
+
+body, #root { min-height: 100vh; }
+
+::selection { background: var(--red-glow); color: var(--fg); }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+a { color: inherit; text-decoration: none; }
+input, select, textarea { font-family: inherit; }
+
+/* Theme-aware Clutch logo swap — white on dark, black on light */
+.clutch-logo-dark { opacity: 1; }
+.clutch-logo-light { opacity: 0; }
+:root[data-theme="dark"] .clutch-logo-dark { opacity: 0; }
+:root[data-theme="dark"] .clutch-logo-light { opacity: 1; }
+
+/* ============================================================
+   Utility primitives used across the design
+   ============================================================ */
+
+.mono { font-family: var(--font-mono); }
+.display { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.035em; }
+.tabular { font-variant-numeric: tabular-nums; }
+
+.kbd {
+  display: inline-flex; align-items: center;
+  height: 20px; padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-sunken);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--fg-muted);
+  letter-spacing: 0.01em;
+}
+
+.chip-live {
+  background: color-mix(in oklab, var(--live) 15%, transparent);
+  border-color: color-mix(in oklab, var(--live) 30%, transparent);
+  color: var(--live);
+}
+
+.chip-red {
+  background: var(--red-wash);
+  border-color: color-mix(in oklab, var(--red) 30%, transparent);
+  color: var(--red);
+}
+
+.dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--fg-faint);
+  flex: none;
+  display: inline-block;
+}
+.dot-live {
+  background: var(--live);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--live) 25%, transparent);
+  animation: pulse 1.8s ease-out infinite;
+}
+.dot-red {
+  background: var(--red);
+  box-shadow: 0 0 0 4px var(--red-glow);
+  animation: pulse 1.8s ease-out infinite;
+}
+
+@keyframes pulse {
+  0%,100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Stripe placeholder for imagery */
+.placeholder {
+  background:
+    repeating-linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--fg) 4%, transparent) 0 8px,
+      transparent 8px 16px
+    ),
+    var(--bg-sunken);
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  display: flex; align-items: center; justify-content: center;
+  text-align: center;
+  border-radius: var(--r-md);
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.divider {
+  height: 1px; background: var(--border); margin: 12px 0;
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px;
+  border-radius: var(--r-sm);
+  font-size: 13px; font-weight: 500;
+  background: var(--bg-hover);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  transition: background .15s, border-color .15s;
+}
+.btn:hover { background: var(--border); }
+.btn-primary {
+  background: var(--red);
+  color: white;
+  border-color: var(--red);
+}
+.btn-primary:hover { background: var(--red-soft); border-color: var(--red-soft); }
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--fg-muted);
+}
+.btn-ghost:hover { background: var(--bg-hover); color: var(--fg); }
+
+.btn-xs { padding: 4px 8px; font-size: 11px; border-radius: 4px; }
+
+/* H tags — tight, opinionated */
+h1,h2,h3,h4 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
+h1 { font-size: 28px; }
+h2 { font-size: 20px; }
+h3 { font-size: 15px; }
+h4 { font-size: 13px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+
+/* eyebrow */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+/* focus */
+:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
