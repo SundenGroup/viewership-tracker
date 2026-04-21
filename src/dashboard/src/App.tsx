@@ -35,17 +35,40 @@ export default function App() {
       <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
         <SurfaceThemeProvider>
           <Routes>
-            {/* Public routes — no auth required */}
+            {/* Public routes — no auth required. Wrap in ErrorBoundary so a
+                single render crash doesn't leave fans staring at a blank page. */}
             <Route
               path="/public/:shortName/report/simple"
-              element={<ReportPage variant="simple" />}
+              element={
+                <ErrorBoundary>
+                  <ReportPage variant="simple" />
+                </ErrorBoundary>
+              }
             />
             <Route
               path="/public/:shortName/report/detailed"
-              element={<ReportPage variant="detailed" />}
+              element={
+                <ErrorBoundary>
+                  <ReportPage variant="detailed" />
+                </ErrorBoundary>
+              }
             />
-            <Route path="/public/:shortName/*" element={<PublicPage />} />
-            <Route path="/public/:shortName" element={<PublicPage />} />
+            <Route
+              path="/public/:shortName/*"
+              element={
+                <ErrorBoundary>
+                  <PublicPage />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/public/:shortName"
+              element={
+                <ErrorBoundary>
+                  <PublicPage />
+                </ErrorBoundary>
+              }
+            />
 
             {/* Authenticated routes — behind auth gate */}
             <Route path="/*" element={<AuthGate />} />

@@ -93,45 +93,10 @@ export function PublicPage() {
     return null;
   }, [seriesInfo]);
 
-  if (seriesLoading) {
-    return (
-      <div
-        style={{
-          minHeight: '100vh',
-          background: 'var(--bg)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <Spinner size="lg" />
-      </div>
-    );
-  }
-
-  if (seriesError || !seriesInfo || !shortName) {
-    return (
-      <div
-        style={{
-          minHeight: '100vh',
-          background: 'var(--bg)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <div style={{ textAlign: 'center' }}>
-          <h1 style={{ fontSize: 22, fontWeight: 600 }}>Series not found</h1>
-          <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 6 }}>
-            {seriesError ?? 'This series does not exist or is not publicly available.'}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // Construct a SeriesWithStages-shaped object for useDashboardModel
-  const seriesDetail: SeriesWithStages = useMemo(() => {
+  // Construct a SeriesWithStages-shaped object for useDashboardModel.
+  // NOTE: must run BEFORE any early returns to obey React's rules-of-hooks.
+  const seriesDetail: SeriesWithStages | null = useMemo(() => {
+    if (!seriesInfo) return null;
     return {
       id: seriesInfo.id,
       name: seriesInfo.name,
@@ -178,6 +143,44 @@ export function PublicPage() {
       })),
     };
   }, [seriesInfo]);
+
+  // Early-return states — ALL hooks above this line must be called on every render.
+  if (seriesLoading) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          background: 'var(--bg)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  if (seriesError || !seriesInfo || !shortName || !seriesDetail) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          background: 'var(--bg)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <div style={{ textAlign: 'center' }}>
+          <h1 style={{ fontSize: 22, fontWeight: 600 }}>Series not found</h1>
+          <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 6 }}>
+            {seriesError ?? 'This series does not exist or is not publicly available.'}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (isMobile) {
     return (

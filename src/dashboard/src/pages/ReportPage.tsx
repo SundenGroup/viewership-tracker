@@ -11,7 +11,13 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
+import { usePollingApi } from '@/hooks/useApi';
+import type {
+  LiveCCVResponse,
+  MetricsResponse,
+  ScopeLevel,
+} from '@/types/api';
 import {
   Row,
   Col,
@@ -47,6 +53,9 @@ export type ReportVariant = 'simple' | 'detailed';
 
 export function ReportPage({ variant }: { variant: ReportVariant }) {
   const { shortName } = useParams<{ shortName: string }>();
+  const [searchParams] = useSearchParams();
+  const stageIdFromUrl = searchParams.get('stage') ?? undefined;
+  const dayIdFromUrl = searchParams.get('day') ?? undefined;
 
   const [seriesInfo, setSeriesInfo] = useState<PublicSeriesInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -119,13 +128,67 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     };
   }, [seriesInfo]);
 
+  // Pick the report's scope:
+  //   - explicit ?stage=<id> or ?day=<id> URL param wins
+  //   - otherwise auto-pick the latest stage where every broadcast day is
+  //     marked completed (so the preview always lands on real post-event data)
+  //   - else fall back to series-level scope
+  const resolvedScope: { level: ScopeLevel; id: string; label: string } | null = useMemo(() => {
+    if (!seriesInfo) return null;
+    if (dayIdFromUrl) {
+      for (const s of seriesInfo.stages) {
+        const d = s.broadcast_days.find((x) => x.id === dayIdFromUrl);
+        if (d) return { level: 'day', id: d.id, label: `${s.name} · ${d.label}` };
+      }
+    }
+    if (stageIdFromUrl) {
+      const s = seriesInfo.stages.find((x) => x.id === stageIdFromUrl);
+      if (s) return { level: 'stage', id: s.id, label: s.name };
+    }
+    // Highest-order stage whose every broadcast day is completed.
+    const completedStages = [...seriesInfo.stages]
+      .filter(
+        (s) => s.broadcast_days.length > 0 && s.broadcast_days.every((d) => d.status === 'completed'),
+      )
+      .sort((a, b) => b.order - a.order);
+    const pick = completedStages[0];
+    if (pick) return { level: 'stage', id: pick.id, label: pick.name };
+    return { level: 'series', id: seriesInfo.id, label: seriesInfo.name };
+  }, [seriesInfo, stageIdFromUrl, dayIdFromUrl]);
+
+  // Scoped metrics — override pollingData.metrics when we have a sub-scope.
+  const needsScopedFetch = !!resolvedScope && resolvedScope.level !== 'series';
+  const scopeCacheKey = resolvedScope
+    ? `${resolvedScope.level}:${resolvedScope.id}`
+    : '';
+
+  const { data: scopedMetrics } = usePollingApi<MetricsResponse>(
+    () =>
+      needsScopedFetch && shortName && resolvedScope
+        ? api.getPublicMetrics(shortName, resolvedScope.level, resolvedScope.id)
+        : Promise.resolve(null as unknown as MetricsResponse),
+    [shortName, scopeCacheKey],
+    { intervalMs: 60_000, enabled: needsScopedFetch && !!shortName },
+  );
+
+  const { data: scopedLiveCCV } = usePollingApi<LiveCCVResponse>(
+    () =>
+      needsScopedFetch && shortName && resolvedScope
+        ? api.getPublicLiveCCV(shortName, resolvedScope.level, resolvedScope.id)
+        : Promise.resolve(null as unknown as LiveCCVResponse),
+    [shortName, scopeCacheKey],
+    { intervalMs: 60_000, enabled: needsScopedFetch && !!shortName },
+  );
+
   const model = useDashboardModel({
     seriesDetail,
-    metrics: pollingData.metrics,
-    liveCCV: pollingData.liveCCV,
+    metrics: needsScopedFetch ? scopedMetrics : pollingData.metrics,
+    liveCCV: needsScopedFetch ? scopedLiveCCV : pollingData.liveCCV,
   });
 
-  const scope = seriesId ? { level: 'series' as const, id: seriesId } : null;
+  const scope = resolvedScope
+    ? { level: resolvedScope.level, id: resolvedScope.id }
+    : null;
   const timeline = useTimelineSeries({
     scope,
     interval: 300,
@@ -177,6 +240,8 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
         model={model}
         timeline={timeline}
         shortName={shortName!}
+        scopeLabel={resolvedScope?.label ?? seriesInfo.name}
+        scopeLevel={resolvedScope?.level ?? 'series'}
       />
     );
   }
@@ -186,6 +251,8 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       model={model}
       timeline={timeline}
       shortName={shortName!}
+      scopeLabel={resolvedScope?.label ?? seriesInfo.name}
+      scopeLevel={resolvedScope?.level ?? 'series'}
     />
   );
 }
@@ -197,16 +264,30 @@ function SimpleReport({
   model,
   timeline,
   shortName,
+  scopeLabel,
+  scopeLevel,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
   timeline: ReturnType<typeof useTimelineSeries>;
   shortName: string;
+  scopeLabel: string;
+  scopeLevel: ScopeLevel;
 }) {
-  const totalDayCount = seriesInfo.stages.reduce(
-    (acc, s) => acc + s.broadcast_days.length,
-    0,
-  );
+  const totalDayCount = useMemo(() => {
+    if (scopeLevel === 'stage') {
+      const stage = seriesInfo.stages.find((s) => s.name === scopeLabel);
+      return stage?.broadcast_days.length ?? 0;
+    }
+    return seriesInfo.stages.reduce((acc, s) => acc + s.broadcast_days.length, 0);
+  }, [seriesInfo, scopeLabel, scopeLevel]);
+
+  const eyebrow =
+    scopeLevel === 'stage' ? 'Stage report' : scopeLevel === 'day' ? 'Broadcast day report' : 'Series report';
+  const headline =
+    scopeLevel === 'series'
+      ? seriesInfo.name
+      : `${seriesInfo.name} — ${scopeLabel}`;
 
   return (
     <div
@@ -228,7 +309,7 @@ function SimpleReport({
         </Row>
       </Row>
       <div className="eyebrow" style={{ marginBottom: 8 }}>
-        Series report
+        {eyebrow}
       </div>
       <h1
         style={{
@@ -239,7 +320,7 @@ function SimpleReport({
           letterSpacing: '-0.025em',
         }}
       >
-        {seriesInfo.name}
+        {headline}
       </h1>
       <div style={{ fontSize: 14, color: 'var(--fg-muted)', marginBottom: 28 }}>
         {seriesInfo.startDate && seriesInfo.endDate
@@ -373,16 +454,28 @@ function DetailedReport({
   model,
   timeline,
   shortName,
+  scopeLabel,
+  scopeLevel,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
   timeline: ReturnType<typeof useTimelineSeries>;
   shortName: string;
+  scopeLabel: string;
+  scopeLevel: ScopeLevel;
 }) {
-  const totalDayCount = seriesInfo.stages.reduce(
-    (acc, s) => acc + s.broadcast_days.length,
-    0,
-  );
+  const totalDayCount = useMemo(() => {
+    if (scopeLevel === 'stage') {
+      const stage = seriesInfo.stages.find((s) => s.name === scopeLabel);
+      return stage?.broadcast_days.length ?? 0;
+    }
+    return seriesInfo.stages.reduce((acc, s) => acc + s.broadcast_days.length, 0);
+  }, [seriesInfo, scopeLabel, scopeLevel]);
+
+  const eyebrow =
+    scopeLevel === 'stage' ? `Stage report · ${scopeLabel}` : scopeLevel === 'day' ? `Broadcast day · ${scopeLabel}` : 'Executive summary';
+  const headline =
+    scopeLevel === 'series' ? seriesInfo.name : `${seriesInfo.name} — ${scopeLabel}`;
 
   // Leaders
   const topChannel = [...model.leaderboard].sort((a, b) => b.peak - a.peak)[0];
@@ -440,7 +533,7 @@ function DetailedReport({
       </Row>
 
       <div className="eyebrow" style={{ marginBottom: 8 }}>
-        Executive summary
+        {eyebrow}
       </div>
       <h1
         style={{
@@ -451,7 +544,7 @@ function DetailedReport({
           fontWeight: 600,
         }}
       >
-        {seriesInfo.name}
+        {headline}
       </h1>
       <div style={{ fontSize: 15, color: 'var(--fg-muted)', marginBottom: 32, maxWidth: 760 }}>
         {seriesInfo.startDate && seriesInfo.endDate
