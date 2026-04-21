@@ -22,10 +22,11 @@ import {
   TierBadge,
   AreaChart,
   InteractiveMainChart,
+  HeroKPIs,
   ThemeToggle,
   IconShare,
 } from '@/components/design';
-import { fmtCompact, fmtN, fmtDateLong, fmtPct } from '@/design/format';
+import { fmtCompact, fmtN, fmtDateLong } from '@/design/format';
 import { PLATFORMS } from '@/design/platforms';
 
 // ── Shared helpers ────────────────────────────────────────────────────
@@ -664,43 +665,16 @@ export function PublicMobile({
               </div>
             </section>
 
-            {/* KPI 3-up */}
+            {/* HeroKPIs — mobile variant with micro visualizations (v6) */}
             <section style={{ padding: '0 16px 16px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-                {[
-                  { label: 'Peak CCV', value: fmtCompact(model.peakTotal), trend: null },
-                  { label: 'Avg CCV', value: fmtCompact(model.avgTotal), trend: null },
-                  { label: 'Hours', value: fmtCompact(model.viewedHours), trend: null },
-                ].map((k) => (
-                  <div key={k.label} className="card" style={{ padding: 10 }}>
-                    <div className="eyebrow" style={{ fontSize: 8 }}>
-                      {k.label}
-                    </div>
-                    <div
-                      className="tabular"
-                      style={{
-                        fontSize: 20,
-                        fontWeight: 500,
-                        marginTop: 2,
-                        letterSpacing: '-0.02em',
-                      }}
-                    >
-                      {k.value}
-                    </div>
-                    {k.trend != null && (
-                      <div
-                        style={{
-                          fontSize: 9.5,
-                          color: k.trend >= 0 ? 'var(--live)' : 'var(--danger)',
-                          marginTop: 2,
-                        }}
-                      >
-                        {fmtPct(k.trend)} YoY
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <HeroKPIs
+                variant="mobile"
+                peak={model.peakTotal}
+                avg={model.avgTotal}
+                hours={model.viewedHours}
+                days={Math.max(1, seriesInfo.stages.reduce((a, s) => a + s.broadcast_days.length, 0))}
+                timeSeries={timeline.total}
+              />
             </section>
           </>
         )}

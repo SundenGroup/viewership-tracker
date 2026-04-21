@@ -4,6 +4,8 @@ export * from './icons';
 export * from './Layout';
 export * from './Pill';
 export * from './Kpi';
+export * from './HeroKPIs';
+export * from './ScopeScrubber';
 export * from './Tab';
 export * from './Logo';
 export * from './PlatformPip';

@@ -29,6 +29,7 @@ import {
   Section,
   InteractiveMainChart,
   Kpi,
+  HeroKPIs,
   ThemeToggle,
 } from '@/components/design';
 import { fmtCompact, fmtN, fmtDateLong } from '@/design/format';
@@ -334,40 +335,15 @@ function SimpleReport({
       </div>
 
       {/* KPIs */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: 0,
-          borderTop: '1px solid var(--border)',
-          borderBottom: '1px solid var(--border)',
-          marginBottom: 28,
-        }}
-      >
-        {[
-          ['Peak CCV', fmtN(model.peakTotal)],
-          ['Avg CCV', fmtCompact(model.avgTotal)],
-          ['Hours', fmtCompact(model.viewedHours)],
-          ['Channels', fmtN(model.trackedChannelCount)],
-        ].map(([l, v], i, a) => (
-          <div
-            key={l}
-            style={{
-              padding: '18px 16px',
-              borderRight: i < a.length - 1 ? '1px solid var(--border)' : 'none',
-            }}
-          >
-            <div className="eyebrow" style={{ fontSize: 9 }}>
-              {l}
-            </div>
-            <div
-              className="tabular"
-              style={{ fontSize: 26, fontWeight: 500, marginTop: 4 }}
-            >
-              {v}
-            </div>
-          </div>
-        ))}
+      <div style={{ marginBottom: 28 }}>
+        <HeroKPIs
+          variant="md"
+          peak={model.peakTotal}
+          avg={model.avgTotal}
+          hours={model.viewedHours}
+          days={totalDayCount}
+          timeSeries={timeline.total}
+        />
       </div>
 
       <div className="eyebrow" style={{ marginBottom: 8 }}>
@@ -554,32 +530,16 @@ function DetailedReport({
         {model.languageBreakdown.length} languages · {fmtN(model.peakTotal)} peak concurrent.
       </div>
 
-      {/* KPI grid — 3-up per v5 */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: 0,
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--r-md)',
-          marginBottom: 32,
-        }}
-      >
-        {[
-          ['Peak CCV', fmtN(model.peakTotal), 'single highest moment'],
-          ['Avg CCV', fmtCompact(model.avgTotal), 'across broadcast hours'],
-          ['Hours watched', fmtCompact(model.viewedHours), 'live viewing only'],
-        ].map(([l, v, sub], i, a) => (
-          <div
-            key={l}
-            style={{
-              padding: '16px 18px',
-              borderRight: i < a.length - 1 ? '1px solid var(--border)' : 'none',
-            }}
-          >
-            <Kpi size="sm" label={l} value={v} sub={sub} />
-          </div>
-        ))}
+      {/* HeroKPIs — 3-cell strip with micro visualizations (v6) */}
+      <div style={{ marginBottom: 32 }}>
+        <HeroKPIs
+          variant="xl"
+          peak={model.peakTotal}
+          avg={model.avgTotal}
+          hours={model.viewedHours}
+          days={totalDayCount}
+          timeSeries={timeline.total}
+        />
       </div>
 
       {/* Leaders strip — 3 cards per v5, with PlatformPip on relevant cards */}
@@ -895,7 +855,7 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
     </button>
   );
 
-  const cols = '28px 1.7fr 80px 90px 50px 80px 80px 80px';
+  const cols = '28px 1.4fr 100px 110px 52px 90px 90px 100px';
 
   return (
     <div>
@@ -962,13 +922,13 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
             {(c.language ?? '').toUpperCase() || '—'}
           </div>
           <div className="tabular" style={{ textAlign: 'right' }}>
-            {fmtCompact(c.peak)}
+            {fmtN(c.peak)}
           </div>
           <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
-            {fmtCompact(c.avg)}
+            {fmtN(c.avg)}
           </div>
           <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
-            {fmtCompact(c.hours)}
+            {fmtN(c.hours)}
           </div>
         </div>
       ))}

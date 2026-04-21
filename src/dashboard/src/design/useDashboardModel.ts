@@ -218,8 +218,8 @@ export function useDashboardModel({
       { key: 'official', label: 'Official', color: 'var(--red)' },
       { key: 'partner', label: 'Partner', color: 'var(--info)' },
       { key: 'player', label: 'Player POV', color: 'var(--warn)' },
-      { key: 'community', label: 'Community', color: 'var(--live)' },
-      { key: 'watch_party', label: 'Watch Party', color: 'var(--tiktok)' },
+      { key: 'community', label: 'Community', color: 'var(--fg-muted)' },
+      { key: 'watch_party', label: 'Watch Party', color: 'var(--live)' },
     ];
     const tierCcv = new Map<string, number>();
     const tierPeak = new Map<string, number>();

@@ -22,6 +22,8 @@ import {
   VBarChart,
   Section,
   InteractiveMainChart,
+  HeroKPIs,
+  ScopeScrubber,
   ThemeToggle,
 } from '@/components/design';
 import { fmtCompact, fmtN, fmtDateLong } from '@/design/format';
@@ -34,7 +36,7 @@ import { PublicMobile } from './PublicMobile';
 import { Spinner } from '@/components/common/Loader';
 import * as api from '@/services/api';
 import type { PublicSeriesInfo } from '@/services/api';
-import type { SeriesWithStages } from '@/types/api';
+import type { SeriesWithStages, ViewGroup } from '@/types/api';
 
 const REGION_LABELS: Record<string, { label: string; desc: string }> = {
   global: { label: 'Global', desc: 'Official multi-region feeds' },
@@ -220,9 +222,88 @@ function PublicLive({
     liveCCV: pollingData.liveCCV,
   });
 
-  const scope = seriesInfo.id
-    ? { level: 'series' as const, id: seriesInfo.id }
-    : null;
+  // Scope scrubber state (v6) — defaults to Day scope on the currently-live day.
+  const liveDayInitial = useMemo(() => {
+    for (const s of seriesInfo.stages) {
+      for (const d of s.broadcast_days) {
+        if (d.status === 'live') return { stageId: s.id, dayId: d.id };
+      }
+    }
+    return null;
+  }, [seriesInfo]);
+
+  const [scopeLevel, setScopeLevel] = useState<'series' | 'stage' | 'day'>(
+    liveDayInitial ? 'day' : 'series',
+  );
+  const [selectedStageId, setSelectedStageId] = useState<string | null>(
+    liveDayInitial?.stageId ?? null,
+  );
+  const [selectedDayId, setSelectedDayId] = useState<string | null>(liveDayInitial?.dayId ?? null);
+  const [viewGroup, setViewGroup] = useState<string>('all');
+
+  const activeStage = useMemo(() => {
+    if (selectedStageId) return seriesInfo.stages.find((s) => s.id === selectedStageId) ?? null;
+    return (
+      seriesInfo.stages.find((s) => s.broadcast_days.some((d) => d.status === 'live')) ??
+      seriesInfo.stages[seriesInfo.stages.length - 1] ??
+      null
+    );
+  }, [seriesInfo, selectedStageId]);
+
+  const allDaysFlat = useMemo(
+    () => seriesInfo.stages.flatMap((s) => s.broadcast_days),
+    [seriesInfo],
+  );
+
+  const activeDay = useMemo(() => {
+    if (selectedDayId) return allDaysFlat.find((d) => d.id === selectedDayId) ?? null;
+    return (
+      allDaysFlat.find((d) => d.status === 'live') ??
+      allDaysFlat[allDaysFlat.length - 1] ??
+      null
+    );
+  }, [selectedDayId, allDaysFlat]);
+
+  const stageOptions = useMemo(
+    () =>
+      seriesInfo.stages.map((s) => {
+        const dates = s.broadcast_days.map((d) => d.date).sort();
+        const first = dates[0];
+        const last = dates[dates.length - 1];
+        const isLive = s.broadcast_days.some((d) => d.status === 'live');
+        return {
+          id: s.id,
+          label: s.name,
+          sub: first === last ? first : first && last ? `${first} – ${last}` : undefined,
+          live: isLive,
+        };
+      }),
+    [seriesInfo],
+  );
+
+  const dayOptions = useMemo(() => {
+    const days = scopeLevel === 'stage' && activeStage ? activeStage.broadcast_days : allDaysFlat;
+    return [...days]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((d) => ({
+        id: d.id,
+        label: d.label,
+        sub: fmtDateLong(d.date),
+        live: d.status === 'live',
+      }));
+  }, [scopeLevel, activeStage, allDaysFlat]);
+
+  const viewGroups = useMemo<ViewGroup[]>(
+    () => ((seriesInfo.viewGroups ?? []) as ViewGroup[]),
+    [seriesInfo],
+  );
+
+  const scope = useMemo(() => {
+    if (scopeLevel === 'series') return { level: 'series' as const, id: seriesInfo.id };
+    if (scopeLevel === 'stage' && activeStage) return { level: 'stage' as const, id: activeStage.id };
+    if (scopeLevel === 'day' && activeDay) return { level: 'day' as const, id: activeDay.id };
+    return { level: 'series' as const, id: seriesInfo.id };
+  }, [scopeLevel, activeStage, activeDay, seriesInfo.id]);
 
   const timeline = useTimelineSeries({ scope, interval: 60, publicShortName: shortName });
 
@@ -316,6 +397,32 @@ function PublicLive({
           <ThemeToggle />
         </Row>
       </header>
+
+      {/* Scope scrubber — Series / Stage / Day + View Group (v6) */}
+      <div
+        style={{
+          padding: '14px 32px',
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--bg-raised)',
+        }}
+      >
+        <ScopeScrubber
+          level={scopeLevel}
+          onLevelChange={(l) => setScopeLevel(l as 'series' | 'stage' | 'day')}
+          stages={stageOptions}
+          stageId={activeStage?.id}
+          onStageChange={(id) => {
+            setSelectedStageId(id);
+            setSelectedDayId(null);
+          }}
+          days={dayOptions}
+          dayId={activeDay?.id}
+          onDayChange={(id) => setSelectedDayId(id)}
+          viewGroup={viewGroup}
+          onViewGroupChange={setViewGroup}
+          viewGroups={viewGroups}
+        />
+      </div>
 
       {/* Hero row */}
       <div
@@ -640,52 +747,16 @@ function PublicRecap({
         </div>
       </section>
 
-      {/* KPI strip — 3-up per v5 (Channels + Languages removed) */}
+      {/* HeroKPIs — 3-cell strip with micro visualizations (v6) */}
       <section style={{ padding: '0 40px 32px' }}>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
-            gap: 0,
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--r-md)',
-            overflow: 'hidden',
-            background: 'var(--bg-card)',
-          }}
-        >
-          {[
-            { label: 'Peak CCV', value: fmtN(model.peakTotal), sub: 'single highest moment' },
-            { label: 'Avg CCV', value: fmtCompact(model.avgTotal), sub: 'across broadcast hours' },
-            { label: 'Hours watched', value: fmtCompact(model.viewedHours), sub: 'of live broadcast' },
-          ].map((k, i, arr) => (
-            <div
-              key={k.label}
-              style={{
-                padding: '20px 18px',
-                borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none',
-              }}
-            >
-              <div className="eyebrow" style={{ fontSize: 11 }}>
-                {k.label}
-              </div>
-              <div
-                className="tabular"
-                style={{
-                  fontSize: 32,
-                  fontWeight: 500,
-                  letterSpacing: '-0.02em',
-                  lineHeight: 1.05,
-                  marginTop: 4,
-                }}
-              >
-                {k.value}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 2 }}>
-                {k.sub}
-              </div>
-            </div>
-          ))}
-        </div>
+        <HeroKPIs
+          variant="xl"
+          peak={model.peakTotal}
+          avg={model.avgTotal}
+          hours={model.viewedHours}
+          days={totalDayCount}
+          timeSeries={timeline.total}
+        />
       </section>
 
       {/* By category (tier breakdown) */}
@@ -903,10 +974,10 @@ function SortableChannelTable({
     </button>
   );
 
-  // Column order per design v4: Channel · Region · Tier · Lang · [Live (live view only) · Peak · Avg · Hours]
+  // Column order per design v6: tier gets fixed 110px so the badge doesn't wrap.
   const cols = live
-    ? '28px 1.7fr 90px 90px 60px 80px 80px 80px 90px'
-    : '28px 1.7fr 90px 90px 60px 80px 80px 90px';
+    ? '28px 1.4fr 100px 110px 60px 90px 90px 90px 100px'
+    : '28px 1.4fr 100px 110px 60px 90px 90px 100px';
   const regions = Array.from(new Set(channels.map((c) => c.region).filter(Boolean))) as string[];
   const filtersControlled = !!onRegionChange || !!onPlatformChange;
 
@@ -1046,17 +1117,17 @@ function SortableChannelTable({
                   fontWeight: c.live ? 500 : 400,
                 }}
               >
-                {c.live ? fmtCompact(c.live) : <span style={{ fontSize: 11 }}>offline</span>}
+                {c.live ? fmtN(c.live) : <span style={{ fontSize: 11 }}>offline</span>}
               </div>
             )}
             <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
-              {fmtCompact(c.peak)}
+              {fmtN(c.peak)}
             </div>
             <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
-              {fmtCompact(c.avg)}
+              {fmtN(c.avg)}
             </div>
             <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
-              {fmtCompact(c.hours)}
+              {fmtN(c.hours)}
             </div>
           </div>
         ))}

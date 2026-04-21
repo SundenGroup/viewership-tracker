@@ -22,6 +22,7 @@ import {
   useSortable,
   SortHeader,
   ThemeToggle,
+  ScopeScrubber,
   InteractiveMainChart,
   IconChev,
   IconChevDown,
@@ -105,11 +106,74 @@ export function EditorDesktop({
     return liveDay ?? allDays[allDays.length - 1] ?? null;
   }, [selectedDayId, liveDay, allDays]);
 
+  // ── ScopeScrubber state (series / stage / day + view group) ─────────
+
+  const [scopeLevel, setScopeLevel] = useState<'series' | 'stage' | 'day'>(() =>
+    liveDay ? 'day' : 'series',
+  );
+  const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
+  const [viewGroup, setViewGroup] = useState<string>('all');
+
+  const stageOptions = useMemo(() => {
+    if (!seriesDetail) return [];
+    return seriesDetail.stages.map((s) => {
+      const isLive = s.broadcast_days.some((d) => d.status === 'live');
+      const dates = s.broadcast_days.map((d) => d.date).sort();
+      const first = dates[0];
+      const last = dates[dates.length - 1];
+      return {
+        id: s.id,
+        label: s.name,
+        sub: first === last ? first : first && last ? `${first} – ${last}` : undefined,
+        live: isLive,
+      };
+    });
+  }, [seriesDetail]);
+
+  const activeStage = useMemo(() => {
+    if (!seriesDetail) return null;
+    if (selectedStageId) return seriesDetail.stages.find((s) => s.id === selectedStageId) ?? null;
+    // Default: stage containing the live day, or the last stage.
+    return (
+      seriesDetail.stages.find((s) => s.broadcast_days.some((d) => d.status === 'live')) ??
+      seriesDetail.stages[seriesDetail.stages.length - 1] ??
+      null
+    );
+  }, [seriesDetail, selectedStageId]);
+
+  const dayOptions = useMemo(() => {
+    const days = scopeLevel === 'stage' && activeStage ? activeStage.broadcast_days : allDays;
+    return [...days]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((d) => ({
+        id: d.id,
+        label: d.label,
+        sub: fmtDateMD(d.date),
+        live: d.status === 'live',
+      }));
+  }, [scopeLevel, activeStage, allDays]);
+
+  const viewGroups = useMemo(() => {
+    const raw = (seriesDetail?.metadata as { viewGroups?: Array<{ name: string }> } | undefined)
+      ?.viewGroups;
+    return raw ?? [];
+  }, [seriesDetail]);
+
   const scope = useMemo(() => {
+    if (scopeLevel === 'series' && seriesId) {
+      return { level: 'series' as const, id: seriesId, label: 'Full Series' };
+    }
+    if (scopeLevel === 'stage' && activeStage) {
+      return { level: 'stage' as const, id: activeStage.id, label: activeStage.name };
+    }
+    if (scopeLevel === 'day' && activeDay) {
+      return { level: 'day' as const, id: activeDay.id, label: activeDay.label };
+    }
+    // Fallbacks
     if (activeDay) return { level: 'day' as const, id: activeDay.id, label: activeDay.label };
     if (seriesId) return { level: 'series' as const, id: seriesId, label: 'Full Series' };
     return null;
-  }, [activeDay, seriesId]);
+  }, [scopeLevel, activeStage, activeDay, seriesId]);
 
   const timeline = useTimelineSeries({ scope, interval: 60 });
 
@@ -551,6 +615,26 @@ export function EditorDesktop({
           </Row>
         </Row>
 
+        {/* ── Scope scrubber — Series / Stage / Day + View Group (v6) ──── */}
+        <div className="card" style={{ padding: '10px 14px' }}>
+          <ScopeScrubber
+            level={scopeLevel}
+            onLevelChange={(l) => setScopeLevel(l as 'series' | 'stage' | 'day')}
+            stages={stageOptions}
+            stageId={activeStage?.id}
+            onStageChange={(id) => {
+              setSelectedStageId(id);
+              setSelectedDayId(null);
+            }}
+            days={dayOptions}
+            dayId={activeDay?.id}
+            onDayChange={(id) => setSelectedDayId(id)}
+            viewGroup={viewGroup}
+            onViewGroupChange={setViewGroup}
+            viewGroups={viewGroups}
+          />
+        </div>
+
         {/* ── Hero — live CCV with inline KPI strip ───────────────────── */}
         <div
           className="card"
@@ -959,7 +1043,7 @@ export function EditorDesktop({
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '28px 1fr 90px 90px 78px 78px 78px 60px',
+              gridTemplateColumns: '28px 1fr 100px 110px 90px 100px 110px 60px',
               gap: 0,
               padding: '0 4px 6px',
               borderBottom: '1px solid var(--border)',
@@ -994,7 +1078,7 @@ export function EditorDesktop({
                 key={c.id}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '28px 1fr 90px 90px 78px 78px 78px 60px',
+                  gridTemplateColumns: '28px 1fr 100px 110px 90px 100px 110px 60px',
                   padding: '7px 4px',
                   borderBottom: '1px solid var(--border-faint)',
                   fontSize: 12.5,
@@ -1046,19 +1130,19 @@ export function EditorDesktop({
                     color: c.live ? 'var(--fg)' : 'var(--fg-dim)',
                   }}
                 >
-                  {c.live ? fmtCompact(c.live) : '—'}
+                  {c.live ? fmtN(c.live) : '—'}
                 </div>
                 <div
                   className="tabular"
                   style={{ textAlign: 'right', color: 'var(--fg-muted)' }}
                 >
-                  {fmtCompact(c.peak)}
+                  {fmtN(c.peak)}
                 </div>
                 <div
                   className="tabular"
                   style={{ textAlign: 'right', color: 'var(--fg-muted)' }}
                 >
-                  {fmtCompact(c.hours)}
+                  {fmtN(c.hours)}
                 </div>
                 <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--fg-muted)' }}>
                   {(c.language ?? '').toUpperCase() || '—'}
@@ -1375,29 +1459,125 @@ export function EditorDesktop({
               </Col>
             </RailCollapse>
 
-            {/* Discovery */}
+            {/* Discovery control (v6) */}
             <RailCollapse eyebrow="Discovery" storageKey="ct-rail-discovery">
-              <div className="card" style={{ padding: 12, fontSize: 12 }}>
-                <Row justify="space-between" style={{ marginBottom: 6 }}>
-                  <span>Last cycle</span>
-                  <span className="mono" style={{ color: 'var(--fg-dim)', fontSize: 10 }}>
+              <div
+                className="card"
+                style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}
+              >
+                <Row justify="space-between">
+                  <Row gap={6}>
+                    <span
+                      className={
+                        discoveryStatus?.activeDiscoveries?.includes(seriesId)
+                          ? 'dot dot-live'
+                          : 'dot'
+                      }
+                    />
+                    <span style={{ fontSize: 13, fontWeight: 500 }}>
+                      {discoveryStatus?.activeDiscoveries?.includes(seriesId)
+                        ? 'Running'
+                        : 'Stopped'}
+                    </span>
+                  </Row>
+                  <span className="mono" style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
+                    Last{' '}
                     {discoveryStatus?.lastResults?.[seriesId]
                       ? fmtRelative(discoveryStatus.lastResults[seriesId]!.timestamp)
                       : 'never'}
                   </span>
                 </Row>
+                <div style={{ fontSize: 11, color: 'var(--fg-muted)', lineHeight: 1.4 }}>
+                  Auto-searches live streams matching this series' keywords. New channels
+                  appear in the Discovery Feed.
+                </div>
                 {discoveryStatus?.lastResults?.[seriesId] && (
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: 'var(--fg-muted)',
-                      fontFamily: 'var(--font-mono)',
-                    }}
-                  >
-                    {discoveryStatus.lastResults[seriesId]!.discovered} discovered ·{' '}
-                    {discoveryStatus.lastResults[seriesId]!.added} added
-                  </div>
+                  <Col gap={4} style={{ fontSize: 12 }}>
+                    <Row justify="space-between">
+                      <span style={{ color: 'var(--fg-dim)' }}>Discovered</span>
+                      <span className="tabular" style={{ fontWeight: 500 }}>
+                        {fmtN(discoveryStatus.lastResults[seriesId]!.discovered)}
+                      </span>
+                    </Row>
+                    <Row justify="space-between">
+                      <span style={{ color: 'var(--fg-dim)' }}>Added</span>
+                      <span
+                        className="tabular"
+                        style={{
+                          fontWeight: 500,
+                          color:
+                            discoveryStatus.lastResults[seriesId]!.added > 0
+                              ? 'var(--live)'
+                              : 'var(--fg)',
+                        }}
+                      >
+                        {fmtN(discoveryStatus.lastResults[seriesId]!.added)}
+                      </span>
+                    </Row>
+                  </Col>
                 )}
+                {ytQuota && (
+                  <Col gap={4} style={{ fontSize: 11 }}>
+                    <Row justify="space-between">
+                      <span style={{ color: 'var(--fg-dim)' }}>YouTube quota</span>
+                      <span
+                        className="mono tabular"
+                        style={{
+                          color: ytQuota.percentage > 75 ? 'var(--warn)' : 'var(--fg-muted)',
+                        }}
+                      >
+                        {fmtCompact(ytQuota.used)} / {fmtCompact(ytQuota.limit)} ·{' '}
+                        {ytQuota.percentage.toFixed(0)}%
+                      </span>
+                    </Row>
+                    <div
+                      style={{
+                        height: 4,
+                        background: 'var(--bg-sunken)',
+                        borderRadius: 2,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: Math.min(100, ytQuota.percentage) + '%',
+                          height: '100%',
+                          background:
+                            ytQuota.percentage > 75 ? 'var(--warn)' : 'var(--live)',
+                        }}
+                      />
+                    </div>
+                  </Col>
+                )}
+                <Row gap={6}>
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    style={{ flex: 1 }}
+                    onClick={() => api.triggerDiscovery(seriesId).catch(() => {})}
+                  >
+                    <IconBolt size={11} /> Trigger now
+                  </button>
+                  {discoveryStatus?.activeDiscoveries?.includes(seriesId) ? (
+                    <button
+                      type="button"
+                      className="btn btn-xs"
+                      style={{ flex: 1 }}
+                      onClick={() => api.stopDiscovery(seriesId).catch(() => {})}
+                    >
+                      <IconPause size={11} /> Pause
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-xs"
+                      style={{ flex: 1 }}
+                      onClick={() => api.startDiscovery(seriesId).catch(() => {})}
+                    >
+                      Start
+                    </button>
+                  )}
+                </Row>
               </div>
             </RailCollapse>
           </>
