@@ -333,15 +333,18 @@ export function LineChart({
   width = 900,
   height = 220,
   padding = 24,
+  maxOverride,
 }: {
   series: SeriesData[];
   width?: number;
   height?: number;
   padding?: number;
+  /** Force the y-axis max (used to keep overlay charts aligned with the main chart). */
+  maxOverride?: number;
 }) {
   if (!series || !series.length) return null;
   const n = series[0]!.data.length;
-  const max = Math.max(...series.flatMap((s) => s.data), 1);
+  const max = maxOverride ?? Math.max(...series.flatMap((s) => s.data), 1);
   const w = width - padding * 2;
   const h = height - padding * 2;
   const step = n > 1 ? w / (n - 1) : 0;

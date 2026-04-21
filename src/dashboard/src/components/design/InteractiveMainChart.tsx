@@ -136,11 +136,30 @@ export function InteractiveMainChart({
         ) : mode === 'stacked' ? (
           <StackedAreaChart series={visible} width={width} height={height} />
         ) : (
-          // Line mode — one line per visible series.
-          <LineChart series={visible} width={width} height={height} />
+          // Line mode — one line per visible series. When "Show total" is on
+          // we append the total as a dashed series to the SAME chart so both
+          // scale against the same y-axis max.
+          <LineChart
+            series={
+              showTotal && totalData.length > 0
+                ? [
+                    ...visible,
+                    {
+                      id: '__total',
+                      name: 'Total',
+                      color: 'var(--fg-muted)',
+                      data: totalData,
+                      dash: true,
+                    },
+                  ]
+                : visible
+            }
+            width={width}
+            height={height}
+          />
         )}
-        {/* Dashed total overlay — always shows the event's overall curve on top */}
-        {dimension !== 'total' && showTotal && totalData.length > 0 && (
+        {/* Dashed total overlay for STACKED mode — share y-max with stacked areas */}
+        {dimension !== 'total' && mode === 'stacked' && showTotal && totalData.length > 0 && (
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
             <LineChart
               series={[
@@ -154,6 +173,11 @@ export function InteractiveMainChart({
               ]}
               width={width}
               height={height}
+              maxOverride={Math.max(
+                ...stackTotals,
+                ...totalData,
+                1,
+              )}
             />
           </div>
         )}
