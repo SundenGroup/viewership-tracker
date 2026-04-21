@@ -49,6 +49,10 @@ export interface TierRow {
   ccv: number;
   /** Peak CCV across this tier's channels (from metrics). */
   peak: number;
+  /** Avg CCV across this tier's channels (from metrics, summed). */
+  avg: number;
+  /** Total viewed hours across this tier's channels (whole hours). */
+  viewedHours: number;
   /** Share of current total live CCV (0..1). */
   share: number;
 }
@@ -163,19 +167,37 @@ export function useDashboardModel({
     ];
     const tierCcv = new Map<string, number>();
     const tierPeak = new Map<string, number>();
+    const tierAvg = new Map<string, number>();
+    const tierHours = new Map<string, number>();
     for (const c of leaderboard) {
       const t = c.tier || 'community';
       tierCcv.set(t, (tierCcv.get(t) ?? 0) + (c.live ?? 0));
       tierPeak.set(t, (tierPeak.get(t) ?? 0) + (c.peak ?? 0));
+      tierAvg.set(t, (tierAvg.get(t) ?? 0) + (c.avg ?? 0));
+      tierHours.set(t, (tierHours.get(t) ?? 0) + (c.hours ?? 0));
     }
+    const totalTierHours = Array.from(tierHours.values()).reduce((a, b) => a + b, 0);
     const tierRows: TierRow[] = TIER_ORDER.map((t) => {
       const ccv = tierCcv.get(t.key) ?? 0;
       const peak = tierPeak.get(t.key) ?? 0;
+      const avg = tierAvg.get(t.key) ?? 0;
+      const viewedHours = tierHours.get(t.key) ?? 0;
+      // Tier "share" uses the most meaningful denominator available:
+      // viewedHours is authoritative post-event; live CCV is the fallback
+      // for in-flight events where hours haven't accumulated yet.
+      const share =
+        totalTierHours > 0
+          ? viewedHours / totalTierHours
+          : liveTotal > 0
+            ? ccv / liveTotal
+            : 0;
       return {
         ...t,
         ccv,
         peak,
-        share: liveTotal > 0 ? ccv / liveTotal : 0,
+        avg,
+        viewedHours,
+        share,
       };
     });
 
