@@ -100,7 +100,7 @@ export function useDashboardModel({
       if (id) leaderboardByChannel.set(id, row);
     }
 
-    const toChannelRow = (
+    const toChannelRowFromLive = (
       c: LiveCCVResponse['channels'][number],
     ): ChannelRow => {
       const meta = leaderboardByChannel.get(c.channelId);
@@ -123,13 +123,49 @@ export function useDashboardModel({
       };
     };
 
-    const leaderboard = liveChannels
-      .map(toChannelRow)
-      .sort((a, b) => (b.live || b.peak) - (a.live || a.peak));
+    const toChannelRowFromMetrics = (row: LeaderboardEntry): ChannelRow => {
+      const peak = row.peakCCV ?? Number(row.peak_ccv ?? 0) ?? 0;
+      const avg = row.avgCCV ?? Number(row.avg_ccv ?? 0) ?? 0;
+      const mins = row.totalViewedMinutes ?? Number(row.total_viewed_minutes ?? 0) ?? 0;
+      return {
+        id: row.channelId ?? row.channel_id ?? '',
+        name: row.displayName ?? row.display_name ?? '',
+        platform: row.platform ?? null,
+        tier: row.tier ?? 'community',
+        language: row.language ?? null,
+        region: null,
+        live: 0,
+        peak: peak || 0,
+        avg: avg || 0,
+        hours: Math.round((mins || 0) / 60),
+        title: '',
+        status: 'offline',
+      };
+    };
+
+    // Build the full leaderboard by UNIONING live channels + metrics leaderboard.
+    // Post-event (no one live) the metrics leaderboard is the primary source.
+    // During a live broadcast, liveCCV is primary and metrics enriches.
+    const byId = new Map<string, ChannelRow>();
+    for (const c of liveChannels) {
+      if (c.channelId) byId.set(c.channelId, toChannelRowFromLive(c));
+    }
+    for (const row of metrics?.channelLeaderboard ?? []) {
+      const id = row.channelId ?? row.channel_id ?? '';
+      if (!id) continue;
+      if (!byId.has(id)) {
+        byId.set(id, toChannelRowFromMetrics(row));
+      }
+    }
+    const leaderboard = Array.from(byId.values()).sort(
+      (a, b) => (b.live || b.peak) - (a.live || a.peak),
+    );
 
     const topChannels = [...leaderboard].sort((a, b) => b.live - a.live).slice(0, 10);
 
-    // Platform rows from liveCCV (fallback) or metrics.platformBreakdown (preferred)
+    // Platform rows — use peak CCV from metrics.platformBreakdown as the
+    // authoritative "share" signal (lives post-event); fall back to live CCV
+    // during a broadcast when metrics haven't aggregated yet.
     const platformRowsRaw: PlatformRow[] = [];
     const breakdownMap = new Map<string, BreakdownEntry>();
     for (const b of metrics?.platformBreakdown ?? []) {
@@ -137,22 +173,42 @@ export function useDashboardModel({
       if (key) breakdownMap.set(key, b);
     }
 
-    // Aggregate live CCV per platform as the most up-to-date signal
+    // Aggregate live CCV per platform for the in-flight signal.
     const livePerPlatform = new Map<string, number>();
     for (const c of liveChannels) {
       if (!c.platform) continue;
       livePerPlatform.set(c.platform, (livePerPlatform.get(c.platform) ?? 0) + (c.concurrentViewers ?? 0));
     }
 
+    // Decide which signal drives "share":
+    //   - if any platform has live CCV > 0 → live is the primary
+    //   - else use peak CCV from breakdown (post-event)
+    const hasLive = livePerPlatform.size > 0 && Array.from(livePerPlatform.values()).some((v) => v > 0);
+    const totalPeakAcrossPlatforms = Array.from(breakdownMap.values()).reduce(
+      (a, b) => a + (Number(b.peakCCV ?? b.peak_ccv ?? 0) || 0),
+      0,
+    );
+
     for (const p of PLATFORMS) {
-      const ccv = livePerPlatform.get(p.id) ?? 0;
-      if (ccv === 0 && !breakdownMap.has(p.id)) continue;
+      const liveCcv = livePerPlatform.get(p.id) ?? 0;
+      const breakdown = breakdownMap.get(p.id);
+      const peak = Number(breakdown?.peakCCV ?? breakdown?.peak_ccv ?? 0) || 0;
+      if (liveCcv === 0 && peak === 0) continue;
+      const share = hasLive
+        ? liveTotal > 0
+          ? liveCcv / liveTotal
+          : 0
+        : totalPeakAcrossPlatforms > 0
+          ? peak / totalPeakAcrossPlatforms
+          : 0;
       platformRowsRaw.push({
         id: p.id,
         name: p.name,
         color: p.color,
-        ccv,
-        share: liveTotal > 0 ? ccv / liveTotal : 0,
+        // ccv = live CCV while broadcasting, else peak (so the tile shows
+        // a meaningful number in both modes).
+        ccv: hasLive ? liveCcv : peak,
+        share,
       });
     }
     platformRowsRaw.sort((a, b) => b.ccv - a.ccv);
@@ -172,7 +228,9 @@ export function useDashboardModel({
     for (const c of leaderboard) {
       const t = c.tier || 'community';
       tierCcv.set(t, (tierCcv.get(t) ?? 0) + (c.live ?? 0));
-      tierPeak.set(t, (tierPeak.get(t) ?? 0) + (c.peak ?? 0));
+      // Peak per tier = max of per-channel peaks (closest single-moment
+      // approximation without storing the full per-tier timeseries).
+      tierPeak.set(t, Math.max(tierPeak.get(t) ?? 0, c.peak ?? 0));
       tierAvg.set(t, (tierAvg.get(t) ?? 0) + (c.avg ?? 0));
       tierHours.set(t, (tierHours.get(t) ?? 0) + (c.hours ?? 0));
     }
