@@ -34,7 +34,15 @@ import {
   IconPause,
 } from '@/components/design';
 import { PLATFORMS, getPlatform } from '@/design/platforms';
-import { fmtCompact, fmtN, fmtDuration, fmtRelative, fmtPct, fmtDateMD } from '@/design/format';
+import {
+  fmtCompact,
+  fmtN,
+  fmtDuration,
+  fmtRelative,
+  fmtPct,
+  fmtDateMD,
+  fmtDateLong,
+} from '@/design/format';
 import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
 import { useApi, usePollingApi } from '@/hooks/useApi';
@@ -124,7 +132,12 @@ export function EditorDesktop({
       return {
         id: s.id,
         label: s.name,
-        sub: first === last ? first : first && last ? `${first} – ${last}` : undefined,
+        sub:
+          first === last
+            ? fmtDateLong(first)
+            : first && last
+              ? `${fmtDateLong(first)} – ${fmtDateLong(last)}`
+              : undefined,
         live: isLive,
       };
     });
@@ -339,7 +352,7 @@ export function EditorDesktop({
                 key={d.id}
                 type="button"
                 onClick={() => setSelectedDayId(d.id)}
-                title={`${d.label} · ${d.date}`}
+                title={`${d.label} · ${fmtDateLong(d.date)}`}
                 style={{
                   position: 'relative',
                   width: 28,

@@ -274,7 +274,12 @@ function PublicLive({
         return {
           id: s.id,
           label: s.name,
-          sub: first === last ? first : first && last ? `${first} – ${last}` : undefined,
+          sub:
+            first === last
+              ? fmtDateLong(first)
+              : first && last
+                ? `${fmtDateLong(first)} – ${fmtDateLong(last)}`
+                : undefined,
           live: isLive,
         };
       }),
