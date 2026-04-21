@@ -9,6 +9,7 @@ import { PublicPage } from '@/pages/PublicPage';
 import { ReportPage } from '@/pages/ReportPage';
 import { SeriesSetupPage } from '@/pages/SeriesSetupPage';
 import { SeriesEditPage } from '@/pages/SeriesEditPage';
+import { SeriesFormPage } from '@/pages/SeriesForm';
 import { LoginPage } from '@/pages/LoginPage';
 import { UserManagementPage } from '@/pages/UserManagementPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
@@ -306,6 +307,35 @@ function AppContent() {
   }, []);
 
   // ── Render ─────────────────────────────────────────────────────────────
+
+  // Desktop v7 Series Form is a self-contained surface with its own chrome.
+  // On mobile, fall back to the legacy SeriesSetupPage / SeriesEditPage which
+  // already have mobile-friendly single-column flows inside MainLayout.
+  if (!isMobile && isNewPage) {
+    return (
+      <SeriesFormPage
+        mode="new"
+        onSaved={(newId) => {
+          if (newId) handleSeriesCreated(newId);
+          else handleSeriesSaved();
+        }}
+        onCancel={() => navigate(selectedSeriesId ? `/${selectedSeriesId}` : '/')}
+      />
+    );
+  }
+
+  if (!isMobile && isEditPage && selectedSeriesId && seriesDetail) {
+    return (
+      <SeriesFormPage
+        mode="edit"
+        seriesId={selectedSeriesId}
+        seriesDetail={seriesDetail}
+        onSaved={handleSeriesSaved}
+        onCancel={() => navigate(`/${selectedSeriesId}`)}
+        onDeleted={handleSeriesDeleted}
+      />
+    );
+  }
 
   // Editor Desktop / Mobile are self-contained surfaces with their own shell.
   // The legacy Header/Sidebar/MainLayout is only kept for the edit/setup/users routes.
