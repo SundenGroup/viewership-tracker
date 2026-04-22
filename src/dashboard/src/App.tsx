@@ -10,6 +10,7 @@ import { ReportPage } from '@/pages/ReportPage';
 import { SeriesSetupPage } from '@/pages/SeriesSetupPage';
 import { SeriesEditPage } from '@/pages/SeriesEditPage';
 import { SeriesFormPage } from '@/pages/SeriesForm';
+import { StartPage } from '@/pages/StartPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { UserManagementPage } from '@/pages/UserManagementPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
@@ -431,9 +432,11 @@ function AppContent() {
           onDeleted={handleSeriesDeleted}
         />
       ) : (
-        // Fallback: no series selected → show a gentle empty state with series list
-        <NoSeriesSelected
+        // Fallback: no series selected → show the start page with greeting,
+        // operational stats, filterable series grid, and create CTA.
+        <StartPage
           seriesList={seriesList ?? []}
+          pollingStatus={pollingStatus}
           onSeriesChange={handleSeriesChange}
           onCreate={() => navigate('/new')}
         />
@@ -442,42 +445,3 @@ function AppContent() {
   );
 }
 
-function NoSeriesSelected({
-  seriesList,
-  onSeriesChange,
-  onCreate,
-}: {
-  seriesList: TournamentSeries[];
-  onSeriesChange: (id: string) => void;
-  onCreate: () => void;
-}) {
-  return (
-    <div className="flex h-full items-center justify-center p-8">
-      <div className="text-center" style={{ maxWidth: 420 }}>
-        <h2 style={{ fontSize: 22, fontWeight: 600, marginBottom: 8 }}>
-          Select a tournament series
-        </h2>
-        <p style={{ fontSize: 14, color: 'var(--fg-muted)', marginBottom: 20 }}>
-          Choose a series to open the Editor Desktop, or create a new one.
-        </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {seriesList.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => onSeriesChange(s.id)}
-              className="btn"
-              style={{ justifyContent: 'space-between' }}
-            >
-              <span>{s.short_name ?? s.name}</span>
-              <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>{s.status}</span>
-            </button>
-          ))}
-          <button type="button" onClick={onCreate} className="btn btn-primary" style={{ marginTop: 10 }}>
-            + New series
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
