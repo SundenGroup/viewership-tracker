@@ -50,6 +50,7 @@ import { useApi, usePollingApi } from '@/hooks/useApi';
 import * as api from '@/services/api';
 import { ChannelsSection } from '@/components/editor/ChannelsSection';
 import { DiscoveryFeedSection } from '@/components/editor/DiscoveryFeedSection';
+import { ExportDialog } from '@/components/editor/ExportDialog';
 import type {
   TournamentSeries,
   SeriesWithStages,
@@ -57,6 +58,7 @@ import type {
   DiscoveryStatus,
   Channel,
   BroadcastStatus,
+  ViewGroup,
 } from '@/types/api';
 import type { PollingDataState } from '@/hooks/usePollingData';
 
@@ -122,6 +124,7 @@ export function EditorDesktop({
   );
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
   const [viewGroup, setViewGroup] = useState<string>('all');
+  const [exportOpen, setExportOpen] = useState(false);
 
   const stageOptions = useMemo(() => {
     if (!seriesDetail) return [];
@@ -620,11 +623,7 @@ export function EditorDesktop({
             <button
               type="button"
               className="btn"
-              onClick={() =>
-                activeDay
-                  ? window.open(api.getExportCsvUrl('day', activeDay.id), '_blank')
-                  : window.open(api.getExportCsvUrl('series', seriesId), '_blank')
-              }
+              onClick={() => setExportOpen(true)}
             >
               <IconDownload size={13} /> Export
             </button>
@@ -1599,6 +1598,20 @@ export function EditorDesktop({
           </>
         )}
       </aside>
+
+      <ExportDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        seriesId={seriesId}
+        seriesDetail={seriesDetail}
+        activeScope={{
+          level: scopeLevel,
+          stageId: activeStage?.id ?? null,
+          dayId: activeDay?.id ?? null,
+        }}
+        activeViewGroupName={viewGroup === 'all' ? null : viewGroup}
+        viewGroups={viewGroups as ViewGroup[]}
+      />
     </div>
   );
 }
