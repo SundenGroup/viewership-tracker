@@ -94,22 +94,34 @@ export function ExportDialog({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  // Current stage / day based on activeScope
-  const currentStage = useMemo(() => {
-    if (!seriesDetail || !activeScope.stageId) return null;
-    return (
-      seriesDetail.stages.find((s) => s.id === activeScope.stageId) ?? null
-    );
-  }, [seriesDetail, activeScope.stageId]);
-
+  // Current day based on activeScope
   const currentDay = useMemo(() => {
     if (!seriesDetail || !activeScope.dayId) return null;
     for (const s of seriesDetail.stages) {
       const d = s.broadcast_days.find((d) => d.id === activeScope.dayId);
-      if (d) return { ...d, stageName: s.name };
+      if (d) return { ...d, stageName: s.name, stageId: s.id };
     }
     return null;
   }, [seriesDetail, activeScope.dayId]);
+
+  // Current stage — if a day is selected, use the day's PARENT stage.
+  // That's what "the current stage" semantically means for export purposes.
+  // Only fall back to activeScope.stageId (from the scope scrubber) when
+  // no day is active.
+  const currentStage = useMemo(() => {
+    if (!seriesDetail) return null;
+    if (currentDay?.stageId) {
+      return (
+        seriesDetail.stages.find((s) => s.id === currentDay.stageId) ?? null
+      );
+    }
+    if (activeScope.stageId) {
+      return (
+        seriesDetail.stages.find((s) => s.id === activeScope.stageId) ?? null
+      );
+    }
+    return null;
+  }, [seriesDetail, activeScope.stageId, currentDay?.stageId]);
 
   // Human-readable scope labels
   const scopeLabelCurrent =

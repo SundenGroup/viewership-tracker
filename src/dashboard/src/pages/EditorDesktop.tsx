@@ -150,13 +150,23 @@ export function EditorDesktop({
   const activeStage = useMemo(() => {
     if (!seriesDetail) return null;
     if (selectedStageId) return seriesDetail.stages.find((s) => s.id === selectedStageId) ?? null;
+    // If a specific day is active (via the sidebar or scrubber), the
+    // semantically "current stage" is that day's parent stage — not the
+    // last stage on the series. This keeps the Export dialog and any
+    // stage-scoped UI coherent with what the user actually has selected.
+    if (activeDay) {
+      const parent = seriesDetail.stages.find((s) =>
+        s.broadcast_days.some((d) => d.id === activeDay.id),
+      );
+      if (parent) return parent;
+    }
     // Default: stage containing the live day, or the last stage.
     return (
       seriesDetail.stages.find((s) => s.broadcast_days.some((d) => d.status === 'live')) ??
       seriesDetail.stages[seriesDetail.stages.length - 1] ??
       null
     );
-  }, [seriesDetail, selectedStageId]);
+  }, [seriesDetail, selectedStageId, activeDay]);
 
   const dayOptions = useMemo(() => {
     const days = scopeLevel === 'stage' && activeStage ? activeStage.broadcast_days : allDays;
