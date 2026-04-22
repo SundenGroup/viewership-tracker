@@ -139,7 +139,10 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     if (dayIdFromUrl) {
       for (const s of seriesInfo.stages) {
         const d = s.broadcast_days.find((x) => x.id === dayIdFromUrl);
-        if (d) return { level: 'day', id: d.id, label: `${s.name} · ${d.label}` };
+        // For day-level reports, the stage name is contextually redundant
+        // in the title. Use just the day label so the headline reads
+        // "PUBG EMEA Championship — Day 3" rather than triple-nesting.
+        if (d) return { level: 'day', id: d.id, label: d.label };
       }
     }
     if (stageIdFromUrl) {
@@ -276,6 +279,7 @@ function SimpleReport({
   scopeLevel: ScopeLevel;
 }) {
   const totalDayCount = useMemo(() => {
+    if (scopeLevel === 'day') return 1;
     if (scopeLevel === 'stage') {
       const stage = seriesInfo.stages.find((s) => s.name === scopeLabel);
       return stage?.broadcast_days.length ?? 0;
@@ -343,6 +347,8 @@ function SimpleReport({
           hours={model.viewedHours}
           days={totalDayCount}
           timeSeries={timeline.total}
+          peakAt={model.peakTotalAt}
+          timezone={seriesInfo.timezone}
         />
       </div>
 
@@ -369,52 +375,67 @@ function SimpleReport({
         )}
       </div>
 
-      <div className="eyebrow" style={{ marginBottom: 8 }}>
-        By category
-      </div>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(5, 1fr)',
-          gap: 10,
-          marginBottom: 28,
-        }}
-      >
-        {model.tierRows.map((t) => (
-          <div key={t.key} className="card" style={{ padding: 14 }}>
-            <Row justify="space-between">
-              <div style={{ fontSize: 12, fontWeight: 600 }}>{t.label}</div>
-              <span
-                className="tabular"
-                style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}
-              >
-                {(t.share * 100).toFixed(0)}%
-              </span>
-            </Row>
-            <div className="tabular" style={{ fontSize: 24, fontWeight: 500, marginTop: 4 }}>
-              {fmtCompact(t.peak || t.ccv)}
+      {(() => {
+        const visibleTiers = model.tierRows.filter(
+          (t) => (t.peak ?? 0) > 0 || (t.viewedHours ?? 0) > 0 || (t.ccv ?? 0) > 0,
+        );
+        if (visibleTiers.length === 0) return null;
+        return (
+          <>
+            <div className="eyebrow" style={{ marginBottom: 8 }}>
+              By category
             </div>
-            <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>Peak CCV</div>
             <div
               style={{
-                marginTop: 8,
-                height: 4,
-                background: 'var(--bg-sunken)',
-                borderRadius: 2,
-                overflow: 'hidden',
+                display: 'grid',
+                gridTemplateColumns: `repeat(${visibleTiers.length}, 1fr)`,
+                gap: 10,
+                marginBottom: 28,
               }}
             >
-              <div
-                style={{
-                  width: t.share * 100 + '%',
-                  height: '100%',
-                  background: t.color,
-                }}
-              />
+              {visibleTiers.map((t) => (
+                <div key={t.key} className="card" style={{ padding: 14 }}>
+                  <Row justify="space-between">
+                    <div style={{ fontSize: 12, fontWeight: 600 }}>{t.label}</div>
+                    <span
+                      className="tabular"
+                      style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}
+                    >
+                      {(t.share * 100).toFixed(0)}%
+                    </span>
+                  </Row>
+                  <div
+                    className="tabular"
+                    style={{ fontSize: 24, fontWeight: 500, marginTop: 4 }}
+                  >
+                    {fmtCompact(t.peak || t.ccv)}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>
+                    Peak CCV
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      height: 4,
+                      background: 'var(--bg-sunken)',
+                      borderRadius: 2,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: t.share * 100 + '%',
+                        height: '100%',
+                        background: t.color,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
-        ))}
-      </div>
+          </>
+        );
+      })()}
 
       <div style={{ marginTop: 40, fontSize: 10, color: 'var(--fg-dim)' }}>
         Clutch Viewership Tracker · tracker.clutch.game/public/{shortName}
@@ -441,6 +462,7 @@ function DetailedReport({
   scopeLevel: ScopeLevel;
 }) {
   const totalDayCount = useMemo(() => {
+    if (scopeLevel === 'day') return 1;
     if (scopeLevel === 'stage') {
       const stage = seriesInfo.stages.find((s) => s.name === scopeLabel);
       return stage?.broadcast_days.length ?? 0;
@@ -488,6 +510,85 @@ function DetailedReport({
     'var(--red)', 'var(--info)', 'var(--warn)', 'var(--live)',
     'var(--twitch)', 'var(--tiktok)', 'var(--youtube)', 'var(--kick)',
   ];
+
+  // ── Per-dimension stats: peak CCV + viewed hours ───────────────────────
+  // Peak CCV for platforms/languages comes straight from the server's
+  // breakdown — that's the authoritative "highest simultaneous viewers"
+  // number, which isn't reconstructible from per-channel peaks. Viewed
+  // hours isn't in the breakdown response, so we aggregate it from the
+  // channel leaderboard (which has hours per channel).
+
+  const platformStats = useMemo(() => {
+    const hoursByPlatform = new Map<string, number>();
+    for (const c of model.leaderboard) {
+      if (!c.platform) continue;
+      hoursByPlatform.set(
+        c.platform,
+        (hoursByPlatform.get(c.platform) ?? 0) + (c.hours ?? 0),
+      );
+    }
+    const totalHours = Array.from(hoursByPlatform.values()).reduce(
+      (a, b) => a + b,
+      0,
+    );
+    // Seed from model.platformRows (already filters to tracked platforms
+    // and brings in the peak CCV from the breakdown).
+    return model.platformRows
+      .map((p) => {
+        const hours = hoursByPlatform.get(p.id) ?? 0;
+        // In post-event mode, model.platformRows.ccv is set to peak CCV;
+        // in live mode, ccv is live CCV, so we prefer that for the peak
+        // display. Either way it's the biggest per-platform number we have.
+        const peak = p.ccv;
+        return {
+          id: p.id,
+          name: p.name,
+          color: p.color,
+          peak,
+          hours,
+          peakShare: p.share,
+          hoursShare: totalHours > 0 ? hours / totalHours : 0,
+        };
+      })
+      .filter((p) => p.peak > 0 || p.hours > 0);
+  }, [model.leaderboard, model.platformRows]);
+
+  const languageStats = useMemo(() => {
+    const hoursByLang = new Map<string, number>();
+    for (const c of model.leaderboard) {
+      const lang = (c.language ?? '').toLowerCase();
+      if (!lang) continue;
+      hoursByLang.set(lang, (hoursByLang.get(lang) ?? 0) + (c.hours ?? 0));
+    }
+    const totalHours = Array.from(hoursByLang.values()).reduce(
+      (a, b) => a + b,
+      0,
+    );
+    const totalPeak = model.languageBreakdown.reduce(
+      (a, b) => a + (b.peakCCV ?? Number(b.peak_ccv ?? 0) ?? 0),
+      0,
+    );
+    return model.languageBreakdown
+      .map((l) => {
+        const key = (l.language ?? l.key ?? '').toLowerCase();
+        const peak = l.peakCCV ?? Number(l.peak_ccv ?? 0) ?? 0;
+        const hours = hoursByLang.get(key) ?? 0;
+        return {
+          key,
+          label: key.toUpperCase() || '—',
+          peak,
+          hours,
+          peakShare: totalPeak > 0 ? peak / totalPeak : 0,
+          hoursShare: totalHours > 0 ? hours / totalHours : 0,
+        };
+      })
+      .filter((l) => l.peak > 0 || l.hours > 0);
+  }, [model.leaderboard, model.languageBreakdown]);
+
+  // ── Per-section metric toggles (Peak CCV vs Viewed Hours) ─────────────
+  const [tierMetric, setTierMetric] = useState<'peak' | 'hours'>('peak');
+  const [platformMetric, setPlatformMetric] = useState<'peak' | 'hours'>('hours');
+  const [languageMetric, setLanguageMetric] = useState<'peak' | 'hours'>('hours');
 
   return (
     <div
@@ -539,6 +640,8 @@ function DetailedReport({
           hours={model.viewedHours}
           days={totalDayCount}
           timeSeries={timeline.total}
+          peakAt={model.peakTotalAt}
+          timezone={seriesInfo.timezone}
         />
       </div>
 
@@ -625,112 +728,194 @@ function DetailedReport({
       <div style={{ height: 24 }} />
 
       {/* Section 02 — By category (tier breakdown) */}
-      <Section eyebrow="02 · By category" title="Peak concurrent by tier">
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(5, 1fr)',
-            gap: 10,
-          }}
-        >
-          {model.tierRows.map((t) => (
-            <div key={t.key} className="card" style={{ padding: 16 }}>
-              <Row justify="space-between">
-                <span style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</span>
-                <span
-                  className="tabular"
-                  style={{ fontSize: 11, color: 'var(--fg-dim)' }}
-                >
-                  {(t.share * 100).toFixed(0)}%
-                </span>
-              </Row>
-              <div
-                className="tabular"
-                style={{
-                  fontSize: 28,
-                  fontWeight: 500,
-                  marginTop: 6,
-                  letterSpacing: '-0.02em',
-                }}
-              >
-                {fmtCompact(t.peak || t.ccv)}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Peak CCV</div>
+      {(() => {
+        // Filter out tiers with zero data so empty buckets (e.g. no Partner
+        // streams on this day) don't clutter the grid with "0" cards.
+        const visibleTiers = model.tierRows.filter(
+          (t) => (t.peak ?? 0) > 0 || (t.viewedHours ?? 0) > 0 || (t.ccv ?? 0) > 0,
+        );
+        if (visibleTiers.length === 0) return null;
+        // Recompute share based on the selected metric within visible tiers
+        // so the percentages sum to ~100% against what's shown.
+        const denom =
+          tierMetric === 'hours'
+            ? visibleTiers.reduce((a, t) => a + (t.viewedHours ?? 0), 0)
+            : visibleTiers.reduce((a, t) => a + (t.peak || t.ccv || 0), 0);
+        return (
+          <>
+            <Section
+              eyebrow="02 · By category"
+              title={
+                tierMetric === 'hours'
+                  ? 'Viewed hours by tier'
+                  : 'Peak concurrent by tier'
+              }
+              right={
+                <MetricToggle value={tierMetric} onChange={setTierMetric} />
+              }
+            >
               <div
                 style={{
-                  marginTop: 10,
-                  height: 5,
-                  background: 'var(--bg-sunken)',
-                  borderRadius: 2,
-                  overflow: 'hidden',
+                  display: 'grid',
+                  gridTemplateColumns: `repeat(${visibleTiers.length}, 1fr)`,
+                  gap: 10,
                 }}
               >
-                <div
-                  style={{
-                    width: t.share * 100 + '%',
-                    height: '100%',
-                    background: t.color,
-                  }}
-                />
+                {visibleTiers.map((t) => {
+                  const val =
+                    tierMetric === 'hours' ? t.viewedHours ?? 0 : t.peak || t.ccv || 0;
+                  const share = denom > 0 ? val / denom : 0;
+                  return (
+                    <div key={t.key} className="card" style={{ padding: 16 }}>
+                      <Row justify="space-between">
+                        <span style={{ fontSize: 13, fontWeight: 600 }}>
+                          {t.label}
+                        </span>
+                        <span
+                          className="tabular"
+                          style={{ fontSize: 11, color: 'var(--fg-dim)' }}
+                        >
+                          {(share * 100).toFixed(0)}%
+                        </span>
+                      </Row>
+                      <div
+                        className="tabular"
+                        style={{
+                          fontSize: 28,
+                          fontWeight: 500,
+                          marginTop: 6,
+                          letterSpacing: '-0.02em',
+                        }}
+                      >
+                        {fmtCompact(val)}
+                      </div>
+                      <div
+                        style={{ fontSize: 11, color: 'var(--fg-muted)' }}
+                      >
+                        {tierMetric === 'hours' ? 'Viewed hours' : 'Peak CCV'}
+                      </div>
+                      <div
+                        style={{
+                          marginTop: 10,
+                          height: 5,
+                          background: 'var(--bg-sunken)',
+                          borderRadius: 2,
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: share * 100 + '%',
+                            height: '100%',
+                            background: t.color,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            </div>
-          ))}
-        </div>
-      </Section>
-      <div style={{ height: 24 }} />
+            </Section>
+            <div style={{ height: 24 }} />
+          </>
+        );
+      })()}
 
       {/* Section 03 + 04 — platforms + languages side-by-side */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <Section eyebrow="03 · Platforms" title="Share of peak CCV">
+        <Section
+          eyebrow="03 · Platforms"
+          title={
+            platformMetric === 'hours'
+              ? 'Share of viewed hours'
+              : 'Share of peak CCV'
+          }
+          right={
+            <MetricToggle value={platformMetric} onChange={setPlatformMetric} />
+          }
+        >
           <Col gap={10}>
-            {model.platformRows.map((p) => (
-              <Row key={p.id} gap={10}>
-                <Row gap={6} style={{ width: 120 }}>
-                  <PlatformPip id={p.id} />
-                  <span style={{ fontSize: 12 }}>{p.name}</span>
-                </Row>
-                <div
-                  style={{
-                    flex: 1,
-                    height: 14,
-                    background: 'var(--bg-sunken)',
-                    borderRadius: 3,
-                    overflow: 'hidden',
-                  }}
-                >
+            {platformStats.map((p) => {
+              const share =
+                platformMetric === 'hours' ? p.hoursShare : p.peakShare;
+              const val = platformMetric === 'hours' ? p.hours : p.peak;
+              return (
+                <Row key={p.id} gap={10}>
+                  <Row gap={6} style={{ width: 120 }}>
+                    <PlatformPip id={p.id} />
+                    <span style={{ fontSize: 12 }}>{p.name}</span>
+                  </Row>
                   <div
                     style={{
-                      width: p.share * 100 + '%',
-                      height: '100%',
-                      background: p.color,
+                      flex: 1,
+                      height: 14,
+                      background: 'var(--bg-sunken)',
+                      borderRadius: 3,
+                      overflow: 'hidden',
                     }}
-                  />
-                </div>
-                <span
-                  className="tabular"
-                  style={{ width: 56, textAlign: 'right', fontSize: 12 }}
-                >
-                  {(p.share * 100).toFixed(0)}%
-                </span>
-              </Row>
-            ))}
+                  >
+                    <div
+                      style={{
+                        width: share * 100 + '%',
+                        height: '100%',
+                        background: p.color,
+                      }}
+                    />
+                  </div>
+                  <span
+                    className="tabular"
+                    style={{
+                      width: 70,
+                      textAlign: 'right',
+                      fontSize: 11,
+                      color: 'var(--fg-muted)',
+                    }}
+                    title={
+                      platformMetric === 'hours'
+                        ? `${fmtN(val)} viewed hours`
+                        : `${fmtN(val)} peak CCV`
+                    }
+                  >
+                    {fmtCompact(val)}
+                  </span>
+                  <span
+                    className="tabular"
+                    style={{ width: 44, textAlign: 'right', fontSize: 12 }}
+                  >
+                    {(share * 100).toFixed(0)}%
+                  </span>
+                </Row>
+              );
+            })}
           </Col>
         </Section>
-        {model.languageBreakdown.length > 0 && (
+        {languageStats.length > 0 && (
           <Section
             eyebrow="04 · Languages"
-            title={`Peak CCV by language · ${model.languageBreakdown.length} tracked`}
+            title={
+              languageMetric === 'hours'
+                ? `Viewed hours by language · ${languageStats.length} tracked`
+                : `Peak CCV by language · ${languageStats.length} tracked`
+            }
+            right={
+              <MetricToggle value={languageMetric} onChange={setLanguageMetric} />
+            }
           >
             <div style={{ height: 220 }}>
               <VBarChart
                 width={540}
                 height={220}
-                items={model.languageBreakdown.slice(0, 8).map((l, i) => ({
-                  label: (l.language ?? l.key ?? '').toUpperCase() || '—',
-                  value: l.peakCCV ?? Number(l.peak_ccv ?? 0) ?? l.totalCCV ?? 0,
-                  sub: '',
-                  color: palette[i % palette.length]!,
-                }))}
+                items={[...languageStats]
+                  .sort((a, b) =>
+                    languageMetric === 'hours' ? b.hours - a.hours : b.peak - a.peak,
+                  )
+                  .slice(0, 8)
+                  .map((l, i) => ({
+                    label: l.label,
+                    value: languageMetric === 'hours' ? l.hours : l.peak,
+                    sub: '',
+                    color: palette[i % palette.length]!,
+                  }))}
               />
             </div>
           </Section>
@@ -740,34 +925,58 @@ function DetailedReport({
       <div style={{ height: 24 }} />
 
       {/* Section 05 — operational breakdown */}
-      <Section eyebrow="05 · Operational breakdown" title="Per-channel & airtime stats">
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
-            gap: 0,
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--r-md)',
-          }}
-        >
-          {[
-            ['Avg CCV / channel', fmtCompact(avgPerChannel), 'across tracked streams'],
-            ['Hours / channel', fmtCompact(hoursPerChannel), 'mean airtime watched'],
-            ['Live coverage', liveChannelsShare + '%', `${model.liveChannelCount} of ${model.trackedChannelCount} live now`],
-            ['Avg broadcast / day', fmtCompact(hoursPerDay), 'hours watched daily'],
-          ].map(([l, v, sub], i, a) => (
+      {(() => {
+        // For post-event scopes there are no live channels, so "Live coverage"
+        // would always render "0% · 0 of N live now" which just looks broken.
+        // Swap it for the peak:avg concurrency ratio, which is a real signal
+        // about how bursty viewership was over the event.
+        const hasLive = model.liveChannelCount > 0;
+        const cells: Array<[string, string, string]> = [
+          ['Avg CCV / channel', fmtCompact(avgPerChannel), 'across tracked streams'],
+          ['Hours / channel', fmtCompact(hoursPerChannel), 'mean airtime watched'],
+          hasLive
+            ? [
+                'Live coverage',
+                liveChannelsShare + '%',
+                `${model.liveChannelCount} of ${model.trackedChannelCount} live now`,
+              ]
+            : [
+                'Peak : avg',
+                concurrency,
+                'peak-to-average concurrency ratio',
+              ],
+          ['Avg broadcast / day', fmtCompact(hoursPerDay), 'hours watched daily'],
+        ];
+        return (
+          <Section
+            eyebrow="05 · Operational breakdown"
+            title="Per-channel & airtime stats"
+          >
             <div
-              key={l}
               style={{
-                padding: '16px 18px',
-                borderRight: i < a.length - 1 ? '1px solid var(--border)' : 'none',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: 0,
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--r-md)',
               }}
             >
-              <Kpi size="sm" label={l} value={v} sub={sub} />
+              {cells.map(([l, v, sub], i, a) => (
+                <div
+                  key={l}
+                  style={{
+                    padding: '16px 18px',
+                    borderRight:
+                      i < a.length - 1 ? '1px solid var(--border)' : 'none',
+                  }}
+                >
+                  <Kpi size="sm" label={l} value={v} sub={sub} />
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      </Section>
+          </Section>
+        );
+      })()}
 
       <div style={{ height: 24 }} />
 
@@ -932,6 +1141,60 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── Peak / Viewed Hours segmented toggle ───────────────────────────────────
+
+function MetricToggle({
+  value,
+  onChange,
+}: {
+  value: 'peak' | 'hours';
+  onChange: (v: 'peak' | 'hours') => void;
+}) {
+  const opts: Array<{ id: 'peak' | 'hours'; label: string }> = [
+    { id: 'peak', label: 'Peak' },
+    { id: 'hours', label: 'Hours' },
+  ];
+  return (
+    <div
+      role="tablist"
+      style={{
+        display: 'inline-flex',
+        background: 'var(--bg-sunken)',
+        border: '1px solid var(--border)',
+        borderRadius: 6,
+        padding: 2,
+      }}
+    >
+      {opts.map((o) => {
+        const active = value === o.id;
+        return (
+          <button
+            key={o.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(o.id)}
+            style={{
+              padding: '3px 10px',
+              borderRadius: 4,
+              fontSize: 10.5,
+              fontWeight: active ? 600 : 500,
+              background: active ? 'var(--red)' : 'transparent',
+              color: active ? 'white' : 'var(--fg-muted)',
+              border: 'none',
+              cursor: 'pointer',
+              fontFamily: 'var(--font-mono)',
+              letterSpacing: '0.02em',
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

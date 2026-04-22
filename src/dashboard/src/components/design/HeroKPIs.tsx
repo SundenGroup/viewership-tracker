@@ -49,6 +49,8 @@ export function HeroKPIs({
   yoyHours,
   days = 3,
   timeSeries,
+  peakAt,
+  timezone,
 }: {
   variant?: HeroKPIVariant;
   peak: number | null;
@@ -60,6 +62,11 @@ export function HeroKPIs({
   days?: number;
   /** Per-minute total CCV series, drives the sparkline + peak marker. */
   timeSeries?: number[];
+  /** ISO timestamp of the peak; enables "Peak at HH:MM TZ" label instead
+   *  of the less-useful "peak hit at X% of event". */
+  peakAt?: string | null;
+  /** IANA timezone (e.g. Europe/Stockholm). Used to render peakAt. */
+  timezone?: string;
 }) {
   const sizes = SIZES[variant];
 
@@ -165,8 +172,33 @@ export function HeroKPIs({
     const pts = timeSeries.map((v, i) => [i * step, h - (v / max) * h] as [number, number]);
     const path = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
     const peakPt = peakIdx >= 0 ? pts[peakIdx] : null;
-    const pct = timeSeries.length > 1 ? Math.round((peakIdx / (timeSeries.length - 1)) * 100) : 0;
     const gradId = `hero-peak-${variant}`;
+
+    // Prefer an exact wall-clock time in the series' timezone when we know
+    // when the peak happened; otherwise fall back to "% of event".
+    let peakLabel: string;
+    if (peakAt) {
+      try {
+        const d = new Date(peakAt);
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone,
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+          timeZoneName: 'short',
+        }).formatToParts(d);
+        const hour = parts.find((p) => p.type === 'hour')?.value ?? '00';
+        const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
+        const tz = parts.find((p) => p.type === 'timeZoneName')?.value ?? '';
+        peakLabel = `peak at ${hour}:${minute}${tz ? ` ${tz}` : ''}`;
+      } catch {
+        const pct = timeSeries.length > 1 ? Math.round((peakIdx / (timeSeries.length - 1)) * 100) : 0;
+        peakLabel = `peak hit at ${pct}% of event`;
+      }
+    } else {
+      const pct = timeSeries.length > 1 ? Math.round((peakIdx / (timeSeries.length - 1)) * 100) : 0;
+      peakLabel = `peak hit at ${pct}% of event`;
+    }
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         <svg width={w} height={h} style={{ overflow: 'visible' }}>
@@ -215,7 +247,7 @@ export function HeroKPIs({
             letterSpacing: '0.02em',
           }}
         >
-          peak hit at {pct}% of event
+          {peakLabel}
         </div>
       </div>
     );
