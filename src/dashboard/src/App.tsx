@@ -338,6 +338,21 @@ function AppContent() {
     );
   }
 
+  // Desktop StartPage (no series selected) is also self-contained — it
+  // brings its own top bar and doesn't need the legacy Sidebar's "select
+  // a series…" placeholder columns.
+  if (!isMobile && !isUsersPage && !isNewPage && !isEditPage && !selectedSeriesId) {
+    return (
+      <StartPage
+        seriesList={seriesList ?? []}
+        pollingStatus={pollingStatus}
+        onSeriesChange={handleSeriesChange}
+        onCreate={() => navigate('/new')}
+        onOpenUsers={() => navigate('/users')}
+      />
+    );
+  }
+
   // Editor Desktop / Mobile are self-contained surfaces with their own shell.
   // The legacy Header/Sidebar/MainLayout is only kept for the edit/setup/users routes.
   if (!isUsersPage && !isNewPage && !isEditPage && selectedSeriesId) {

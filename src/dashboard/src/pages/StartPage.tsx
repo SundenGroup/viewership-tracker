@@ -6,7 +6,16 @@
  */
 
 import { useMemo, useState } from 'react';
-import { Row, Col, IconPlus, IconSearch, IconBolt } from '@/components/design';
+import {
+  Row,
+  Col,
+  ClutchWordmark,
+  IconPlus,
+  IconSearch,
+  IconBolt,
+  IconUsers,
+  ThemeToggle,
+} from '@/components/design';
 import { fmtDateLong, fmtRelative } from '@/design/format';
 import { useAuth } from '@/hooks/useAuth';
 import type {
@@ -20,6 +29,7 @@ export interface StartPageProps {
   pollingStatus: OrchestratorStatus | null;
   onSeriesChange: (id: string) => void;
   onCreate: () => void;
+  onOpenUsers?: () => void;
 }
 
 type StatusFilter = 'all' | 'active' | 'draft' | 'completed';
@@ -29,8 +39,9 @@ export function StartPage({
   pollingStatus,
   onSeriesChange,
   onCreate,
+  onOpenUsers,
 }: StartPageProps) {
-  const { user } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [q, setQ] = useState('');
 
@@ -82,16 +93,175 @@ export function StartPage({
       ? `Polling · ${pollingStatus.lastPollTime ? fmtRelative(pollingStatus.lastPollTime) : 'just now'}`
       : 'Polling stopped';
 
+  const isPollingLive = pollingStatus?.state === 'running';
+
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
     <div
       style={{
-        padding: '28px 32px 40px',
-        maxWidth: 1200,
-        margin: '0 auto',
+        minHeight: '100vh',
+        background: 'var(--bg)',
+        color: 'var(--fg)',
+        display: 'flex',
+        flexDirection: 'column',
       }}
     >
+      {/* Top bar — matches Editor / Report chrome */}
+      <header
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+          background: 'var(--bg-card)',
+          borderBottom: '1px solid var(--border)',
+        }}
+      >
+        <Row
+          justify="space-between"
+          align="center"
+          style={{ padding: '10px 22px', gap: 12 }}
+        >
+          <Row gap={10} align="center">
+            <ClutchWordmark size={16} />
+            <span
+              style={{
+                fontSize: 10,
+                color: 'var(--fg-dim)',
+                letterSpacing: 1.2,
+                fontFamily: 'var(--font-mono)',
+                padding: '2px 8px',
+                borderLeft: '1px solid var(--border)',
+              }}
+            >
+              VIEWERSHIP TRACKER
+            </span>
+            {isPollingLive && (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  padding: '2px 7px',
+                  borderRadius: 3,
+                  background: 'color-mix(in oklab, var(--live) 14%, transparent)',
+                  color: 'var(--live)',
+                  letterSpacing: 0.3,
+                  fontFamily: 'var(--font-mono)',
+                }}
+                title={
+                  pollingStatus?.lastPollTime
+                    ? `Last poll · ${fmtRelative(pollingStatus.lastPollTime)}`
+                    : 'Polling is running'
+                }
+              >
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    background: 'var(--live)',
+                    boxShadow: '0 0 6px var(--live)',
+                  }}
+                />
+                LIVE
+              </span>
+            )}
+          </Row>
+
+          <Row gap={8} align="center">
+            {isAdmin && onOpenUsers && (
+              <button
+                type="button"
+                onClick={onOpenUsers}
+                className="btn"
+                style={{
+                  fontSize: 12,
+                  padding: '5px 10px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  background: 'transparent',
+                  border: '1px solid var(--border)',
+                }}
+                title="User management"
+              >
+                <IconUsers size={12} /> Users
+              </button>
+            )}
+            <ThemeToggle />
+            {user && (
+              <Row
+                gap={8}
+                align="center"
+                style={{
+                  paddingLeft: 10,
+                  marginLeft: 2,
+                  borderLeft: '1px solid var(--border)',
+                }}
+              >
+                <Col gap={0} style={{ minWidth: 0, textAlign: 'right' }}>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 500,
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {user.display_name}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 9,
+                      color: 'var(--fg-dim)',
+                      letterSpacing: 0.5,
+                      fontFamily: 'var(--font-mono)',
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {user.role.toUpperCase()}
+                  </div>
+                </Col>
+                <button
+                  type="button"
+                  onClick={() => logout()}
+                  className="btn"
+                  style={{
+                    fontSize: 11,
+                    padding: '4px 8px',
+                    color: 'var(--fg-muted)',
+                    background: 'transparent',
+                    border: '1px solid var(--border)',
+                  }}
+                  title="Sign out"
+                >
+                  Sign out
+                </button>
+              </Row>
+            )}
+          </Row>
+        </Row>
+        <div
+          style={{
+            height: 2,
+            background:
+              'linear-gradient(90deg, var(--red), color-mix(in oklab, var(--red) 50%, transparent), transparent)',
+          }}
+        />
+      </header>
+
+      <div
+        style={{
+          padding: '28px 32px 40px',
+          maxWidth: 1200,
+          margin: '0 auto',
+          width: '100%',
+          flex: 1,
+          boxSizing: 'border-box',
+        }}
+      >
       {/* Hero */}
       <Row
         justify="space-between"
@@ -298,6 +468,7 @@ export function StartPage({
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

@@ -51,6 +51,7 @@ export function HeroKPIs({
   timeSeries,
   peakAt,
   timezone,
+  peakIncludeDate,
 }: {
   variant?: HeroKPIVariant;
   peak: number | null;
@@ -67,6 +68,10 @@ export function HeroKPIs({
   peakAt?: string | null;
   /** IANA timezone (e.g. Europe/Stockholm). Used to render peakAt. */
   timezone?: string;
+  /** When true, include the month + day in the peak label (for stage and
+   *  full-series scopes where the peak could be any day). For single-day
+   *  scopes leave this false to keep the caption tight. */
+  peakIncludeDate?: boolean;
 }) {
   const sizes = SIZES[variant];
 
@@ -182,15 +187,20 @@ export function HeroKPIs({
         const d = new Date(peakAt);
         const parts = new Intl.DateTimeFormat('en-US', {
           timeZone: timezone,
+          month: peakIncludeDate ? 'short' : undefined,
+          day: peakIncludeDate ? 'numeric' : undefined,
           hour: '2-digit',
           minute: '2-digit',
           hour12: false,
           timeZoneName: 'short',
         }).formatToParts(d);
+        const month = parts.find((p) => p.type === 'month')?.value ?? '';
+        const day = parts.find((p) => p.type === 'day')?.value ?? '';
         const hour = parts.find((p) => p.type === 'hour')?.value ?? '00';
         const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
         const tz = parts.find((p) => p.type === 'timeZoneName')?.value ?? '';
-        peakLabel = `peak at ${hour}:${minute}${tz ? ` ${tz}` : ''}`;
+        const datePart = peakIncludeDate && month && day ? `${month} ${day} · ` : '';
+        peakLabel = `peak at ${datePart}${hour}:${minute}${tz ? ` ${tz}` : ''}`;
       } catch {
         const pct = timeSeries.length > 1 ? Math.round((peakIdx / (timeSeries.length - 1)) * 100) : 0;
         peakLabel = `peak hit at ${pct}% of event`;

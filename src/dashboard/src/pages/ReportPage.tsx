@@ -237,6 +237,42 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     );
   }
 
+  // Compute the scope-appropriate date range — the report shouldn't claim
+  // "6 Mar – 10 May" when it's only covering a stage inside that window.
+  const { scopeStart, scopeEnd } = useMemo(() => {
+    if (!resolvedScope)
+      return {
+        scopeStart: seriesInfo.startDate ?? null,
+        scopeEnd: seriesInfo.endDate ?? null,
+      };
+    if (resolvedScope.level === 'day') {
+      for (const s of seriesInfo.stages) {
+        const d = s.broadcast_days.find((x) => x.id === resolvedScope.id);
+        if (d) return { scopeStart: d.date, scopeEnd: d.date };
+      }
+    }
+    if (resolvedScope.level === 'stage') {
+      const s = seriesInfo.stages.find((x) => x.id === resolvedScope.id);
+      if (s) {
+        // Prefer explicit stage start/end dates; fall back to derived
+        // min/max from broadcast_days (covers the common case where
+        // stage.start_date / end_date aren't set).
+        const dayDates = s.broadcast_days
+          .map((d) => d.date)
+          .filter((x): x is string => !!x)
+          .sort();
+        return {
+          scopeStart: s.start_date ?? dayDates[0] ?? null,
+          scopeEnd: s.end_date ?? dayDates[dayDates.length - 1] ?? null,
+        };
+      }
+    }
+    return {
+      scopeStart: seriesInfo.startDate ?? null,
+      scopeEnd: seriesInfo.endDate ?? null,
+    };
+  }, [resolvedScope, seriesInfo]);
+
   if (variant === 'simple') {
     return (
       <SimpleReport
@@ -246,6 +282,8 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
         shortName={shortName!}
         scopeLabel={resolvedScope?.label ?? seriesInfo.name}
         scopeLevel={resolvedScope?.level ?? 'series'}
+        scopeStart={scopeStart}
+        scopeEnd={scopeEnd}
       />
     );
   }
@@ -257,6 +295,8 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       shortName={shortName!}
       scopeLabel={resolvedScope?.label ?? seriesInfo.name}
       scopeLevel={resolvedScope?.level ?? 'series'}
+      scopeStart={scopeStart}
+      scopeEnd={scopeEnd}
     />
   );
 }
@@ -270,6 +310,8 @@ function SimpleReport({
   shortName,
   scopeLabel,
   scopeLevel,
+  scopeStart,
+  scopeEnd,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
@@ -277,6 +319,8 @@ function SimpleReport({
   shortName: string;
   scopeLabel: string;
   scopeLevel: ScopeLevel;
+  scopeStart: string | null;
+  scopeEnd: string | null;
 }) {
   const totalDayCount = useMemo(() => {
     if (scopeLevel === 'day') return 1;
@@ -328,11 +372,7 @@ function SimpleReport({
         {headline}
       </h1>
       <div style={{ fontSize: 14, color: 'var(--fg-muted)', marginBottom: 28 }}>
-        {seriesInfo.startDate && seriesInfo.endDate
-          ? `${fmtDateLong(seriesInfo.startDate)} – ${fmtDateLong(seriesInfo.endDate)} · `
-          : seriesInfo.startDate
-            ? `From ${fmtDateLong(seriesInfo.startDate)} · `
-            : ''}
+        {formatScopeDateRange(scopeStart, scopeEnd)}
         {model.trackedChannelCount} channels · {model.platformRows.length} platforms ·{' '}
         {model.languageBreakdown.length} languages · {totalDayCount} broadcast{' '}
         {totalDayCount === 1 ? 'day' : 'days'}
@@ -349,6 +389,7 @@ function SimpleReport({
           timeSeries={timeline.total}
           peakAt={model.peakTotalAt}
           timezone={seriesInfo.timezone}
+          peakIncludeDate={scopeLevel !== 'day'}
         />
       </div>
 
@@ -453,6 +494,8 @@ function DetailedReport({
   shortName,
   scopeLabel,
   scopeLevel,
+  scopeStart,
+  scopeEnd,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
@@ -460,6 +503,8 @@ function DetailedReport({
   shortName: string;
   scopeLabel: string;
   scopeLevel: ScopeLevel;
+  scopeStart: string | null;
+  scopeEnd: string | null;
 }) {
   const totalDayCount = useMemo(() => {
     if (scopeLevel === 'day') return 1;
@@ -624,9 +669,7 @@ function DetailedReport({
         {headline}
       </h1>
       <div style={{ fontSize: 15, color: 'var(--fg-muted)', marginBottom: 32, maxWidth: 760 }}>
-        {seriesInfo.startDate && seriesInfo.endDate
-          ? `${fmtDateLong(seriesInfo.startDate)} – ${fmtDateLong(seriesInfo.endDate)} · `
-          : ''}
+        {formatScopeDateRange(scopeStart, scopeEnd)}
         {model.trackedChannelCount} tracked channels · {model.platformRows.length} platforms ·{' '}
         {model.languageBreakdown.length} languages · {fmtN(model.peakTotal)} peak concurrent.
       </div>
@@ -642,6 +685,7 @@ function DetailedReport({
           timeSeries={timeline.total}
           peakAt={model.peakTotalAt}
           timezone={seriesInfo.timezone}
+          peakIncludeDate={scopeLevel !== 'day'}
         />
       </div>
 
@@ -1143,6 +1187,21 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
       ))}
     </div>
   );
+}
+
+// ── Scope-appropriate date range formatter ────────────────────────────────
+// Renders "Apr 11, 2026 · " for a single day, "Apr 8 – Apr 13, 2026 · "
+// for a stage, and the full series range when no scope is active. Returns
+// an empty string if both dates are missing.
+function formatScopeDateRange(
+  start: string | null,
+  end: string | null,
+): string {
+  if (!start && !end) return '';
+  if (start && end && start === end) return `${fmtDateLong(start)} · `;
+  if (start && end) return `${fmtDateLong(start)} – ${fmtDateLong(end)} · `;
+  if (start) return `From ${fmtDateLong(start)} · `;
+  return `Until ${fmtDateLong(end!)} · `;
 }
 
 // ── Peak / Viewed Hours segmented toggle ───────────────────────────────────

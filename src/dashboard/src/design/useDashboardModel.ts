@@ -280,7 +280,15 @@ export function useDashboardModel({
       viewedHours: metrics?.totalViewedHours ?? null,
       tierRows,
       liveChannelCount: liveCCV?.liveChannels ?? 0,
-      trackedChannelCount: liveCCV?.channelCount ?? leaderboard.length,
+      // Prefer the LARGER of the two counts: for post-event scopes the
+      // liveCCV response often reports channelCount=0 (because nothing is
+      // currently live), but the metrics leaderboard still has every
+      // channel that appeared during the scope. Using `??` would clamp to
+      // 0 even when the leaderboard knew better — use Math.max.
+      trackedChannelCount: Math.max(
+        liveCCV?.channelCount ?? 0,
+        leaderboard.length,
+      ),
       platformRows: platformRowsRaw,
       regionBreakdown: metrics?.regionBreakdown ?? [],
       languageBreakdown: metrics?.languageBreakdown ?? [],
