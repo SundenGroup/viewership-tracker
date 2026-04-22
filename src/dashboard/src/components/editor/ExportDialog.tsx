@@ -143,15 +143,25 @@ export function ExportDialog({
     return { scopeLevel: 'series', id: seriesId };
   };
 
-  // File name preview (mono caption in footer)
+  // File name / target preview (mono caption in footer).
+  // For HTML "new design" mode this is a URL; otherwise a filename.
   const fileName = useMemo(() => {
+    const { scopeLevel, id } = resolveTarget();
+    if (format === 'html' && !reRender) {
+      const shortName = seriesDetail?.short_name?.trim();
+      if (!shortName) return 'needs short_name';
+      const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+      let url = `${base}/public/${shortName}/report/${detail}`;
+      if (scopeLevel === 'day') url += `?day=${id.slice(0, 6)}…`;
+      else if (scopeLevel === 'stage') url += `?stage=${id.slice(0, 6)}…`;
+      return url;
+    }
     const slugBase =
       seriesDetail?.short_name?.trim() || seriesDetail?.name || 'series';
     const slug = slugBase
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '');
-    const { scopeLevel, id } = resolveTarget();
     const suffix =
       scopeLevel === 'series'
         ? 'full-series'
@@ -160,12 +170,37 @@ export function ExportDialog({
           : `day-${id.slice(0, 6)}`;
     return `${slug}_${suffix}.${format}`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seriesDetail, format, scope, activeScope, currentStage, currentDay, seriesId]);
+  }, [
+    seriesDetail,
+    format,
+    scope,
+    activeScope,
+    currentStage,
+    currentDay,
+    seriesId,
+    detail,
+    reRender,
+  ]);
 
   const resolvedViewGroup = useMemo(() => {
     if (!activeViewGroupName) return null;
     return viewGroups.find((g) => g.name === activeViewGroupName) ?? null;
   }, [activeViewGroupName, viewGroups]);
+
+  // Build the preview ReportPage URL for a given scope + detail level.
+  // The SPA renders the v6+ redesign live from the API — no server-side
+  // template involved, always fresh against the DB.
+  const buildSpaReportUrl = (): string | null => {
+    const shortName = seriesDetail?.short_name?.trim();
+    if (!shortName) return null;
+    const { scopeLevel, id } = resolveTarget();
+    // BASE_URL is "/preview/" in the preview build, "/" otherwise
+    const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+    let url = `${window.location.origin}${base}/public/${shortName}/report/${detail}`;
+    if (scopeLevel === 'day') url += `?day=${encodeURIComponent(id)}`;
+    else if (scopeLevel === 'stage') url += `?stage=${encodeURIComponent(id)}`;
+    return url;
+  };
 
   const handleDownload = async () => {
     if (busy) return;
@@ -185,8 +220,9 @@ export function ExportDialog({
       }
 
       // HTML
-      setBusy(true);
       if (reRender) {
+        // Legacy server-generated static HTML (old design, archival).
+        setBusy(true);
         const result = await api.generateReport({
           scope: scopeLevel,
           id,
@@ -213,34 +249,18 @@ export function ExportDialog({
             : null;
         setPublicLink(pub);
       } else {
-        // Use cached report endpoint: server serves latest matching report
-        // if we hit generateReport without re-render. For parity, we still
-        // call generateReport but with skipNarratives=true to keep it fast.
-        const result = await api.generateReport({
-          scope: scopeLevel,
-          id,
-          format: 'html',
-          skipNarratives: true,
-          detail,
-          viewGroup: resolvedViewGroup
-            ? {
-                name: resolvedViewGroup.name,
-                languages: resolvedViewGroup.languages,
-                platforms: resolvedViewGroup.platforms,
-              }
-            : undefined,
-        });
-        const reportUrl = api.getReportUrl(result.filePath);
-        window.open(reportUrl, '_blank', 'noopener,noreferrer');
-
-        const pub =
-          seriesDetail?.is_public && seriesDetail?.short_name?.trim()
-            ? api.getPublicReportUrl(
-                seriesDetail.short_name,
-                result.filePath.split('/').pop() ?? '',
-              )
-            : null;
-        setPublicLink(pub);
+        // Preview default: open the redesigned ReportPage. It renders live
+        // from the API, so it's always up-to-date and matches the v7 UI.
+        const spaUrl = buildSpaReportUrl();
+        if (!spaUrl) {
+          setError(
+            'This series has no short_name. Set a short_name in Edit Series before exporting an HTML report.',
+          );
+          return;
+        }
+        window.open(spaUrl, '_blank', 'noopener,noreferrer');
+        // The SPA URL IS the public, shareable link — no generation step.
+        if (seriesDetail?.is_public) setPublicLink(spaUrl);
       }
     } catch (err) {
       setError(
@@ -538,49 +558,123 @@ export function ExportDialog({
                   </div>
                 </Field>
 
-                <div
-                  style={{
-                    padding: '10px 12px',
-                    background:
-                      'color-mix(in oklab, var(--info) 8%, transparent)',
-                    border:
-                      '1px solid color-mix(in oklab, var(--info) 30%, var(--border))',
-                    borderRadius: 5,
-                    fontSize: 11.5,
-                    color: 'var(--fg-muted)',
-                    lineHeight: 1.5,
-                  }}
-                >
-                  <label
+                <Field label="Renderer">
+                  <div
                     style={{
                       display: 'flex',
-                      gap: 8,
-                      alignItems: 'center',
-                      cursor: 'pointer',
-                      marginBottom: 6,
+                      flexDirection: 'column',
+                      gap: 6,
                     }}
                   >
-                    <input
-                      type="checkbox"
-                      checked={reRender}
-                      onChange={(e) => setReRender(e.target.checked)}
-                      style={{ accentColor: 'var(--info)' }}
-                    />
-                    <span
+                    <label
                       style={{
-                        fontSize: 12,
-                        color: 'var(--fg)',
-                        fontWeight: 500,
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 10,
+                        padding: '8px 10px',
+                        borderRadius: 5,
+                        background: !reRender ? 'var(--bg-sunken)' : 'transparent',
+                        border:
+                          '1px solid ' +
+                          (!reRender ? 'var(--border-strong)' : 'transparent'),
+                        cursor: 'pointer',
                       }}
                     >
-                      Re-render report now (slow)
-                    </span>
-                  </label>
-                  <div style={{ paddingLeft: 24 }}>
-                    Off: reuse latest cached narratives. On: queue a fresh
-                    render against live data — may take 10–40s.
+                      <input
+                        type="radio"
+                        checked={!reRender}
+                        onChange={() => setReRender(false)}
+                        style={{ marginTop: 2, accentColor: 'var(--red)' }}
+                      />
+                      <Col gap={1} style={{ minWidth: 0 }}>
+                        <Row gap={6}>
+                          <span
+                            style={{
+                              fontSize: 12,
+                              fontWeight: !reRender ? 600 : 500,
+                            }}
+                          >
+                            New design (live)
+                          </span>
+                          <span
+                            className="mono"
+                            style={{
+                              fontSize: 9,
+                              padding: '1px 5px',
+                              borderRadius: 3,
+                              background:
+                                'color-mix(in oklab, var(--red) 12%, transparent)',
+                              color: 'var(--red)',
+                              letterSpacing: 0.3,
+                            }}
+                          >
+                            PREVIEW
+                          </span>
+                        </Row>
+                        <span
+                          style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}
+                        >
+                          Opens the redesigned report in a new tab. Rendered
+                          live against the API — always fresh, no waiting.
+                        </span>
+                      </Col>
+                    </label>
+
+                    <label
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 10,
+                        padding: '8px 10px',
+                        borderRadius: 5,
+                        background: reRender ? 'var(--bg-sunken)' : 'transparent',
+                        border:
+                          '1px solid ' +
+                          (reRender ? 'var(--border-strong)' : 'transparent'),
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        checked={reRender}
+                        onChange={() => setReRender(true)}
+                        style={{ marginTop: 2, accentColor: 'var(--red)' }}
+                      />
+                      <Col gap={1} style={{ minWidth: 0 }}>
+                        <Row gap={6}>
+                          <span
+                            style={{
+                              fontSize: 12,
+                              fontWeight: reRender ? 600 : 500,
+                            }}
+                          >
+                            Legacy static HTML
+                          </span>
+                          <span
+                            className="mono"
+                            style={{
+                              fontSize: 9,
+                              padding: '1px 5px',
+                              borderRadius: 3,
+                              background: 'var(--bg-card)',
+                              color: 'var(--fg-dim)',
+                              letterSpacing: 0.3,
+                              border: '1px solid var(--border)',
+                            }}
+                          >
+                            ARCHIVAL
+                          </span>
+                        </Row>
+                        <span
+                          style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}
+                        >
+                          Server-rendered HTML file (old design). Takes
+                          10–40s. Useful for downloads / offline archives.
+                        </span>
+                      </Col>
+                    </label>
                   </div>
-                </div>
+                </Field>
               </>
             )}
 
@@ -770,9 +864,11 @@ export function ExportDialog({
             <IconDownload size={12} />
             {busy
               ? 'Working…'
-              : format === 'html' && reRender
-                ? 'Render & download'
-                : 'Download'}
+              : format === 'html' && !reRender
+                ? 'Open report'
+                : format === 'html' && reRender
+                  ? 'Render & download'
+                  : 'Download'}
           </button>
         </Row>
       </div>
