@@ -32,6 +32,7 @@ import {
   IconPlus,
   IconBolt,
   IconPause,
+  IconEdit,
 } from '@/components/design';
 import { PLATFORMS, getPlatform } from '@/design/platforms';
 import {
@@ -410,6 +411,8 @@ export function EditorDesktop({
                 value={seriesId}
                 options={seriesList}
                 onChange={onSeriesChange}
+                onEdit={() => navigate(`/${seriesId}/edit`)}
+                onNew={() => navigate('/new')}
               />
             </div>
 
@@ -1639,13 +1642,19 @@ function SeriesSelect({
   value,
   options,
   onChange,
+  onEdit,
+  onNew,
 }: {
   value: string;
   options: TournamentSeries[];
   onChange: (id: string) => void;
+  onEdit?: () => void;
+  onNew?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const current = options.find((s) => s.id === value);
+  const hasShort =
+    !!current?.short_name && current.short_name !== current.name;
   return (
     <div style={{ position: 'relative' }}>
       <button
@@ -1663,58 +1672,185 @@ function SeriesSelect({
           textAlign: 'left',
           cursor: 'pointer',
           color: 'var(--fg)',
+          gap: 8,
         }}
       >
-        <div>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div className="eyebrow" style={{ fontSize: 9 }}>
             Series
           </div>
-          <div style={{ fontSize: 13, fontWeight: 500, marginTop: 2 }}>
-            {current?.short_name ?? current?.name ?? 'Select series'}
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 500,
+              marginTop: 2,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={current?.name}
+          >
+            {current?.name ?? 'Select series'}
           </div>
+          {hasShort && (
+            <div
+              className="mono"
+              style={{
+                fontSize: 10,
+                color: 'var(--fg-dim)',
+                marginTop: 2,
+                letterSpacing: 0.2,
+              }}
+            >
+              {current!.short_name}
+            </div>
+          )}
         </div>
         <IconChevDown size={14} />
       </button>
       {open && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            right: 0,
-            marginTop: 4,
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border)',
-            borderRadius: 8,
-            boxShadow: 'var(--shadow-lg)',
-            zIndex: 10,
-            maxHeight: 300,
-            overflowY: 'auto',
-          }}
-        >
-          {options.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => {
-                onChange(s.id);
-                setOpen(false);
-              }}
+        <>
+          {/* click-away backdrop */}
+          <div
+            onClick={() => setOpen(false)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 9,
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              right: 0,
+              marginTop: 4,
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              boxShadow: 'var(--shadow-lg)',
+              zIndex: 10,
+              maxHeight: 360,
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <div
               style={{
-                display: 'block',
-                width: '100%',
-                padding: '8px 12px',
-                textAlign: 'left',
-                fontSize: 13,
-                background: s.id === value ? 'var(--bg-hover)' : 'transparent',
-                color: 'var(--fg)',
-                cursor: 'pointer',
+                flex: 1,
+                overflowY: 'auto',
+                padding: '4px 0',
               }}
             >
-              {s.short_name ?? s.name}
-            </button>
-          ))}
-        </div>
+              {options.map((s) => {
+                const itemHasShort = !!s.short_name && s.short_name !== s.name;
+                const active = s.id === value;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => {
+                      onChange(s.id);
+                      setOpen(false);
+                    }}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      padding: '8px 12px',
+                      textAlign: 'left',
+                      background: active ? 'var(--bg-hover)' : 'transparent',
+                      color: 'var(--fg)',
+                      cursor: 'pointer',
+                      borderLeft: `2px solid ${active ? 'var(--red)' : 'transparent'}`,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 12.5,
+                        fontWeight: active ? 500 : 400,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={s.name}
+                    >
+                      {s.name}
+                    </div>
+                    {itemHasShort && (
+                      <div
+                        className="mono"
+                        style={{
+                          fontSize: 10,
+                          color: 'var(--fg-dim)',
+                          marginTop: 1,
+                          letterSpacing: 0.2,
+                        }}
+                      >
+                        {s.short_name}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            {(onEdit || onNew) && (
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 4,
+                  padding: 4,
+                  borderTop: '1px solid var(--border)',
+                  background: 'var(--bg-card)',
+                }}
+              >
+                {onEdit && current && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onEdit();
+                      setOpen(false);
+                    }}
+                    className="btn"
+                    style={{
+                      flex: 1,
+                      fontSize: 11,
+                      padding: '6px 8px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 5,
+                    }}
+                    title={`Edit ${current.short_name ?? current.name}`}
+                  >
+                    <IconEdit size={12} /> Edit series
+                  </button>
+                )}
+                {onNew && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onNew();
+                      setOpen(false);
+                    }}
+                    className="btn"
+                    style={{
+                      flex: 1,
+                      fontSize: 11,
+                      padding: '6px 8px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 5,
+                    }}
+                  >
+                    <IconPlus size={12} /> New series
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </>
       )}
     </div>
   );
