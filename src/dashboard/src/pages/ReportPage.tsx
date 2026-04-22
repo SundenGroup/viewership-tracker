@@ -200,6 +200,48 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     refreshMs: 60_000,
   });
 
+  // Compute the scope-appropriate date range — the report shouldn't claim
+  // "6 Mar – 10 May" when it's only covering a stage inside that window.
+  // MUST run before any early-return below to preserve the hook order
+  // (React error #310 if this moves below the loading/error guards).
+  const { scopeStart, scopeEnd } = useMemo(() => {
+    if (!seriesInfo) {
+      return { scopeStart: null as string | null, scopeEnd: null as string | null };
+    }
+    if (!resolvedScope) {
+      return {
+        scopeStart: seriesInfo.startDate ?? null,
+        scopeEnd: seriesInfo.endDate ?? null,
+      };
+    }
+    if (resolvedScope.level === 'day') {
+      for (const s of seriesInfo.stages) {
+        const d = s.broadcast_days.find((x) => x.id === resolvedScope.id);
+        if (d) return { scopeStart: d.date, scopeEnd: d.date };
+      }
+    }
+    if (resolvedScope.level === 'stage') {
+      const s = seriesInfo.stages.find((x) => x.id === resolvedScope.id);
+      if (s) {
+        // Prefer explicit stage start/end dates; fall back to derived
+        // min/max from broadcast_days (covers the common case where
+        // stage.start_date / end_date aren't set).
+        const dayDates = s.broadcast_days
+          .map((d) => d.date)
+          .filter((x): x is string => !!x)
+          .sort();
+        return {
+          scopeStart: s.start_date ?? dayDates[0] ?? null,
+          scopeEnd: s.end_date ?? dayDates[dayDates.length - 1] ?? null,
+        };
+      }
+    }
+    return {
+      scopeStart: seriesInfo.startDate ?? null,
+      scopeEnd: seriesInfo.endDate ?? null,
+    };
+  }, [resolvedScope, seriesInfo]);
+
   if (loading) {
     return (
       <div
@@ -236,42 +278,6 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       </div>
     );
   }
-
-  // Compute the scope-appropriate date range — the report shouldn't claim
-  // "6 Mar – 10 May" when it's only covering a stage inside that window.
-  const { scopeStart, scopeEnd } = useMemo(() => {
-    if (!resolvedScope)
-      return {
-        scopeStart: seriesInfo.startDate ?? null,
-        scopeEnd: seriesInfo.endDate ?? null,
-      };
-    if (resolvedScope.level === 'day') {
-      for (const s of seriesInfo.stages) {
-        const d = s.broadcast_days.find((x) => x.id === resolvedScope.id);
-        if (d) return { scopeStart: d.date, scopeEnd: d.date };
-      }
-    }
-    if (resolvedScope.level === 'stage') {
-      const s = seriesInfo.stages.find((x) => x.id === resolvedScope.id);
-      if (s) {
-        // Prefer explicit stage start/end dates; fall back to derived
-        // min/max from broadcast_days (covers the common case where
-        // stage.start_date / end_date aren't set).
-        const dayDates = s.broadcast_days
-          .map((d) => d.date)
-          .filter((x): x is string => !!x)
-          .sort();
-        return {
-          scopeStart: s.start_date ?? dayDates[0] ?? null,
-          scopeEnd: s.end_date ?? dayDates[dayDates.length - 1] ?? null,
-        };
-      }
-    }
-    return {
-      scopeStart: seriesInfo.startDate ?? null,
-      scopeEnd: seriesInfo.endDate ?? null,
-    };
-  }, [resolvedScope, seriesInfo]);
 
   if (variant === 'simple') {
     return (
