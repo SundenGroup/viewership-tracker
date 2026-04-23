@@ -114,7 +114,21 @@ export function EditorDesktop({
   const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
   const activeDay = useMemo(() => {
     if (selectedDayId) return allDays.find((d) => d.id === selectedDayId) ?? null;
-    return liveDay ?? allDays[allDays.length - 1] ?? null;
+    // Preferred default: whatever's LIVE right now, else the most recent
+    // day that was broadcast (status === 'completed' with the latest date),
+    // else the next upcoming scheduled day, else fall back to the last
+    // item in the array. Previously this just picked the last item, which
+    // for multi-week events landed the user on a future day with no data.
+    if (liveDay) return liveDay;
+    const completed = allDays
+      .filter((d) => d.status === 'completed')
+      .sort((a, b) => b.date.localeCompare(a.date));
+    if (completed[0]) return completed[0];
+    const upcoming = allDays
+      .filter((d) => d.status === 'scheduled')
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if (upcoming[0]) return upcoming[0];
+    return allDays[allDays.length - 1] ?? null;
   }, [selectedDayId, liveDay, allDays]);
 
   // ── ScopeScrubber state (series / stage / day + view group) ─────────

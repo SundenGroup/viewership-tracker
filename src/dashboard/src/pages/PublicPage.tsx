@@ -257,11 +257,20 @@ function PublicLive({
 
   const activeDay = useMemo(() => {
     if (selectedDayId) return allDaysFlat.find((d) => d.id === selectedDayId) ?? null;
-    return (
-      allDaysFlat.find((d) => d.status === 'live') ??
-      allDaysFlat[allDaysFlat.length - 1] ??
-      null
-    );
+    // Preferred default: LIVE right now → most recent completed day →
+    // next upcoming scheduled day → last item. The old fallback ("last in
+    // array") landed multi-week events on a future day with no data.
+    const live = allDaysFlat.find((d) => d.status === 'live');
+    if (live) return live;
+    const completed = allDaysFlat
+      .filter((d) => d.status === 'completed')
+      .sort((a, b) => b.date.localeCompare(a.date));
+    if (completed[0]) return completed[0];
+    const upcoming = allDaysFlat
+      .filter((d) => d.status === 'scheduled')
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if (upcoming[0]) return upcoming[0];
+    return allDaysFlat[allDaysFlat.length - 1] ?? null;
   }, [selectedDayId, allDaysFlat]);
 
   const stageOptions = useMemo(
