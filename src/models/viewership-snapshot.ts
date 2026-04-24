@@ -163,7 +163,7 @@ export async function getSnapshotsForScope(scope: Scope): Promise<ViewershipSnap
   return applyScope(db(TABLE), scope).orderBy('timestamp', 'asc');
 }
 
-export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?: ViewFilter): Promise<Array<ViewershipSnapshot & { display_name: string; channel_identifier: string }>> {
+export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?: ViewFilter): Promise<Array<ViewershipSnapshot & { display_name: string; channel_identifier: string; tier: string | null }>> {
   // Strategy: find the most recent BULK poll timestamp (ignoring view-group
   // filters), then return filtered snapshots from that poll cycle.
   //
@@ -203,7 +203,16 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
     .join('channels', 'channels.id', 'viewership_snapshots.channel_id')
     .where('viewership_snapshots.series_id', seriesId)
     .where('viewership_snapshots.timestamp', latestTs)
-    .select('viewership_snapshots.*', 'channels.display_name', 'channels.channel_identifier');
+    .select(
+      'viewership_snapshots.*',
+      'channels.display_name',
+      'channels.channel_identifier',
+      // Current tier from the channels table — consumers overlay this on
+      // the live CCV rows so a channel freshly promoted from community to
+      // watch_party stops reading "COMMUNITY" until the next metrics
+      // aggregation pass catches up.
+      'channels.tier',
+    );
 
   if (scope && scope.level !== 'series') {
     query.where(scopeColumn(scope), scope.id);
@@ -225,7 +234,7 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
   if (!hasTikTok) {
     const tiktokRows = await db.raw(`
       SELECT DISTINCT ON (vs.channel_id)
-        vs.*, c.display_name, c.channel_identifier
+        vs.*, c.display_name, c.channel_identifier, c.tier
       FROM viewership_snapshots vs
       JOIN channels c ON c.id = vs.channel_id
       WHERE vs.series_id = :seriesId
@@ -233,7 +242,7 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
         AND vs."timestamp" > NOW() - INTERVAL '2 minutes'
         AND vs.concurrent_viewers > 0
       ORDER BY vs.channel_id, vs."timestamp" DESC
-    `, { seriesId }).then((r: { rows: Array<ViewershipSnapshot & { display_name: string; channel_identifier: string }> }) => r.rows);
+    `, { seriesId }).then((r: { rows: Array<ViewershipSnapshot & { display_name: string; channel_identifier: string; tier: string | null }> }) => r.rows);
 
     if (tiktokRows.length > 0) {
       results.push(...tiktokRows);

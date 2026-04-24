@@ -130,6 +130,7 @@ router.get('/:shortName/live-ccv', async (req: Request, res: Response, next: Nex
         concurrentViewers: s.concurrent_viewers,
         language: s.language,
         region: s.region,
+        tier: s.tier ?? null,
         timestamp: s.timestamp,
         streamId: s.stream_id ?? null,
         streamTitle: s.stream_title ?? null,
