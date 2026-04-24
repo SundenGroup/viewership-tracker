@@ -59,6 +59,8 @@ import type {
   Channel,
   BroadcastStatus,
   ViewGroup,
+  MetricsResponse,
+  LiveCCVResponse,
 } from '@/types/api';
 import type { PollingDataState } from '@/hooks/usePollingData';
 
@@ -96,13 +98,15 @@ export function EditorDesktop({
 }: EditorDesktopProps) {
   const navigate = useNavigate();
 
-  // Active broadcast day ("scope" in the design's mental model)
-  const model = useDashboardModel({
+  // Baseline series-level model — used only to detect liveDay (which
+  // seeds the scope scrubber's default). The final scope-aware model is
+  // built further down once we know what the user has picked.
+  const baseModel = useDashboardModel({
     seriesDetail,
     metrics: pollingData.metrics,
     liveCCV: pollingData.liveCCV,
   });
-  const { liveDay } = model;
+  const { liveDay } = baseModel;
 
   // ── Scope state — single day (the one with status='live' by default) ────
 
@@ -217,6 +221,40 @@ export function EditorDesktop({
   }, [scopeLevel, activeStage, activeDay, seriesId]);
 
   const timeline = useTimelineSeries({ scope, interval: 60 });
+
+  // ── Scope-aware metrics + liveCCV ─────────────────────────────────────
+  // usePollingData only fetches series-level. When the operator picks a
+  // Day or Stage on the scrubber, the KPIs should narrow to that window —
+  // otherwise "Peak today" prints the whole-series peak and "Hours
+  // watched this scope" prints the whole-series hours. Fetch scoped
+  // metrics on demand and union them into the dashboard model.
+  const needsScopedFetch = !!scope && scope.level !== 'series';
+  const scopeCacheKey = scope ? `${scope.level}:${scope.id}` : '';
+
+  const { data: scopedMetrics } = usePollingApi<MetricsResponse>(
+    () =>
+      needsScopedFetch && scope
+        ? api.getMetrics(scope.level, scope.id)
+        : Promise.resolve(null as unknown as MetricsResponse),
+    [seriesId, scopeCacheKey],
+    { intervalMs: 30_000, enabled: needsScopedFetch && !!seriesId },
+  );
+
+  const { data: scopedLiveCCV } = usePollingApi<LiveCCVResponse>(
+    () =>
+      needsScopedFetch && scope && seriesId
+        ? api.getLiveCCV(seriesId, scope.level, scope.id)
+        : Promise.resolve(null as unknown as LiveCCVResponse),
+    [seriesId, scopeCacheKey],
+    { intervalMs: 30_000, enabled: needsScopedFetch && !!seriesId },
+  );
+
+  // Final model — scoped when the user has drilled in, series-level otherwise.
+  const model = useDashboardModel({
+    seriesDetail,
+    metrics: needsScopedFetch ? scopedMetrics : pollingData.metrics,
+    liveCCV: needsScopedFetch ? scopedLiveCCV : pollingData.liveCCV,
+  });
 
   // Recent 48-minute slice for the hero mini chart
   const heroAreaData = useMemo(() => timeline.total.slice(-48), [timeline.total]);
