@@ -337,6 +337,20 @@ function SimpleReport({
     return seriesInfo.stages.reduce((acc, s) => acc + s.broadcast_days.length, 0);
   }, [seriesInfo, scopeLabel, scopeLevel]);
 
+  // Correct tier peaks from the timeline (see DetailedReport for context).
+  const tierRowsCorrected = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of timeline.region) {
+      const id = (s.id ?? '').toLowerCase();
+      if (!id) continue;
+      m.set(id, s.sum ?? (s.data.length ? Math.max(...s.data) : 0));
+    }
+    return model.tierRows.map((t) => {
+      const tp = m.get(t.key);
+      return tp != null && tp > 0 ? { ...t, peak: tp } : t;
+    });
+  }, [model.tierRows, timeline.region]);
+
   const eyebrow =
     scopeLevel === 'stage' ? 'Stage report' : scopeLevel === 'day' ? 'Broadcast day report' : 'Series report';
   const headline =
@@ -423,7 +437,7 @@ function SimpleReport({
       </div>
 
       {(() => {
-        const visibleTiers = model.tierRows.filter(
+        const visibleTiers = tierRowsCorrected.filter(
           (t) => (t.peak ?? 0) > 0 || (t.viewedHours ?? 0) > 0 || (t.ccv ?? 0) > 0,
         );
         if (visibleTiers.length === 0) return null;
@@ -636,6 +650,35 @@ function DetailedReport({
       .filter((l) => l.peak > 0 || l.hours > 0);
   }, [model.leaderboard, model.languageBreakdown]);
 
+  // ── Correct tier peaks from the timeline ────────────────────────────
+  // The tier peak in model.tierRows is Math.max() of per-channel peaks,
+  // which underestimates the true "highest simultaneous CCV in that
+  // tier" when multiple channels peak at the same minute. The timeline
+  // hook fetches a grouped-by-tier time series whose per-tier max IS
+  // that authoritative number — use it to override tierRows[].peak so
+  // the cards agree with the chart legend at the top of the page.
+  const tierPeakFromTimeline = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of timeline.region) {
+      const id = (s.id ?? '').toLowerCase();
+      if (!id) continue;
+      const peak = s.sum ?? (s.data.length ? Math.max(...s.data) : 0);
+      m.set(id, peak);
+    }
+    return m;
+  }, [timeline.region]);
+
+  const tierRowsCorrected = useMemo(
+    () =>
+      model.tierRows.map((t) => {
+        const timelinePeak = tierPeakFromTimeline.get(t.key);
+        return timelinePeak != null && timelinePeak > 0
+          ? { ...t, peak: timelinePeak }
+          : t;
+      }),
+    [model.tierRows, tierPeakFromTimeline],
+  );
+
   // ── Per-section metric toggles (Peak CCV vs Viewed Hours) ─────────────
   const [tierMetric, setTierMetric] = useState<'peak' | 'hours'>('peak');
   const [platformMetric, setPlatformMetric] = useState<'peak' | 'hours'>('hours');
@@ -781,7 +824,7 @@ function DetailedReport({
       {(() => {
         // Filter out tiers with zero data so empty buckets (e.g. no Partner
         // streams on this day) don't clutter the grid with "0" cards.
-        const visibleTiers = model.tierRows.filter(
+        const visibleTiers = tierRowsCorrected.filter(
           (t) => (t.peak ?? 0) > 0 || (t.viewedHours ?? 0) > 0 || (t.ccv ?? 0) > 0,
         );
         if (visibleTiers.length === 0) return null;
