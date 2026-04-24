@@ -764,22 +764,121 @@ function PublicRecap({
   pollingData: ReturnType<typeof usePublicPollingData>;
   shortName: string;
 }) {
+  const hasMultipleStages = seriesInfo.stages.length > 1;
+
+  const allDaysFlat = useMemo(
+    () => seriesInfo.stages.flatMap((s) => s.broadcast_days),
+    [seriesInfo],
+  );
+
+  const [scopeLevel, setScopeLevel] = useState<'series' | 'stage' | 'day'>('series');
+  const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
+  const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
+
+  const activeStage = useMemo(() => {
+    if (selectedStageId) return seriesInfo.stages.find((s) => s.id === selectedStageId) ?? null;
+    return seriesInfo.stages[seriesInfo.stages.length - 1] ?? null;
+  }, [seriesInfo, selectedStageId]);
+
+  const activeDay = useMemo(() => {
+    if (selectedDayId) return allDaysFlat.find((d) => d.id === selectedDayId) ?? null;
+    const completed = allDaysFlat
+      .filter((d) => d.status === 'completed')
+      .sort((a, b) => b.date.localeCompare(a.date));
+    return completed[0] ?? allDaysFlat[allDaysFlat.length - 1] ?? null;
+  }, [selectedDayId, allDaysFlat]);
+
+  const stageOptions = useMemo(
+    () =>
+      seriesInfo.stages.map((s) => {
+        const dates = s.broadcast_days.map((d) => d.date).sort();
+        const first = dates[0];
+        const last = dates[dates.length - 1];
+        return {
+          id: s.id,
+          label: s.name,
+          sub:
+            first === last
+              ? fmtDateLong(first)
+              : first && last
+                ? `${fmtDateLong(first)} – ${fmtDateLong(last)}`
+                : undefined,
+        };
+      }),
+    [seriesInfo],
+  );
+
+  const dayOptions = useMemo(() => {
+    const days = scopeLevel === 'stage' && activeStage ? activeStage.broadcast_days : allDaysFlat;
+    return [...days]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((d) => ({ id: d.id, label: d.label, sub: fmtDateLong(d.date) }));
+  }, [scopeLevel, activeStage, allDaysFlat]);
+
+  const scope = useMemo(() => {
+    if (scopeLevel === 'series') return { level: 'series' as const, id: seriesInfo.id };
+    if (scopeLevel === 'stage' && activeStage) return { level: 'stage' as const, id: activeStage.id };
+    if (scopeLevel === 'day' && activeDay) return { level: 'day' as const, id: activeDay.id };
+    return { level: 'series' as const, id: seriesInfo.id };
+  }, [scopeLevel, activeStage, activeDay, seriesInfo.id]);
+
+  const needsScopedFetch = scope.level !== 'series';
+  const scopeCacheKey = `${scope.level}:${scope.id}`;
+
+  const { data: scopedMetrics } = usePollingApi<MetricsResponse>(
+    () =>
+      needsScopedFetch && shortName
+        ? api.getPublicMetrics(shortName, scope.level, scope.id)
+        : Promise.resolve(null as unknown as MetricsResponse),
+    [shortName, scopeCacheKey],
+    { intervalMs: 30_000, enabled: needsScopedFetch && !!shortName },
+  );
+
+  const { data: scopedLiveCCV } = usePollingApi<LiveCCVResponse>(
+    () =>
+      needsScopedFetch && shortName
+        ? api.getPublicLiveCCV(shortName, scope.level, scope.id)
+        : Promise.resolve(null as unknown as LiveCCVResponse),
+    [shortName, scopeCacheKey],
+    { intervalMs: 30_000, enabled: needsScopedFetch && !!shortName },
+  );
+
   const model = useDashboardModel({
     seriesDetail,
-    metrics: pollingData.metrics,
-    liveCCV: pollingData.liveCCV,
+    metrics: needsScopedFetch ? scopedMetrics : pollingData.metrics,
+    liveCCV: needsScopedFetch ? scopedLiveCCV : pollingData.liveCCV,
   });
 
-  const scope = seriesInfo.id
-    ? { level: 'series' as const, id: seriesInfo.id }
-    : null;
-
   const timeline = useTimelineSeries({ scope, interval: 300, publicShortName: shortName });
+
+  const tierRowsVisible = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of timeline.region) {
+      const id = (s.id ?? '').toLowerCase();
+      if (!id) continue;
+      m.set(id, s.sum ?? (s.data.length ? Math.max(...s.data) : 0));
+    }
+    return model.tierRows
+      .map((t) => {
+        const tp = m.get(t.key);
+        return tp != null && tp > 0 ? { ...t, peak: tp } : t;
+      })
+      .filter((t) => (t.peak ?? 0) > 0 || (t.viewedHours ?? 0) > 0 || (t.ccv ?? 0) > 0);
+  }, [model.tierRows, timeline.region]);
 
   const totalDayCount = seriesInfo.stages.reduce(
     (acc, s) => acc + s.broadcast_days.length,
     0,
   );
+
+  const scopeTitle =
+    scope.level === 'series'
+      ? seriesInfo.name
+      : scope.level === 'stage' && activeStage
+        ? `${seriesInfo.name} · ${activeStage.name}`
+        : scope.level === 'day' && activeDay
+          ? `${seriesInfo.name} · ${activeDay.label}`
+          : seriesInfo.name;
 
   const palette = [
     'var(--red)', 'var(--info)', 'var(--warn)', 'var(--live)',
@@ -813,6 +912,29 @@ function PublicRecap({
         </Row>
       </header>
 
+      {/* Scope scrubber — Series / Stage / Day */}
+      <div
+        style={{
+          padding: '14px 40px',
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--bg-raised)',
+        }}
+      >
+        <ScopeScrubber
+          level={scopeLevel}
+          onLevelChange={(l) => setScopeLevel(l as 'series' | 'stage' | 'day')}
+          stages={hasMultipleStages ? stageOptions : undefined}
+          stageId={activeStage?.id}
+          onStageChange={(id) => {
+            setSelectedStageId(id);
+            setSelectedDayId(null);
+          }}
+          days={dayOptions}
+          dayId={activeDay?.id}
+          onDayChange={(id) => setSelectedDayId(id)}
+        />
+      </div>
+
       {/* Headline */}
       <section style={{ padding: '40px 40px 24px' }}>
         <div className="eyebrow" style={{ marginBottom: 12 }}>
@@ -828,7 +950,7 @@ function PublicRecap({
             maxWidth: 1000,
           }}
         >
-          {seriesInfo.name}
+          {scopeTitle}
         </h1>
         <div style={{ fontSize: 15, color: 'var(--fg-muted)', marginTop: 8 }}>
           {totalDayCount} broadcast day{totalDayCount === 1 ? '' : 's'} ·{' '}
@@ -849,7 +971,8 @@ function PublicRecap({
         />
       </section>
 
-      {/* By category (tier breakdown) */}
+      {/* By category (tier breakdown) — hide tiers with no activity in scope. */}
+      {tierRowsVisible.length > 0 && (
       <section style={{ padding: '0 40px 32px' }}>
         <div className="eyebrow" style={{ marginBottom: 12 }}>
           By category
@@ -857,11 +980,11 @@ function PublicRecap({
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(5, 1fr)',
+            gridTemplateColumns: `repeat(${tierRowsVisible.length}, 1fr)`,
             gap: 10,
           }}
         >
-          {model.tierRows.map((t) => (
+          {tierRowsVisible.map((t) => (
             <div key={t.key} className="card" style={{ padding: 16 }}>
               <Row justify="space-between">
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</span>
@@ -905,6 +1028,7 @@ function PublicRecap({
           ))}
         </div>
       </section>
+      )}
 
       {/* Timeline */}
       <section style={{ padding: '0 40px 32px' }}>

@@ -1004,11 +1004,10 @@ export function EditorDesktop({
             )}
           </div>
 
-          {/* Regional / category mix (falls back to language if no region breakdown).
-              Computes CURRENT live CCV per bucket from the channel leaderboard —
-              the breakdown API returns summed totalCCV across all minutes, which
-              swamped the "now" label with bucket sizes bigger than the whole
-              event's live CCV at any moment. */}
+          {/* Language mix — CURRENT live CCV per language bucket from the channel
+              leaderboard. The breakdown API returns summed totalCCV across all
+              minutes, which swamped the "now" label with bucket sizes bigger than
+              the whole event's live CCV at any moment. */}
           <div
             className="card"
             style={{
@@ -1020,20 +1019,14 @@ export function EditorDesktop({
             }}
           >
             {(() => {
-              const regionBuckets = new Map<string, number>();
               const langBuckets = new Map<string, number>();
               for (const c of model.leaderboard) {
-                if (c.live > 0 || (c.live ?? 0) > 0) {
-                  const r = (c.region ?? '').trim().toLowerCase();
-                  if (r) regionBuckets.set(r, (regionBuckets.get(r) ?? 0) + c.live);
+                if ((c.live ?? 0) > 0) {
                   const l = (c.language ?? '').trim().toLowerCase();
                   if (l) langBuckets.set(l, (langBuckets.get(l) ?? 0) + c.live);
                 }
               }
-              const useRegions = regionBuckets.size > 0;
-              const buckets = Array.from(
-                useRegions ? regionBuckets : langBuckets,
-              )
+              const buckets = Array.from(langBuckets)
                 .map(([key, value]) => ({ key, value }))
                 .sort((a, b) => b.value - a.value)
                 .slice(0, 6);
@@ -1049,9 +1042,7 @@ export function EditorDesktop({
               return (
                 <>
                   <Row justify="space-between">
-                    <div className="eyebrow">
-                      {useRegions ? 'Regional mix' : 'Language mix'}
-                    </div>
+                    <div className="eyebrow">Language mix</div>
                     <span
                       className="mono"
                       style={{ fontSize: 10, color: 'var(--fg-dim)' }}
@@ -1082,71 +1073,6 @@ export function EditorDesktop({
                 </>
               );
             })()}
-          </div>
-
-          {/* Momentum / Movers — top 5 live channels ordered by live CCV */}
-          <div
-            className="card"
-            style={{
-              minWidth: 0,
-              padding: 20,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 12,
-            }}
-          >
-            <Row justify="space-between">
-              <div className="eyebrow">Top 5 · live</div>
-              <span className="mono" style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
-                by CCV
-              </span>
-            </Row>
-            <Col gap={6}>
-              {model.topChannels.slice(0, 5).map((c, i) => (
-                <Row
-                  key={c.id}
-                  justify="space-between"
-                  style={{
-                    fontSize: 12,
-                    gap: 8,
-                    minWidth: 0,
-                    padding: '4px 0',
-                    borderBottom: i < 4 ? '1px solid var(--border-faint)' : 'none',
-                  }}
-                >
-                  <Row gap={8} style={{ minWidth: 0 }}>
-                    <PlatformPip id={c.platform} />
-                    <span
-                      style={{
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        fontWeight: 500,
-                      }}
-                    >
-                      {c.name}
-                    </span>
-                  </Row>
-                  <span
-                    className="tabular"
-                    style={{ color: 'var(--fg-muted)', fontSize: 11 }}
-                  >
-                    {fmtCompact(c.live)}
-                  </span>
-                </Row>
-              ))}
-              {model.topChannels.length === 0 && (
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: 'var(--fg-dim)',
-                    fontFamily: 'var(--font-mono)',
-                  }}
-                >
-                  No live channels yet
-                </span>
-              )}
-            </Col>
           </div>
         </div>
 

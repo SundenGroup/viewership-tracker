@@ -147,7 +147,7 @@ const LONG_TZ_TO_ABBR: Record<string, string> = {
  * Get the short timezone abbreviation (e.g. "CEST", "EST", "PDT") for a
  * given date in a given IANA timezone. DST-aware.
  */
-function getTimezoneAbbr(date: Date, timezone: string): string {
+export function getTimezoneAbbr(date: Date, timezone: string): string {
   try {
     const longParts = new Intl.DateTimeFormat('en-US', {
       timeZone: timezone,

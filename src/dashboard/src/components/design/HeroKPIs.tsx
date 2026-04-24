@@ -20,6 +20,7 @@
 
 import type { ReactNode } from 'react';
 import { fmtCompact, fmtN, fmtPct } from '@/design/format';
+import { getTimezoneAbbr } from '@/utils/formatters';
 
 export type HeroKPIVariant = 'xl' | 'md' | 'mobile';
 
@@ -192,13 +193,12 @@ export function HeroKPIs({
           hour: '2-digit',
           minute: '2-digit',
           hour12: false,
-          timeZoneName: 'short',
         }).formatToParts(d);
         const month = parts.find((p) => p.type === 'month')?.value ?? '';
         const day = parts.find((p) => p.type === 'day')?.value ?? '';
         const hour = parts.find((p) => p.type === 'hour')?.value ?? '00';
         const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
-        const tz = parts.find((p) => p.type === 'timeZoneName')?.value ?? '';
+        const tz = timezone ? getTimezoneAbbr(d, timezone) : '';
         const datePart = peakIncludeDate && month && day ? `${month} ${day} · ` : '';
         peakLabel = `peak at ${datePart}${hour}:${minute}${tz ? ` ${tz}` : ''}`;
       } catch {
