@@ -4,7 +4,8 @@
  * and wired to real data.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Row,
   Col,
@@ -13,7 +14,6 @@ import {
   PlatformPip,
   AreaChart,
   Section,
-  IconBell,
   IconBolt,
   IconCheck,
   IconDot,
@@ -70,7 +70,9 @@ export function EditorMobile({
   onStopPolling,
   pollLoading,
 }: EditorMobileProps) {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<MobileTab>('live');
+  const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
 
   const model = useDashboardModel({
     seriesDetail,
@@ -79,8 +81,21 @@ export function EditorMobile({
   });
   const liveDay = model.liveDay;
 
-  const scope = liveDay
-    ? { level: 'day' as const, id: liveDay.id }
+  // Active day — user's tap in the Schedule wins, else the live day, else
+  // the most recently completed day, else the latest in the list.
+  const activeDay = useMemo(() => {
+    if (!seriesDetail) return liveDay;
+    const all = seriesDetail.stages.flatMap((s) => s.broadcast_days);
+    if (selectedDayId) return all.find((d) => d.id === selectedDayId) ?? liveDay;
+    if (liveDay) return liveDay;
+    const completed = all
+      .filter((d) => d.status === 'completed')
+      .sort((a, b) => b.date.localeCompare(a.date));
+    return completed[0] ?? all[all.length - 1] ?? null;
+  }, [seriesDetail, selectedDayId, liveDay]);
+
+  const scope = activeDay
+    ? { level: 'day' as const, id: activeDay.id }
     : seriesId
       ? { level: 'series' as const, id: seriesId }
       : null;
@@ -130,20 +145,29 @@ export function EditorMobile({
             type="button"
             className="btn btn-ghost btn-xs"
             style={{ padding: 4 }}
+            onClick={() => navigate('/')}
+            title="Back to series list"
+            aria-label="Back to series list"
           >
             <IconMenu size={18} />
           </button>
           <LogoMark size={16} withWordmark />
           {pollingStatus?.state === 'running' && <Pill tone="live">● Live</Pill>}
         </Row>
-        <Row gap={4}>
-          <button type="button" className="btn btn-ghost btn-xs" style={{ padding: 6 }}>
-            <IconBell size={16} />
-          </button>
-          <button type="button" className="btn btn-ghost btn-xs" style={{ padding: 6 }}>
-            <IconSettings size={16} />
-          </button>
-        </Row>
+        {seriesId && (
+          <Row gap={4}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-xs"
+              style={{ padding: 6 }}
+              onClick={() => navigate(`/${seriesId}/edit`)}
+              title="Edit series"
+              aria-label="Edit series"
+            >
+              <IconSettings size={16} />
+            </button>
+          </Row>
+        )}
       </header>
 
       {/* Body */}
@@ -276,49 +300,73 @@ export function EditorMobile({
                     .flatMap((s) => s.broadcast_days)
                     .sort((a, b) => a.date.localeCompare(b.date))
                     .slice(0, 6)
-                    .map((d) => (
-                      <div
-                        key={d.id}
-                        style={{
-                          flex: '1 1 40%',
-                          padding: 10,
-                          borderRadius: 8,
-                          background:
-                            d.status === 'live' ? 'var(--red-wash)' : 'var(--bg-sunken)',
-                          border: `1px solid ${
-                            d.status === 'live'
-                              ? 'color-mix(in oklab, var(--red) 30%, transparent)'
-                              : 'var(--border)'
-                          }`,
-                        }}
-                      >
-                        <div
+                    .map((d) => {
+                      const isActive = activeDay?.id === d.id;
+                      return (
+                        <button
+                          key={d.id}
+                          type="button"
+                          onClick={() => setSelectedDayId(d.id)}
                           style={{
-                            fontSize: 12,
-                            fontWeight: 500,
-                            display: 'flex',
-                            justifyContent: 'space-between',
+                            flex: '1 1 40%',
+                            padding: 10,
+                            borderRadius: 8,
+                            background: isActive
+                              ? 'var(--bg-card)'
+                              : d.status === 'live'
+                                ? 'var(--red-wash)'
+                                : 'var(--bg-sunken)',
+                            border: `1px solid ${
+                              isActive
+                                ? 'var(--red)'
+                                : d.status === 'live'
+                                  ? 'color-mix(in oklab, var(--red) 30%, transparent)'
+                                  : 'var(--border)'
+                            }`,
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                            color: 'var(--fg)',
                           }}
                         >
-                          {d.label}
-                          {d.status === 'live' && <Pill tone="red">LIVE</Pill>}
-                          {d.status === 'completed' && (
-                            <span style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
-                              ✓
+                          <div
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 500,
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              gap: 6,
+                            }}
+                          >
+                            <span
+                              style={{
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {d.label}
                             </span>
-                          )}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 10,
-                            color: 'var(--fg-muted)',
-                            marginTop: 2,
-                          }}
-                        >
-                          {fmtDateMD(d.date)}
-                        </div>
-                      </div>
-                    ))}
+                            {d.status === 'live' && <Pill tone="red">LIVE</Pill>}
+                            {d.status === 'completed' && (
+                              <span style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
+                                ✓
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 10,
+                              color: 'var(--fg-muted)',
+                              marginTop: 2,
+                            }}
+                          >
+                            {fmtDateMD(d.date)}
+                            {isActive && ' · selected'}
+                          </div>
+                        </button>
+                      );
+                    })}
                 </Row>
               </div>
             )}
@@ -388,84 +436,14 @@ export function EditorMobile({
         )}
 
         {tab === 'discovery' && (
-          <>
-            <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
-              Tap Approve to add a candidate, or Block to hide it.
-            </div>
-            <Col gap={10}>
-              {(discoveryChannels ?? []).map((d) => {
-                const md = d.metadata as {
-                  stream_title?: string;
-                  discovered_ccv?: number;
-                  source?: string;
-                };
-                return (
-                  <div key={d.id} className="card" style={{ padding: 14 }}>
-                    <Row justify="space-between">
-                      <Row gap={8}>
-                        <PlatformPip id={d.platform} />
-                        <span style={{ fontSize: 14, fontWeight: 500 }}>
-                          {d.display_name}
-                        </span>
-                      </Row>
-                      <span className="mono" style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
-                        {md.source ?? 'keyword'}
-                      </span>
-                    </Row>
-                    {md.stream_title && (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: 'var(--fg-muted)',
-                          marginTop: 6,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {md.stream_title}
-                      </div>
-                    )}
-                    <Row gap={12} style={{ marginTop: 10, alignItems: 'center' }}>
-                      <span className="tabular" style={{ fontSize: 16, fontWeight: 500 }}>
-                        {fmtCompact(Number(md.discovered_ccv ?? 0) || 0)}
-                      </span>
-                      <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>viewers</span>
-                      <div style={{ flex: 1 }} />
-                      <button
-                        type="button"
-                        className="btn"
-                        style={{ flex: 1, justifyContent: 'center', color: 'var(--danger)' }}
-                        onClick={() => api.blockChannel(seriesId, d.id).catch(() => {})}
-                      >
-                        <IconX size={14} /> Block
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        style={{ flex: 1, justifyContent: 'center' }}
-                        onClick={() =>
-                          api
-                            .promoteChannel(
-                              d.id,
-                              seriesDetail?.discovery_default_tier ?? 'community',
-                            )
-                            .catch(() => {})
-                        }
-                      >
-                        <IconCheck size={14} /> Approve
-                      </button>
-                    </Row>
-                  </div>
-                );
-              })}
-              {(discoveryChannels?.length ?? 0) === 0 && (
-                <div className="placeholder" style={{ height: 100 }}>
-                  No discovery candidates yet
-                </div>
-              )}
-            </Col>
-          </>
+          <DiscoveryMobileTab
+            seriesId={seriesId}
+            channels={discoveryChannels ?? []}
+            defaultTier={seriesDetail?.discovery_default_tier ?? 'community'}
+            blocklist={
+              (seriesDetail?.metadata?.blocklist as string[] | undefined) ?? []
+            }
+          />
         )}
 
         {tab === 'ops' && (
@@ -630,5 +608,235 @@ export function EditorMobile({
         ))}
       </nav>
     </div>
+  );
+}
+
+// ── Discovery Mobile tab ──────────────────────────────────────────────────
+// Mirrors the filter + state machine from DiscoveryFeedSection so the
+// mobile view never shows Approve on already-approved streams.
+//
+//   Filter (source='auto_discovered' only):
+//     - Keep active channels (pending first approval)
+//     - Keep inactive channels when blocked / auto-paused / re-surfaced
+//
+//   Row state:
+//     - Pending (tier='community')         → [Approve] [Block]
+//     - Blocked (inactive + blocklisted)   → "BLOCKED" chip
+//     - Disabled (inactive + last_seen_at) → [Re-enable]
+
+function DiscoveryMobileTab({
+  seriesId,
+  channels,
+  defaultTier,
+  blocklist,
+}: {
+  seriesId: string;
+  channels: Channel[];
+  defaultTier: string;
+  blocklist: string[];
+}) {
+  const blocklistSet = useMemo(() => new Set(blocklist), [blocklist]);
+  const [acted, setActed] = useState<Record<string, 'approved' | 'blocked'>>({});
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+
+  const visible = useMemo(() => {
+    return channels.filter((c) => {
+      if (c.source !== 'auto_discovered') return false;
+      if (c.is_active) return true;
+      if (blocklistSet.has(c.channel_identifier)) return true;
+      const md = c.metadata as
+        | { last_seen_at?: string; auto_paused?: boolean }
+        | undefined;
+      return !!md?.last_seen_at || !!md?.auto_paused;
+    });
+  }, [channels, blocklistSet]);
+
+  const handleApprove = async (id: string, tier?: string) => {
+    setBusy((m) => ({ ...m, [id]: true }));
+    try {
+      await api.promoteChannel(id, tier ?? defaultTier);
+      setActed((m) => ({ ...m, [id]: 'approved' }));
+    } catch {
+      /* ignore */
+    } finally {
+      setBusy((m) => ({ ...m, [id]: false }));
+    }
+  };
+
+  const handleBlock = async (id: string) => {
+    setBusy((m) => ({ ...m, [id]: true }));
+    try {
+      await api.blockChannel(seriesId, id);
+      setActed((m) => ({ ...m, [id]: 'blocked' }));
+    } catch {
+      /* ignore */
+    } finally {
+      setBusy((m) => ({ ...m, [id]: false }));
+    }
+  };
+
+  return (
+    <>
+      <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+        Tap Approve to promote, Re-enable to resume a paused channel, or
+        Block to hide.
+      </div>
+      <Col gap={10}>
+        {visible.map((c) => {
+          const md = (c.metadata ?? {}) as {
+            stream_title?: string;
+            discovered_ccv?: number;
+            source?: string;
+            last_seen_at?: string;
+            auto_paused?: boolean;
+          };
+          const inBlocklist = blocklistSet.has(c.channel_identifier);
+          const autoPaused = !!md.auto_paused;
+          const actedState = acted[c.id];
+          const isPending = !actedState && c.tier === 'community';
+          const isBlocked = !actedState && !c.is_active && inBlocklist;
+          const isDisabled =
+            !actedState &&
+            !c.is_active &&
+            !inBlocklist &&
+            !!md.last_seen_at &&
+            (c.tier !== 'community' || autoPaused);
+          const isBusy = !!busy[c.id];
+
+          return (
+            <div key={c.id} className="card" style={{ padding: 14 }}>
+              <Row justify="space-between">
+                <Row gap={8}>
+                  <PlatformPip id={c.platform} />
+                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                    {c.display_name}
+                  </span>
+                </Row>
+                <span className="mono" style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
+                  {md.source ?? 'keyword'}
+                </span>
+              </Row>
+              {md.stream_title && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: 'var(--fg-muted)',
+                    marginTop: 6,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {md.stream_title}
+                </div>
+              )}
+              <Row gap={8} style={{ marginTop: 10, alignItems: 'center' }}>
+                <span className="tabular" style={{ fontSize: 16, fontWeight: 500 }}>
+                  {fmtCompact(Number(md.discovered_ccv ?? 0) || 0)}
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>viewers</span>
+                {autoPaused && (
+                  <span
+                    style={{
+                      fontSize: 9,
+                      padding: '2px 6px',
+                      borderRadius: 3,
+                      background: 'color-mix(in oklab, var(--warn) 16%, transparent)',
+                      color: 'var(--warn)',
+                      fontFamily: 'var(--font-mono)',
+                      letterSpacing: '0.04em',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Auto-paused
+                  </span>
+                )}
+                <div style={{ flex: 1 }} />
+                {actedState === 'approved' && (
+                  <StatusChipMobile tone="live" label="Approved" />
+                )}
+                {actedState === 'blocked' && (
+                  <StatusChipMobile tone="danger" label="Blocked" />
+                )}
+                {isBlocked && <StatusChipMobile tone="danger" label="Blocked" />}
+              </Row>
+              {isPending && !actedState && (
+                <Row gap={6} style={{ marginTop: 10 }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{
+                      flex: 1,
+                      justifyContent: 'center',
+                      color: 'var(--danger)',
+                    }}
+                    onClick={() => handleBlock(c.id)}
+                    disabled={isBusy}
+                  >
+                    <IconX size={14} /> Block
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ flex: 1, justifyContent: 'center' }}
+                    onClick={() => handleApprove(c.id)}
+                    disabled={isBusy}
+                  >
+                    <IconCheck size={14} /> {isBusy ? '…' : 'Approve'}
+                  </button>
+                </Row>
+              )}
+              {isDisabled && !actedState && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{
+                    marginTop: 10,
+                    width: '100%',
+                    justifyContent: 'center',
+                  }}
+                  onClick={() => handleApprove(c.id, c.tier)}
+                  disabled={isBusy}
+                >
+                  <IconCheck size={14} /> {isBusy ? '…' : 'Re-enable'}
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {visible.length === 0 && (
+          <div className="placeholder" style={{ height: 100 }}>
+            No discovery candidates yet
+          </div>
+        )}
+      </Col>
+    </>
+  );
+}
+
+function StatusChipMobile({
+  tone,
+  label,
+}: {
+  tone: 'live' | 'danger';
+  label: string;
+}) {
+  const color = tone === 'live' ? 'var(--live)' : 'var(--danger)';
+  return (
+    <span
+      style={{
+        fontSize: 9,
+        padding: '3px 7px',
+        borderRadius: 3,
+        background: `color-mix(in oklab, ${color} 16%, transparent)`,
+        color,
+        fontFamily: 'var(--font-mono)',
+        fontWeight: 600,
+        letterSpacing: '0.04em',
+        textTransform: 'uppercase',
+      }}
+    >
+      {label}
+    </span>
   );
 }

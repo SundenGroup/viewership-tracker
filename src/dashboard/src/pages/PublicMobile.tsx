@@ -7,9 +7,16 @@
  */
 
 import { useMemo, useState } from 'react';
+import * as api from '@/services/api';
 import type { PublicSeriesInfo } from '@/services/api';
-import type { SeriesWithStages } from '@/types/api';
+import type {
+  SeriesWithStages,
+  MetricsResponse,
+  LiveCCVResponse,
+  ScopeLevel,
+} from '@/types/api';
 import type { usePublicPollingData } from '@/hooks/usePublicPollingData';
+import { usePollingApi } from '@/hooks/useApi';
 import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
 import {
@@ -503,13 +510,99 @@ export function PublicMobile({
   shortName: string;
   mode: 'live' | 'recap';
 }) {
-  const model = useDashboardModel({
+  // Baseline model (series-level) — used only to detect the initial
+  // liveDay so the scope scrubber can land on it by default.
+  const baseModel = useDashboardModel({
     seriesDetail,
     metrics: pollingData.metrics,
     liveCCV: pollingData.liveCCV,
   });
 
-  const scope = seriesInfo.id ? { level: 'series' as const, id: seriesInfo.id } : null;
+  // Scope scrubber state — defaults to Day scope when something's live,
+  // otherwise Series scope so the whole recap shows.
+  const liveDayInitial = useMemo(() => {
+    for (const s of seriesInfo.stages) {
+      for (const d of s.broadcast_days) {
+        if (d.status === 'live') return { stageId: s.id, dayId: d.id };
+      }
+    }
+    return null;
+  }, [seriesInfo]);
+  const [scopeLevel, setScopeLevel] = useState<ScopeLevel>(
+    liveDayInitial ? 'day' : 'series',
+  );
+  const [selectedStageId, setSelectedStageId] = useState<string | null>(
+    liveDayInitial?.stageId ?? null,
+  );
+  const [selectedDayId, setSelectedDayId] = useState<string | null>(
+    liveDayInitial?.dayId ?? null,
+  );
+
+  // Derived scope for data fetching
+  const activeStage = useMemo(() => {
+    if (selectedStageId)
+      return seriesInfo.stages.find((s) => s.id === selectedStageId) ?? null;
+    return (
+      seriesInfo.stages.find((s) =>
+        s.broadcast_days.some((d) => d.status === 'live'),
+      ) ??
+      seriesInfo.stages[seriesInfo.stages.length - 1] ??
+      null
+    );
+  }, [seriesInfo, selectedStageId]);
+
+  const allDaysFlat = useMemo(
+    () => seriesInfo.stages.flatMap((s) => s.broadcast_days),
+    [seriesInfo],
+  );
+  const activeDay = useMemo(() => {
+    if (selectedDayId)
+      return allDaysFlat.find((d) => d.id === selectedDayId) ?? null;
+    const live = allDaysFlat.find((d) => d.status === 'live');
+    if (live) return live;
+    const completed = allDaysFlat
+      .filter((d) => d.status === 'completed')
+      .sort((a, b) => b.date.localeCompare(a.date));
+    return completed[0] ?? allDaysFlat[allDaysFlat.length - 1] ?? null;
+  }, [allDaysFlat, selectedDayId]);
+
+  const scope = useMemo(() => {
+    if (scopeLevel === 'series') return { level: 'series' as const, id: seriesInfo.id };
+    if (scopeLevel === 'stage' && activeStage)
+      return { level: 'stage' as const, id: activeStage.id };
+    if (scopeLevel === 'day' && activeDay)
+      return { level: 'day' as const, id: activeDay.id };
+    return { level: 'series' as const, id: seriesInfo.id };
+  }, [scopeLevel, activeStage, activeDay, seriesInfo.id]);
+
+  // Scoped metrics + liveCCV (mirrors PublicPage desktop behavior). Series
+  // scope keeps using the polling data the parent already fetched.
+  const needsScopedFetch = scope.level !== 'series';
+  const scopeCacheKey = `${scope.level}:${scope.id}`;
+  const { data: scopedMetrics } = usePollingApi<MetricsResponse>(
+    () =>
+      needsScopedFetch && shortName
+        ? api.getPublicMetrics(shortName, scope.level, scope.id)
+        : Promise.resolve(null as unknown as MetricsResponse),
+    [shortName, scopeCacheKey],
+    { intervalMs: 30_000, enabled: needsScopedFetch && !!shortName },
+  );
+  const { data: scopedLiveCCV } = usePollingApi<LiveCCVResponse>(
+    () =>
+      needsScopedFetch && shortName
+        ? api.getPublicLiveCCV(shortName, scope.level, scope.id)
+        : Promise.resolve(null as unknown as LiveCCVResponse),
+    [shortName, scopeCacheKey],
+    { intervalMs: 30_000, enabled: needsScopedFetch && !!shortName },
+  );
+
+  const model = useDashboardModel({
+    seriesDetail,
+    metrics: needsScopedFetch ? scopedMetrics : pollingData.metrics,
+    liveCCV: needsScopedFetch ? scopedLiveCCV : pollingData.liveCCV,
+  });
+  void baseModel; // used only for side-effect of detecting live day above
+
   const timeline = useTimelineSeries({
     scope,
     interval: mode === 'live' ? 60 : 300,
@@ -576,6 +669,25 @@ export function PublicMobile({
       />
 
       <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        {/* Scope scrubber — Series / Stage / Day + pickers */}
+        <ScopeBarMobile
+          scopeLevel={scopeLevel}
+          onScopeLevelChange={setScopeLevel}
+          stages={seriesInfo.stages}
+          activeStageId={activeStage?.id}
+          onStageChange={(id) => {
+            setSelectedStageId(id);
+            setSelectedDayId(null);
+          }}
+          days={
+            scopeLevel === 'stage' && activeStage
+              ? activeStage.broadcast_days
+              : allDaysFlat
+          }
+          activeDayId={activeDay?.id}
+          onDayChange={setSelectedDayId}
+        />
+
         {/* Hero */}
         {isLive ? (
           <div style={{ padding: '20px 16px 12px' }}>
@@ -747,6 +859,139 @@ export function PublicMobile({
           </span>
         </footer>
       </div>
+    </div>
+  );
+}
+
+// ── Scope scrubber (mobile) ────────────────────────────────────────────────
+// Three pills (Series / Stage / Day) + context-sensitive native <select>
+// pickers. Uses <select> on purpose so iOS brings up the native wheel —
+// a custom dropdown on mobile is a UX trap.
+
+function ScopeBarMobile({
+  scopeLevel,
+  onScopeLevelChange,
+  stages,
+  activeStageId,
+  onStageChange,
+  days,
+  activeDayId,
+  onDayChange,
+}: {
+  scopeLevel: ScopeLevel;
+  onScopeLevelChange: (l: ScopeLevel) => void;
+  stages: PublicSeriesInfo['stages'];
+  activeStageId?: string;
+  onStageChange: (id: string) => void;
+  days: PublicSeriesInfo['stages'][number]['broadcast_days'];
+  activeDayId?: string;
+  onDayChange: (id: string) => void;
+}) {
+  const sortedDays = useMemo(
+    () => [...days].sort((a, b) => a.date.localeCompare(b.date)),
+    [days],
+  );
+  const pills: Array<{ id: ScopeLevel; label: string }> = [
+    { id: 'series', label: 'Series' },
+    { id: 'stage', label: 'Stage' },
+    { id: 'day', label: 'Day' },
+  ];
+  return (
+    <div
+      style={{
+        padding: '10px 14px',
+        borderBottom: '1px solid var(--border)',
+        background: 'var(--bg-card)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+      }}
+    >
+      {/* Level pills */}
+      <div
+        style={{
+          display: 'inline-flex',
+          background: 'var(--bg-sunken)',
+          border: '1px solid var(--border)',
+          borderRadius: 7,
+          padding: 2,
+          alignSelf: 'stretch',
+        }}
+      >
+        {pills.map((p) => {
+          const active = scopeLevel === p.id;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => onScopeLevelChange(p.id)}
+              style={{
+                flex: 1,
+                padding: '6px 10px',
+                borderRadius: 5,
+                fontSize: 12,
+                fontWeight: active ? 600 : 500,
+                background: active ? 'var(--red)' : 'transparent',
+                color: active ? 'white' : 'var(--fg-muted)',
+                border: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Contextual pickers */}
+      {(scopeLevel === 'stage' || scopeLevel === 'day') && stages.length > 0 && (
+        <select
+          value={activeStageId ?? ''}
+          onChange={(e) => onStageChange(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '8px 10px',
+            borderRadius: 6,
+            border: '1px solid var(--border)',
+            background: 'var(--bg-sunken)',
+            color: 'var(--fg)',
+            fontSize: 13,
+            fontWeight: 500,
+          }}
+        >
+          {stages.map((s) => (
+            <option key={s.id} value={s.id}>
+              Stage · {s.name}
+            </option>
+          ))}
+        </select>
+      )}
+      {scopeLevel === 'day' && sortedDays.length > 0 && (
+        <select
+          value={activeDayId ?? ''}
+          onChange={(e) => onDayChange(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '8px 10px',
+            borderRadius: 6,
+            border: '1px solid var(--border)',
+            background: 'var(--bg-sunken)',
+            color: 'var(--fg)',
+            fontSize: 13,
+            fontWeight: 500,
+          }}
+        >
+          {sortedDays.map((d) => {
+            const liveTag = d.status === 'live' ? ' · LIVE' : '';
+            return (
+              <option key={d.id} value={d.id}>
+                {d.label} · {fmtDateLong(d.date)}
+                {liveTag}
+              </option>
+            );
+          })}
+        </select>
+      )}
     </div>
   );
 }
