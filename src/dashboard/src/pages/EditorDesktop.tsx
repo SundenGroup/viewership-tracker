@@ -1250,6 +1250,9 @@ export function EditorDesktop({
           seriesId={seriesId}
           channels={allChannels ?? []}
           defaultTier={seriesDetail?.discovery_default_tier ?? 'community'}
+          blocklist={
+            (seriesDetail?.metadata?.blocklist as string[] | undefined) ?? []
+          }
           onMutate={refetchChannels}
         />
       </main>
