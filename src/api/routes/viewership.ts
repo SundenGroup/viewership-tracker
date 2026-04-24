@@ -155,7 +155,7 @@ router.get('/metrics', async (req: Request, res: Response, next: NextFunction) =
       ViewershipSnapshotModel.getPlatformBreakdown(scopeObj, filter),
       ViewershipSnapshotModel.getLanguageBreakdown(scopeObj, filter),
       ViewershipSnapshotModel.getRegionBreakdown(scopeObj, filter),
-      ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, 25, filter),
+      ViewershipSnapshotModel.getChannelLeaderboard(scopeObj, 9999, filter),
     ]);
 
     res.json({
