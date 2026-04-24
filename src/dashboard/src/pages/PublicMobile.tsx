@@ -274,13 +274,13 @@ function ChannelAccordion({
         ['live', 'Live'],
         ['peak', 'Peak'],
         ['avg', 'Avg'],
-        ['hours', 'Hours'],
+        ['hours', 'VH'],
         ['name', 'A–Z'],
       ]
     : [
         ['peak', 'Peak'],
         ['avg', 'Avg'],
-        ['hours', 'Hours'],
+        ['hours', 'VH'],
         ['name', 'A–Z'],
       ];
 
@@ -478,7 +478,7 @@ function ChannelAccordion({
                   </Col>
                   <Col gap={1}>
                     <span className="eyebrow" style={{ fontSize: 8 }}>
-                      Hours
+                      VH
                     </span>
                     <span className="tabular" style={{ fontSize: 13, fontWeight: 500 }}>
                       {fmtCompact(c.hours)}
@@ -766,7 +766,7 @@ export function PublicMobile({
               </Col>
               <Col gap={2}>
                 <div className="eyebrow" style={{ fontSize: 9 }}>
-                  Hours
+                  VH
                 </div>
                 <div className="tabular" style={{ fontSize: 16, fontWeight: 500 }}>
                   {fmtCompact(model.viewedHours)}

@@ -538,7 +538,7 @@ function PublicLive({
               </div>
             </Col>
             <Col gap={2}>
-              <div className="eyebrow">Hours watched</div>
+              <div className="eyebrow">Viewed Hours</div>
               <div className="tabular" style={{ fontSize: 22, fontWeight: 500 }}>
                 {fmtCompact(model.viewedHours)}
               </div>
@@ -1269,7 +1269,7 @@ function SortableChannelTable({
         {live && <H k="live" align="right">Live</H>}
         <H k="peak" align="right">Peak</H>
         <H k="avg" align="right">Avg</H>
-        <H k="hours" align="right">Hours</H>
+        <H k="hours" align="right">Viewed Hours</H>
       </div>
       <div style={{ maxHeight: 520, overflowY: 'auto' }}>
         {sorted.map((c, i) => (

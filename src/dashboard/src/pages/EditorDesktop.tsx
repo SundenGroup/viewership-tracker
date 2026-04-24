@@ -845,7 +845,7 @@ export function EditorDesktop({
                     tone: 'fg',
                   },
                   {
-                    label: 'Hours watched',
+                    label: 'Viewed Hours',
                     value: fmtCompact(model.viewedHours),
                     sub: 'this scope',
                     tone: 'fg',

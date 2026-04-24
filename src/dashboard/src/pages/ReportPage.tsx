@@ -1260,7 +1260,7 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
           Avg
         </H>
         <H k="hours" align="right">
-          Hours
+          Viewed Hours
         </H>
       </div>
       {sorted.map((c, i) => (
@@ -1338,7 +1338,7 @@ function MetricToggle({
 }) {
   const opts: Array<{ id: 'peak' | 'hours'; label: string }> = [
     { id: 'peak', label: 'Peak' },
-    { id: 'hours', label: 'Hours' },
+    { id: 'hours', label: 'Viewed Hours' },
   ];
   return (
     <div

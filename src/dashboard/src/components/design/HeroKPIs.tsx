@@ -362,7 +362,7 @@ export function HeroKPIs({
       key: 'hours',
       node: (
         <Cell
-          label="Hours watched"
+          label="Viewed Hours"
           value={fmtCompact(safeHours)}
           yoy={yoyHours ?? null}
           context={<HoursContext />}
