@@ -171,7 +171,7 @@ def build_channels_tab(wb: Workbook, payload: Dict, agg: Dict, branding: Dict):
     """Tab 2: Channels — per-channel breakdown."""
     ws = wb.create_sheet('Channels')
 
-    headers = ['#', 'Channel', 'Platform', 'Language', 'Region', 'Tier',
+    headers = ['#', 'Channel', 'Platform', 'Language', 'Region', 'Category',
                'Source', 'Peak CCV', 'Avg CCV']
     write_headers(ws, headers, branding)
 
