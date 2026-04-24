@@ -31,12 +31,18 @@ import { PLATFORMS, getPlatform } from '@/design/platforms';
 import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
 import { usePublicPollingData } from '@/hooks/usePublicPollingData';
+import { usePollingApi } from '@/hooks/useApi';
 import { useViewportBelow } from '@/hooks/useViewport';
 import { PublicMobile } from './PublicMobile';
 import { Spinner } from '@/components/common/Loader';
 import * as api from '@/services/api';
 import type { PublicSeriesInfo } from '@/services/api';
-import type { SeriesWithStages, ViewGroup } from '@/types/api';
+import type {
+  SeriesWithStages,
+  ViewGroup,
+  MetricsResponse,
+  LiveCCVResponse,
+} from '@/types/api';
 
 const REGION_LABELS: Record<string, { label: string; desc: string }> = {
   global: { label: 'Global', desc: 'Official multi-region feeds' },
@@ -216,11 +222,15 @@ function PublicLive({
   pollingData: ReturnType<typeof usePublicPollingData>;
   shortName: string;
 }) {
-  const model = useDashboardModel({
+  // Baseline series-level model — used only to detect the initial live day
+  // (which seeds the scrubber's default). The final scope-aware model is
+  // built further down once scope is resolved.
+  const baseModel = useDashboardModel({
     seriesDetail,
     metrics: pollingData.metrics,
     liveCCV: pollingData.liveCCV,
   });
+  void baseModel;
 
   // Scope scrubber state (v6) — defaults to Day scope on the currently-live day.
   const liveDayInitial = useMemo(() => {
@@ -320,6 +330,57 @@ function PublicLive({
   }, [scopeLevel, activeStage, activeDay, seriesInfo.id]);
 
   const timeline = useTimelineSeries({ scope, interval: 60, publicShortName: shortName });
+
+  // ── Scope-aware metrics + liveCCV ─────────────────────────────────────
+  // usePublicPollingData only fetches series-level. When scope is narrower
+  // (Day or Stage) the KPIs must follow — otherwise "Peak today" prints
+  // the series peak and "Hours watched" prints the whole series hours.
+  const needsScopedFetch = scope.level !== 'series';
+  const scopeCacheKey = `${scope.level}:${scope.id}`;
+
+  const { data: scopedMetrics } = usePollingApi<MetricsResponse>(
+    () =>
+      needsScopedFetch && shortName
+        ? api.getPublicMetrics(shortName, scope.level, scope.id)
+        : Promise.resolve(null as unknown as MetricsResponse),
+    [shortName, scopeCacheKey],
+    { intervalMs: 30_000, enabled: needsScopedFetch && !!shortName },
+  );
+
+  const { data: scopedLiveCCV } = usePollingApi<LiveCCVResponse>(
+    () =>
+      needsScopedFetch && shortName
+        ? api.getPublicLiveCCV(shortName, scope.level, scope.id)
+        : Promise.resolve(null as unknown as LiveCCVResponse),
+    [shortName, scopeCacheKey],
+    { intervalMs: 30_000, enabled: needsScopedFetch && !!shortName },
+  );
+
+  // Final model — scoped when the scrubber has narrowed, series-level else.
+  const model = useDashboardModel({
+    seriesDetail,
+    metrics: needsScopedFetch ? scopedMetrics : pollingData.metrics,
+    liveCCV: needsScopedFetch ? scopedLiveCCV : pollingData.liveCCV,
+  });
+
+  // Same bug-fix we applied to the report: per-tier peak in tierRows is
+  // Math.max() of per-channel peaks, which under-counts whenever several
+  // channels peak at the same minute. The timeline hook already has the
+  // authoritative "highest simultaneous CCV" in its series.sum, so use
+  // that to override tier peaks (falls back to the old heuristic if the
+  // timeline hasn't loaded yet).
+  const tierRowsCorrected = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of timeline.region) {
+      const id = (s.id ?? '').toLowerCase();
+      if (!id) continue;
+      m.set(id, s.sum ?? (s.data.length ? Math.max(...s.data) : 0));
+    }
+    return model.tierRows.map((t) => {
+      const tp = m.get(t.key);
+      return tp != null && tp > 0 ? { ...t, peak: tp } : t;
+    });
+  }, [model.tierRows, timeline.region]);
 
   // Filters lifted from the channel table into the header per design v2.
   const [region, setRegion] = useState<string>('all');
@@ -506,61 +567,74 @@ function PublicLive({
         </div>
       </div>
 
-      {/* By category (tier breakdown) */}
-      <div style={{ padding: '0 32px 16px' }}>
-        <div className="eyebrow" style={{ marginBottom: 10 }}>
-          By category
-        </div>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(5, 1fr)',
-            gap: 10,
-          }}
-        >
-          {model.tierRows.map((t) => (
-            <div
-              key={t.key}
-              className="card"
-              style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 4 }}
-            >
-              <Row justify="space-between">
-                <span style={{ fontSize: 12, fontWeight: 600 }}>{t.label}</span>
-                <span
-                  className="tabular"
-                  style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}
-                >
-                  {(t.share * 100).toFixed(0)}%
-                </span>
-              </Row>
-              <div
-                className="tabular"
-                style={{ fontSize: 26, fontWeight: 500, letterSpacing: '-0.02em' }}
-              >
-                {fmtCompact(t.ccv)}
-              </div>
-              <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>Live CCV</div>
-              <div
-                style={{
-                  marginTop: 8,
-                  height: 4,
-                  background: 'var(--bg-sunken)',
-                  borderRadius: 2,
-                  overflow: 'hidden',
-                }}
-              >
-                <div
-                  style={{
-                    width: t.share * 100 + '%',
-                    height: '100%',
-                    background: t.color,
-                  }}
-                />
-              </div>
+      {/* By category (tier breakdown) — hide tiers with no live streams. */}
+      {(() => {
+        const visibleTiers = tierRowsCorrected.filter((t) => (t.ccv ?? 0) > 0);
+        if (visibleTiers.length === 0) return null;
+        return (
+          <div style={{ padding: '0 32px 16px' }}>
+            <div className="eyebrow" style={{ marginBottom: 10 }}>
+              By category
             </div>
-          ))}
-        </div>
-      </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: `repeat(${visibleTiers.length}, 1fr)`,
+                gap: 10,
+              }}
+            >
+              {visibleTiers.map((t) => (
+                <div
+                  key={t.key}
+                  className="card"
+                  style={{
+                    padding: 16,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                  }}
+                >
+                  <Row justify="space-between">
+                    <span style={{ fontSize: 12, fontWeight: 600 }}>{t.label}</span>
+                    <span
+                      className="tabular"
+                      style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}
+                    >
+                      {(t.share * 100).toFixed(0)}%
+                    </span>
+                  </Row>
+                  <div
+                    className="tabular"
+                    style={{ fontSize: 26, fontWeight: 500, letterSpacing: '-0.02em' }}
+                  >
+                    {fmtCompact(t.ccv)}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>
+                    Live CCV
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      height: 4,
+                      background: 'var(--bg-sunken)',
+                      borderRadius: 2,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: t.share * 100 + '%',
+                        height: '100%',
+                        background: t.color,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Platform tiles */}
       <div style={{ padding: '8px 32px 0' }}>
