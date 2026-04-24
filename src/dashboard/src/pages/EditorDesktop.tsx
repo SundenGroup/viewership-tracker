@@ -47,6 +47,7 @@ import {
 import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
 import { useApi, usePollingApi } from '@/hooks/useApi';
+import { useNow } from '@/hooks/useNow';
 import * as api from '@/services/api';
 import { ChannelsSection } from '@/components/editor/ChannelsSection';
 import { DiscoveryFeedSection } from '@/components/editor/DiscoveryFeedSection';
@@ -344,10 +345,13 @@ export function EditorDesktop({
     return `${hh}:${mm}`;
   }, [model.peakTotalAt]);
 
+  // Tick every 30s so the LIVE · HH:MM pill advances without needing the
+  // user to hard-refresh the page.
+  const nowTick = useNow(30_000);
   const broadcastDuration = useMemo(() => {
     if (!activeDay?.broadcast_start) return null;
-    return Date.now() - new Date(activeDay.broadcast_start).getTime();
-  }, [activeDay]);
+    return nowTick - new Date(activeDay.broadcast_start).getTime();
+  }, [activeDay, nowTick]);
 
   const pollInterval = 30; // seconds, display only
 

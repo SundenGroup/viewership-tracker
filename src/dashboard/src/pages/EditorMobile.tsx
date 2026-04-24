@@ -29,6 +29,7 @@ import { fmtCompact, fmtN, fmtDuration, fmtDateMD } from '@/design/format';
 import { useDashboardModel } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
 import { usePollingApi } from '@/hooks/useApi';
+import { useNow } from '@/hooks/useNow';
 import * as api from '@/services/api';
 import type {
   TournamentSeries,
@@ -110,9 +111,12 @@ export function EditorMobile({
     { intervalMs: 30_000 },
   );
 
+  // Tick every 30s so the "Live · HH:MM" pill advances without needing
+  // the user to hard-refresh the page.
+  const nowTick = useNow(30_000);
   const broadcastDuration =
     liveDay?.broadcast_start != null
-      ? Date.now() - new Date(liveDay.broadcast_start).getTime()
+      ? nowTick - new Date(liveDay.broadcast_start).getTime()
       : null;
 
   // ── Render ────────────────────────────────────────────────────────────
