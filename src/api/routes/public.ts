@@ -198,6 +198,7 @@ router.get('/:shortName/metrics', async (req: Request, res: Response, next: Next
       })),
       channelLeaderboard: channelLeaderboard.map((e) => ({
         channelId: e.channel_id,
+        channelIdentifier: e.channel_identifier,
         displayName: e.display_name,
         platform: e.platform,
         tier: e.tier ?? 'community',

@@ -46,6 +46,7 @@ import {
 } from '@/design/format';
 import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
+import { getStreamUrl, languageFullName } from '@/utils/formatters';
 import { useApi, usePollingApi } from '@/hooks/useApi';
 import { useNow } from '@/hooks/useNow';
 import * as api from '@/services/api';
@@ -1112,7 +1113,7 @@ export function EditorDesktop({
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '28px 1fr 100px 110px 90px 100px 110px 60px',
+              gridTemplateColumns: '28px 1fr 100px 110px 90px 100px 110px 110px',
               gap: 0,
               padding: '0 4px 6px',
               borderBottom: '1px solid var(--border)',
@@ -1126,7 +1127,7 @@ export function EditorDesktop({
               Platform
             </SortHeader>
             <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="tier">
-              Tier
+              Category
             </SortHeader>
             <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="live" align="right">
               Live
@@ -1135,10 +1136,10 @@ export function EditorDesktop({
               Peak
             </SortHeader>
             <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="hours" align="right">
-              Hours
+              Viewed Hours
             </SortHeader>
             <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="language" align="right">
-              Lang
+              Language
             </SortHeader>
           </div>
           <div style={{ maxHeight: 420, overflowY: 'auto' }}>
@@ -1147,7 +1148,7 @@ export function EditorDesktop({
                 key={c.id}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '28px 1fr 100px 110px 90px 100px 110px 60px',
+                  gridTemplateColumns: '28px 1fr 100px 110px 90px 100px 110px 110px',
                   padding: '7px 4px',
                   borderBottom: '1px solid var(--border-faint)',
                   fontSize: 12.5,
@@ -1163,27 +1164,44 @@ export function EditorDesktop({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                   <PlatformPip id={c.platform} />
                   <div style={{ minWidth: 0 }}>
-                    <div
-                      style={{
+                    {(() => {
+                      const url = c.channelIdentifier
+                        ? getStreamUrl(c.platform, c.channelIdentifier)
+                        : null;
+                      const nameStyle = {
                         fontWeight: 500,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {c.name}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: 'var(--fg-dim)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {c.title || '—'}
-                    </div>
+                      } as const;
+                      return url ? (
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ ...nameStyle, color: 'inherit', textDecoration: 'none', display: 'block' }}
+                          onMouseEnter={(e) => (e.currentTarget.style.textDecoration = 'underline')}
+                          onMouseLeave={(e) => (e.currentTarget.style.textDecoration = 'none')}
+                        >
+                          {c.name}
+                        </a>
+                      ) : (
+                        <div style={nameStyle}>{c.name}</div>
+                      );
+                    })()}
+                    {c.title && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--fg-dim)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {c.title}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
@@ -1214,7 +1232,7 @@ export function EditorDesktop({
                   {fmtN(c.hours)}
                 </div>
                 <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--fg-muted)' }}>
-                  {(c.language ?? '').toUpperCase() || '—'}
+                  {languageFullName(c.language)}
                 </div>
               </div>
             ))}

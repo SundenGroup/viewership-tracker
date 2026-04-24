@@ -374,6 +374,62 @@ export function tierLabel(tier: string): string {
   return TIER_LABELS[tier] ?? tier;
 }
 
+// ── Language Formatting ────────────────────────────────────────────────
+
+/**
+ * Map the two-letter language codes we ingest (Twitch broadcaster_language,
+ * YouTube defaultLanguage, etc.) to the English name. Only the languages
+ * we actually see in the pipeline are listed — unknown codes fall through
+ * to the uppercased code so the UI still renders something.
+ */
+const LANGUAGE_FULL_NAMES: Record<string, string> = {
+  en: 'English',
+  ru: 'Russian',
+  pl: 'Polish',
+  tr: 'Turkish',
+  de: 'German',
+  fr: 'French',
+  es: 'Spanish',
+  pt: 'Portuguese',
+  it: 'Italian',
+  nl: 'Dutch',
+  cs: 'Czech',
+  sv: 'Swedish',
+  no: 'Norwegian',
+  da: 'Danish',
+  fi: 'Finnish',
+  hu: 'Hungarian',
+  ro: 'Romanian',
+  el: 'Greek',
+  uk: 'Ukrainian',
+  ar: 'Arabic',
+  he: 'Hebrew',
+  ja: 'Japanese',
+  ko: 'Korean',
+  zh: 'Chinese',
+  th: 'Thai',
+  vi: 'Vietnamese',
+  hi: 'Hindi',
+  id: 'Indonesian',
+  ms: 'Malay',
+  tl: 'Tagalog',
+  fil: 'Filipino',
+  bn: 'Bengali',
+  ur: 'Urdu',
+  fa: 'Persian',
+};
+
+/**
+ * Full English language name for a two-letter code (e.g. "en" → "English").
+ * Falls back to uppercased code ("EN") for unknown values so the column
+ * never renders an empty cell.
+ */
+export function languageFullName(code: string | null | undefined): string {
+  if (!code) return '—';
+  const k = code.trim().toLowerCase();
+  return LANGUAGE_FULL_NAMES[k] ?? k.toUpperCase();
+}
+
 const STATUS_COLORS: Record<string, string> = {
   draft: 'text-gray-400',
   active: 'text-accent-green',

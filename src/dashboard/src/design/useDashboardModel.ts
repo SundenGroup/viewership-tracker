@@ -20,6 +20,10 @@ import type { SeriesData } from '@/components/design';
 export interface ChannelRow {
   id: string;
   name: string;
+  /** Platform-specific slug used to build the external stream URL
+   * (e.g. Twitch login, YouTube handle, Kick slug). May be null when the
+   * metrics leaderboard lacks the identifier for a currently-offline channel. */
+  channelIdentifier: string | null;
   platform: string | null;
   tier: string;
   language: string | null;
@@ -121,6 +125,7 @@ export function useDashboardModel({
       return {
         id: c.channelId,
         name: c.displayName ?? c.channelIdentifier,
+        channelIdentifier: c.channelIdentifier ?? meta?.channelIdentifier ?? meta?.channel_identifier ?? null,
         platform: c.platform,
         tier: c.tier ?? meta?.tier ?? 'community',
         language: (c.language ?? meta?.language) ?? null,
@@ -141,6 +146,7 @@ export function useDashboardModel({
       return {
         id: row.channelId ?? row.channel_id ?? '',
         name: row.displayName ?? row.display_name ?? '',
+        channelIdentifier: row.channelIdentifier ?? row.channel_identifier ?? null,
         platform: row.platform ?? null,
         tier: row.tier ?? 'community',
         language: row.language ?? null,

@@ -30,6 +30,7 @@ import { fmtCompact, fmtN, fmtDateLong } from '@/design/format';
 import { PLATFORMS, getPlatform } from '@/design/platforms';
 import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
+import { getStreamUrl, languageFullName } from '@/utils/formatters';
 import { usePublicPollingData } from '@/hooks/usePublicPollingData';
 import { usePollingApi } from '@/hooks/useApi';
 import { useViewportBelow } from '@/hooks/useViewport';
@@ -1265,7 +1266,7 @@ function SortableChannelTable({
         <H k="name">Channel</H>
         <H k="region">Region</H>
         <H k="tier">Category</H>
-        <H k="language">Lang</H>
+        <H k="language">Language</H>
         {live && <H k="live" align="right">Live</H>}
         <H k="peak" align="right">Peak</H>
         <H k="avg" align="right">Avg</H>
@@ -1290,16 +1291,31 @@ function SortableChannelTable({
             <Row gap={8} style={{ minWidth: 0 }}>
               <PlatformPip id={c.platform} />
               <div style={{ minWidth: 0 }}>
-                <div
-                  style={{
+                {(() => {
+                  const url = c.channelIdentifier
+                    ? getStreamUrl(c.platform, c.channelIdentifier)
+                    : null;
+                  const nameStyle = {
                     fontWeight: 500,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
-                  }}
-                >
-                  {c.name}
-                </div>
+                  } as const;
+                  return url ? (
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ ...nameStyle, color: 'inherit', textDecoration: 'none', display: 'block' }}
+                      onMouseEnter={(e) => (e.currentTarget.style.textDecoration = 'underline')}
+                      onMouseLeave={(e) => (e.currentTarget.style.textDecoration = 'none')}
+                    >
+                      {c.name}
+                    </a>
+                  ) : (
+                    <div style={nameStyle}>{c.name}</div>
+                  );
+                })()}
                 {c.title && (
                   <div
                     style={{
@@ -1322,7 +1338,7 @@ function SortableChannelTable({
               <TierBadge tier={c.tier} />
             </div>
             <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
-              {(c.language ?? '').toUpperCase() || '—'}
+              {languageFullName(c.language)}
             </div>
             {live && (
               <div

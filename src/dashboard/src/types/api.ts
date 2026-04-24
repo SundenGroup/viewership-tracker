@@ -232,6 +232,7 @@ export interface BreakdownEntry {
 
 export interface LeaderboardEntry {
   channelId: string;
+  channelIdentifier?: string;
   displayName: string;
   platform: string;
   tier?: string;
@@ -241,6 +242,7 @@ export interface LeaderboardEntry {
   totalViewedMinutes: number;
   /** Snake_case aliases for backward compatibility. */
   channel_id?: string;
+  channel_identifier?: string;
   display_name?: string;
   peak_ccv?: string;
   avg_ccv?: string;

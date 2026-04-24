@@ -33,8 +33,10 @@ import {
   ThemeToggle,
 } from '@/components/design';
 import { fmtCompact, fmtN, fmtDateLong } from '@/design/format';
+import { getPlatform } from '@/design/platforms';
 import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
+import { getStreamUrl, languageFullName } from '@/utils/formatters';
 import { usePublicPollingData } from '@/hooks/usePublicPollingData';
 import { Spinner } from '@/components/common/Loader';
 import * as api from '@/services/api';
@@ -856,7 +858,7 @@ function DetailedReport({
           topChannel && {
             label: 'Top channel',
             value: topChannel.name,
-            sub: `${fmtCompact(topChannel.peak)} peak · ${(topChannel.language ?? '').toUpperCase() || '—'}`,
+            sub: `${fmtCompact(topChannel.peak)} peak · ${languageFullName(topChannel.language)}`,
             pip: topChannel.platform,
           },
           topPlatform && {
@@ -867,7 +869,7 @@ function DetailedReport({
           },
           topLang && {
             label: 'Top language',
-            value: topLang._key.toUpperCase() || '—',
+            value: languageFullName(topLang._key),
             // _peak is timeline-derived and is what sorted this entry to
             // the top — display it here so the number agrees with the chart.
             sub: `${fmtCompact(topLang._peak)} peak CCV`,
@@ -1237,7 +1239,7 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
     </button>
   );
 
-  const cols = '28px 1.4fr 110px 52px 90px 90px 100px';
+  const cols = '28px 1.4fr 95px 110px 100px 90px 90px 110px';
 
   return (
     <div>
@@ -1251,8 +1253,9 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
       >
         <div />
         <H k="name">Channel</H>
+        <H k="platform">Platform</H>
         <H k="tier">Category</H>
-        <H k="language">Lang</H>
+        <H k="language">Language</H>
         <H k="peak" align="right">
           Peak
         </H>
@@ -1263,51 +1266,69 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
           Viewed Hours
         </H>
       </div>
-      {sorted.map((c, i) => (
-        <div
-          key={c.id}
-          style={{
-            display: 'grid',
-            gridTemplateColumns: cols,
-            padding: '8px 4px',
-            borderBottom: '1px solid var(--border-faint)',
-            fontSize: 12.5,
-            alignItems: 'center',
-          }}
-        >
-          <div className="tabular" style={{ color: 'var(--fg-dim)' }}>
-            {i + 1}
+      {sorted.map((c, i) => {
+        const url = c.channelIdentifier
+          ? getStreamUrl(c.platform, c.channelIdentifier)
+          : null;
+        const nameStyle = {
+          fontWeight: 500,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        } as const;
+        return (
+          <div
+            key={c.id}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: cols,
+              padding: '8px 4px',
+              borderBottom: '1px solid var(--border-faint)',
+              fontSize: 12.5,
+              alignItems: 'center',
+            }}
+          >
+            <div className="tabular" style={{ color: 'var(--fg-dim)' }}>
+              {i + 1}
+            </div>
+            <Row gap={8} style={{ minWidth: 0 }}>
+              <PlatformPip id={c.platform} />
+              {url ? (
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ ...nameStyle, color: 'inherit', textDecoration: 'none', display: 'block', minWidth: 0 }}
+                  onMouseEnter={(e) => (e.currentTarget.style.textDecoration = 'underline')}
+                  onMouseLeave={(e) => (e.currentTarget.style.textDecoration = 'none')}
+                >
+                  {c.name}
+                </a>
+              ) : (
+                <span style={nameStyle}>{c.name}</span>
+              )}
+            </Row>
+            <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+              {getPlatform(c.platform ?? '')?.name ?? c.platform ?? '—'}
+            </div>
+            <div>
+              <TierBadge tier={c.tier} />
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+              {languageFullName(c.language)}
+            </div>
+            <div className="tabular" style={{ textAlign: 'right' }}>
+              {fmtN(c.peak)}
+            </div>
+            <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+              {fmtN(c.avg)}
+            </div>
+            <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+              {fmtN(c.hours)}
+            </div>
           </div>
-          <Row gap={8} style={{ minWidth: 0 }}>
-            <PlatformPip id={c.platform} />
-            <span
-              style={{
-                fontWeight: 500,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {c.name}
-            </span>
-          </Row>
-          <div>
-            <TierBadge tier={c.tier} />
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
-            {(c.language ?? '').toUpperCase() || '—'}
-          </div>
-          <div className="tabular" style={{ textAlign: 'right' }}>
-            {fmtN(c.peak)}
-          </div>
-          <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
-            {fmtN(c.avg)}
-          </div>
-          <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
-            {fmtN(c.hours)}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
