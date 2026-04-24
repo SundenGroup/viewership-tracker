@@ -114,11 +114,15 @@ export function useDashboardModel({
       // fall back to live so the Leaderboard row doesn't show "0 peak"
       // next to a non-zero live count.
       const peak = Math.max(peakFromMeta || 0, live);
+      // Tier: prefer the live CCV response (reads current channels.tier
+      // every poll) over the metrics leaderboard (snapshots the tier at
+      // aggregation time). Otherwise a channel promoted from community to
+      // watch_party keeps reading "community" until the next metrics pass.
       return {
         id: c.channelId,
         name: c.displayName ?? c.channelIdentifier,
         platform: c.platform,
-        tier: meta?.tier ?? 'community',
+        tier: c.tier ?? meta?.tier ?? 'community',
         language: (c.language ?? meta?.language) ?? null,
         region: c.region ?? null,
         live,

@@ -191,6 +191,9 @@ export interface LiveCCVResponse {
     concurrentViewers: number;
     language: string | null;
     region: string | null;
+    /** Current tier from the channels table — authoritative, fresher than
+     *  metrics.channelLeaderboard which reflects aggregation-time tier. */
+    tier: string | null;
     timestamp: string;
     streamId: string | null;
     streamTitle: string | null;
