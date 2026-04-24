@@ -104,9 +104,16 @@ export function useDashboardModel({
       c: LiveCCVResponse['channels'][number],
     ): ChannelRow => {
       const meta = leaderboardByChannel.get(c.channelId);
-      const peak = meta?.peakCCV ?? Number(meta?.peak_ccv ?? 0) ?? 0;
+      const peakFromMeta = meta?.peakCCV ?? Number(meta?.peak_ccv ?? 0) ?? 0;
       const avg = meta?.avgCCV ?? Number(meta?.avg_ccv ?? 0) ?? 0;
       const mins = meta?.totalViewedMinutes ?? Number(meta?.total_viewed_minutes ?? 0) ?? 0;
+      const live = c.concurrentViewers ?? 0;
+      // Peak should never be < current live CCV. For newly-added channels
+      // that haven't been aggregated into the metrics leaderboard yet, the
+      // meta peak reads 0 even though there are clearly live viewers —
+      // fall back to live so the Leaderboard row doesn't show "0 peak"
+      // next to a non-zero live count.
+      const peak = Math.max(peakFromMeta || 0, live);
       return {
         id: c.channelId,
         name: c.displayName ?? c.channelIdentifier,
@@ -114,12 +121,12 @@ export function useDashboardModel({
         tier: meta?.tier ?? 'community',
         language: (c.language ?? meta?.language) ?? null,
         region: c.region ?? null,
-        live: c.concurrentViewers ?? 0,
-        peak: peak || 0,
+        live,
+        peak,
         avg: avg || 0,
         hours: Math.round((mins || 0) / 60),
         title: c.streamTitle ?? '',
-        status: (c.concurrentViewers ?? 0) > 0 ? 'live' : 'offline',
+        status: live > 0 ? 'live' : 'offline',
       };
     };
 

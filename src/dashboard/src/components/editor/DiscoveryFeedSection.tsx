@@ -94,13 +94,19 @@ export function DiscoveryFeedSection({
       const autoPaused = !!md.auto_paused;
       const actedState = acted[c.id];
 
-      // State machine mirrors legacy:
-      //   pending  : active + tier='community' + not yet acted
+      // State machine mirrors the LEGACY DiscoveryFeedPanel:
+      //   pending  : tier='community' + not yet acted (new discovery —
+      //              inserted as is_active=false, still in default tier)
       //   blocked  : inactive + inBlocklist
-      //   disabled : inactive + has last_seen_at + (tier !== community OR autoPaused)
-      //   (else)   : ignored by filter
-      const isPending =
-        !actedState && c.is_active && c.tier === 'community';
+      //   disabled : inactive + has last_seen_at +
+      //              (tier !== community OR autoPaused)  — i.e. previously
+      //              promoted and later disabled, or auto-paused
+      //
+      // Previously required `c.is_active` on isPending, which meant brand-new
+      // discoveries (inserted inactive) never got Approve/Block buttons —
+      // only Re-enable showed for already-promoted-then-disabled channels.
+      // That's the "new ones don't work" bug operators hit.
+      const isPending = !actedState && c.tier === 'community';
       const isBlocked = !actedState && !c.is_active && inBlocklist;
       const isDisabled =
         !actedState &&

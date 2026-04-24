@@ -287,10 +287,6 @@ export function EditorDesktop({
     }
   };
 
-  // ── Leaderboard sort state ────────────────────────────────────────────
-
-  const lb = useSortable(model.leaderboard, 'live', 'desc');
-
   // ── All channels (feeds both Channels section + Discovery feed) ──────
 
   const { data: allChannels, refetch: refetchChannels } = usePollingApi<Channel[]>(
@@ -298,6 +294,32 @@ export function EditorDesktop({
     [seriesId, pollingData.lastDiscoveryResult?.timestamp],
     { intervalMs: 30_000 },
   );
+
+  // ── Leaderboard: enrich with current channel tier + language ─────────
+  // metrics.channelLeaderboard carries the tier that was in effect when
+  // the aggregation ran — so a channel that's been re-promoted from
+  // community to watch_party still reads "community" until the next
+  // aggregation pass. allChannels is a live read of the channels table;
+  // overlay its tier/language onto each leaderboard row so the Channels
+  // section and the Leaderboard agree on what the channel is.
+  const leaderboardEnriched = useMemo(() => {
+    if (!allChannels || allChannels.length === 0) return model.leaderboard;
+    const byId = new Map<string, Channel>();
+    for (const c of allChannels) byId.set(c.id, c);
+    return model.leaderboard.map((row) => {
+      const fresh = byId.get(row.id);
+      if (!fresh) return row;
+      return {
+        ...row,
+        tier: fresh.tier ?? row.tier,
+        language: fresh.language ?? row.language,
+      };
+    });
+  }, [model.leaderboard, allChannels]);
+
+  // ── Leaderboard sort state ────────────────────────────────────────────
+
+  const lb = useSortable(leaderboardEnriched, 'live', 'desc');
 
   // ── YouTube quota (for adapter-health warnings) ───────────────────────
 
