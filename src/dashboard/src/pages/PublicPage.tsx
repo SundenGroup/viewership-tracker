@@ -708,6 +708,8 @@ function PublicLive({
                 total: timeline.total,
               }}
               totalData={timeline.total}
+              timestamps={timeline.timestamps}
+              timezone={seriesInfo.timezone}
             />
           ) : (
             <div className="placeholder" style={{ height: 260 }}>
@@ -918,6 +920,8 @@ function PublicRecap({
                 total: timeline.total,
               }}
               totalData={timeline.total}
+              timestamps={timeline.timestamps}
+              timezone={seriesInfo.timezone}
             />
           ) : (
             <div className="placeholder" style={{ height: 280 }}>

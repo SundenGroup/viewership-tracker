@@ -428,6 +428,8 @@ function SimpleReport({
               total: timeline.total,
             }}
             totalData={timeline.total}
+            timestamps={timeline.timestamps}
+            timezone={seriesInfo.timezone}
           />
         ) : (
           <div className="placeholder" style={{ height: 180 }}>
@@ -855,6 +857,8 @@ function DetailedReport({
               total: timeline.total,
             }}
             totalData={timeline.total}
+            timestamps={timeline.timestamps}
+            timezone={seriesInfo.timezone}
           />
         ) : (
           <div className="placeholder" style={{ height: 280 }}>

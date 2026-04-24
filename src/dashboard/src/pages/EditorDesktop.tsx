@@ -967,7 +967,11 @@ export function EditorDesktop({
             )}
           </div>
 
-          {/* Regional / category mix (falls back to language if no region breakdown) */}
+          {/* Regional / category mix (falls back to language if no region breakdown).
+              Computes CURRENT live CCV per bucket from the channel leaderboard —
+              the breakdown API returns summed totalCCV across all minutes, which
+              swamped the "now" label with bucket sizes bigger than the whole
+              event's live CCV at any moment. */}
           <div
             className="card"
             style={{
@@ -978,46 +982,69 @@ export function EditorDesktop({
               gap: 12,
             }}
           >
-            <Row justify="space-between">
-              <div className="eyebrow">
-                {model.regionBreakdown.length > 0 ? 'Regional mix' : 'Language mix'}
-              </div>
-              <span className="mono" style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
-                CCV · now
-              </span>
-            </Row>
-            <Col gap={8}>
-              {(model.regionBreakdown.length > 0 ? model.regionBreakdown : model.languageBreakdown)
-                .slice(0, 6)
-                .map((r, i) => {
-                  const label = (r.region ?? r.language ?? r.key ?? '').toUpperCase() || '—';
-                  const value = r.totalCCV ?? Number(r.total_ccv ?? 0) ?? 0;
-                  const max = Math.max(
-                    ...(model.regionBreakdown.length > 0
-                      ? model.regionBreakdown
-                      : model.languageBreakdown
-                    ).map((x) => x.totalCCV ?? Number(x.total_ccv ?? 0) ?? 0),
-                    1,
-                  );
-                  const colors = [
-                    'var(--red)',
-                    'var(--info)',
-                    'var(--warn)',
-                    'var(--live)',
-                    'var(--twitch)',
-                    'var(--youtube)',
-                  ];
-                  return (
-                    <HBar
-                      key={label + i}
-                      label={label.slice(0, 7)}
-                      value={value}
-                      max={max}
-                      color={colors[i % colors.length]!}
-                    />
-                  );
-                })}
-            </Col>
+            {(() => {
+              const regionBuckets = new Map<string, number>();
+              const langBuckets = new Map<string, number>();
+              for (const c of model.leaderboard) {
+                if (c.live > 0 || (c.live ?? 0) > 0) {
+                  const r = (c.region ?? '').trim().toLowerCase();
+                  if (r) regionBuckets.set(r, (regionBuckets.get(r) ?? 0) + c.live);
+                  const l = (c.language ?? '').trim().toLowerCase();
+                  if (l) langBuckets.set(l, (langBuckets.get(l) ?? 0) + c.live);
+                }
+              }
+              const useRegions = regionBuckets.size > 0;
+              const buckets = Array.from(
+                useRegions ? regionBuckets : langBuckets,
+              )
+                .map(([key, value]) => ({ key, value }))
+                .sort((a, b) => b.value - a.value)
+                .slice(0, 6);
+              const max = Math.max(...buckets.map((b) => b.value), 1);
+              const colors = [
+                'var(--red)',
+                'var(--info)',
+                'var(--warn)',
+                'var(--live)',
+                'var(--twitch)',
+                'var(--youtube)',
+              ];
+              return (
+                <>
+                  <Row justify="space-between">
+                    <div className="eyebrow">
+                      {useRegions ? 'Regional mix' : 'Language mix'}
+                    </div>
+                    <span
+                      className="mono"
+                      style={{ fontSize: 10, color: 'var(--fg-dim)' }}
+                    >
+                      CCV · now
+                    </span>
+                  </Row>
+                  {buckets.length === 0 ? (
+                    <div
+                      className="placeholder"
+                      style={{ height: 60, fontSize: 11 }}
+                    >
+                      Nothing live right now
+                    </div>
+                  ) : (
+                    <Col gap={8}>
+                      {buckets.map((b, i) => (
+                        <HBar
+                          key={b.key}
+                          label={b.key.toUpperCase().slice(0, 7)}
+                          value={b.value}
+                          max={max}
+                          color={colors[i % colors.length]!}
+                        />
+                      ))}
+                    </Col>
+                  )}
+                </>
+              );
+            })()}
           </div>
 
           {/* Momentum / Movers — top 5 live channels ordered by live CCV */}
@@ -1103,6 +1130,8 @@ export function EditorDesktop({
                 total: timeline.total,
               }}
               totalData={timeline.total}
+              timestamps={timeline.timestamps}
+              timezone={seriesDetail?.timezone}
             />
           ) : (
             <div className="placeholder" style={{ height: 280 }}>

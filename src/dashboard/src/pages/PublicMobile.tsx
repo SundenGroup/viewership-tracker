@@ -708,6 +708,8 @@ export function PublicMobile({
               }}
               totalData={timeline.total}
               initialShowTotal={false}
+              timestamps={timeline.timestamps}
+              timezone={seriesInfo.timezone}
             />
           ) : (
             <div className="placeholder" style={{ height: 180 }}>

@@ -28,6 +28,8 @@ export function InteractiveMainChart({
   initialDimension = 'platform',
   initialMode = 'line',
   initialShowTotal = true,
+  timestamps,
+  timezone,
 }: {
   series: DimensionSeries;
   totalData: number[];
@@ -36,6 +38,10 @@ export function InteractiveMainChart({
   initialDimension?: ChartDimension;
   initialMode?: ChartMode;
   initialShowTotal?: boolean;
+  /** ISO timestamp per sample. When provided, an x-axis with ~6 ticks renders
+   *  beneath the plot. Formatted in `timezone` (falls back to local). */
+  timestamps?: string[];
+  timezone?: string;
 }) {
   const [dimension, setDimension] = useState<ChartDimension>(initialDimension);
   const [mode, setMode] = useState<ChartMode>(initialMode);
@@ -182,6 +188,19 @@ export function InteractiveMainChart({
           </div>
         )}
       </div>
+
+      {/* X-axis time ticks — rendered as a separate row below the plot so
+          they don't have to fight the SVG viewBox scale. About 6 evenly
+          spaced labels; formatted HH:MM (adds month/day prefix when the
+          span crosses midnight in the series timezone). */}
+      {timestamps && timestamps.length > 1 && (
+        <XAxisTicks
+          timestamps={timestamps}
+          timezone={timezone}
+          count={6}
+        />
+      )}
+
       {dimension !== 'total' && activeSeries.length > 1 && (
         <Row gap={8} wrap style={{ marginTop: 12, fontSize: 12 }}>
           {activeSeries.map((s) => {
@@ -227,4 +246,116 @@ export function InteractiveMainChart({
       )}
     </div>
   );
+}
+
+// ── X-axis time tick strip ────────────────────────────────────────────────
+
+function XAxisTicks({
+  timestamps,
+  timezone,
+  count = 6,
+}: {
+  timestamps: string[];
+  timezone?: string;
+  count?: number;
+}) {
+  const n = timestamps.length;
+  if (n < 2) return null;
+
+  // Decide whether to show the date alongside the time: if the span crosses
+  // midnight in the target timezone, include the month+day so "00:00" isn't
+  // ambiguous.
+  const fmt = useMemo(() => {
+    const first = safeDate(timestamps[0]);
+    const last = safeDate(timestamps[n - 1]);
+    const sameDay =
+      first && last
+        ? daytag(first, timezone) === daytag(last, timezone)
+        : true;
+    return (d: Date) => {
+      try {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone,
+          month: sameDay ? undefined : 'short',
+          day: sameDay ? undefined : 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).formatToParts(d);
+        const month = parts.find((p) => p.type === 'month')?.value ?? '';
+        const day = parts.find((p) => p.type === 'day')?.value ?? '';
+        const hour = parts.find((p) => p.type === 'hour')?.value ?? '00';
+        const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
+        return sameDay ? `${hour}:${minute}` : `${month} ${day} · ${hour}:${minute}`;
+      } catch {
+        return '';
+      }
+    };
+  }, [timestamps, timezone, n]);
+
+  const ticks: Array<{ pct: number; label: string }> = [];
+  const slots = Math.max(2, Math.min(count, n));
+  for (let i = 0; i < slots; i++) {
+    const idx = Math.round((i / (slots - 1)) * (n - 1));
+    const d = safeDate(timestamps[idx]);
+    ticks.push({
+      pct: (i / (slots - 1)) * 100,
+      label: d ? fmt(d) : '',
+    });
+  }
+
+  return (
+    <div
+      style={{
+        position: 'relative',
+        height: 16,
+        marginTop: 4,
+        fontFamily: 'var(--font-mono)',
+        fontSize: 10,
+        color: 'var(--fg-dim)',
+        letterSpacing: '0.02em',
+      }}
+    >
+      {ticks.map((t, i) => {
+        const isFirst = i === 0;
+        const isLast = i === ticks.length - 1;
+        return (
+          <span
+            key={i}
+            style={{
+              position: 'absolute',
+              left: `${t.pct}%`,
+              whiteSpace: 'nowrap',
+              transform: isFirst
+                ? 'translateX(0)'
+                : isLast
+                  ? 'translateX(-100%)'
+                  : 'translateX(-50%)',
+            }}
+          >
+            {t.label}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function safeDate(iso: string | undefined): Date | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+function daytag(d: Date, tz?: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(d);
+  } catch {
+    return d.toISOString().slice(0, 10);
+  }
 }
