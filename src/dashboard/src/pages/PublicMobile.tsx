@@ -120,48 +120,73 @@ function HScroll({ children, padding = '0 16px' }: { children: React.ReactNode; 
   );
 }
 
-function CategoryStrip({ model }: { model: ReturnType<typeof useDashboardModel> }) {
+function CategoryStrip({
+  tiers,
+  mode,
+}: {
+  tiers: Array<ReturnType<typeof useDashboardModel>['tierRows'][number]>;
+  mode: 'live' | 'recap';
+}) {
+  // Hide empty cards — on the public mobile dashboard we only show tiers
+  // that have actual data for the current scope. For live mode that's
+  // current live CCV; for recap we accept peak as evidence too.
+  const visible = useMemo(
+    () =>
+      tiers.filter((t) =>
+        mode === 'live'
+          ? (t.ccv ?? 0) > 0
+          : (t.peak ?? 0) > 0 || (t.viewedHours ?? 0) > 0 || (t.ccv ?? 0) > 0,
+      ),
+    [tiers, mode],
+  );
+  if (visible.length === 0) return null;
   return (
     <HScroll>
-      {model.tierRows.map((t) => (
-        <div
-          key={t.key}
-          className="card"
-          style={{
-            flex: '0 0 160px',
-            padding: 14,
-            scrollSnapAlign: 'start',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 4,
-          }}
-        >
-          <Row justify="space-between">
-            <span style={{ fontSize: 11, fontWeight: 600 }}>{t.label}</span>
-            <span className="tabular" style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
-              {(t.share * 100).toFixed(0)}%
-            </span>
-          </Row>
+      {visible.map((t) => {
+        const value = mode === 'live' ? t.ccv : t.peak || t.ccv;
+        const caption = mode === 'live' ? 'Live CCV' : 'Peak CCV';
+        return (
           <div
-            className="tabular"
-            style={{ fontSize: 22, fontWeight: 500, letterSpacing: '-0.02em' }}
-          >
-            {fmtCompact(t.peak || t.ccv)}
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--fg-dim)' }}>Peak CCV</div>
-          <div
+            key={t.key}
+            className="card"
             style={{
-              marginTop: 6,
-              height: 3,
-              background: 'var(--bg-sunken)',
-              borderRadius: 2,
-              overflow: 'hidden',
+              flex: '0 0 160px',
+              padding: 14,
+              scrollSnapAlign: 'start',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
             }}
           >
-            <div style={{ width: t.share * 100 + '%', height: '100%', background: t.color }} />
+            <Row justify="space-between">
+              <span style={{ fontSize: 11, fontWeight: 600 }}>{t.label}</span>
+              <span className="tabular" style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
+                {(t.share * 100).toFixed(0)}%
+              </span>
+            </Row>
+            <div
+              className="tabular"
+              style={{ fontSize: 22, fontWeight: 500, letterSpacing: '-0.02em' }}
+            >
+              {fmtCompact(value)}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--fg-dim)' }}>{caption}</div>
+            <div
+              style={{
+                marginTop: 6,
+                height: 3,
+                background: 'var(--bg-sunken)',
+                borderRadius: 2,
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{ width: t.share * 100 + '%', height: '100%', background: t.color }}
+              />
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </HScroll>
   );
 }
@@ -609,6 +634,23 @@ export function PublicMobile({
     publicShortName: shortName,
   });
 
+  // Override per-tier peak with the authoritative per-minute max from the
+  // timeline (same trick the desktop public + report pages use). tierRows
+  // peak is otherwise Math.max() of per-channel peaks, which undercounts
+  // whenever several channels peak at the same minute.
+  const tierRowsCorrected = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of timeline.region) {
+      const id = (s.id ?? '').toLowerCase();
+      if (!id) continue;
+      m.set(id, s.sum ?? (s.data.length ? Math.max(...s.data) : 0));
+    }
+    return model.tierRows.map((t) => {
+      const tp = m.get(t.key);
+      return tp != null && tp > 0 ? { ...t, peak: tp } : t;
+    });
+  }, [model.tierRows, timeline.region]);
+
   const dateRange = useMemo(() => {
     if (seriesInfo.startDate && seriesInfo.endDate) {
       return `${fmtDateLong(seriesInfo.startDate)} – ${fmtDateLong(seriesInfo.endDate)}`;
@@ -791,11 +833,24 @@ export function PublicMobile({
           </>
         )}
 
-        {/* By category strip */}
-        <div style={{ padding: '8px 16px 4px' }}>
-          <div className="eyebrow">By category</div>
-        </div>
-        <CategoryStrip model={model} />
+        {/* By category strip — hidden entirely when no tier has data for
+            the current scope, so we don't leave a dangling eyebrow. */}
+        {(() => {
+          const hasData = tierRowsCorrected.some((t) =>
+            mode === 'live'
+              ? (t.ccv ?? 0) > 0
+              : (t.peak ?? 0) > 0 || (t.viewedHours ?? 0) > 0 || (t.ccv ?? 0) > 0,
+          );
+          if (!hasData) return null;
+          return (
+            <>
+              <div style={{ padding: '8px 16px 4px' }}>
+                <div className="eyebrow">By category</div>
+              </div>
+              <CategoryStrip tiers={tierRowsCorrected} mode={mode} />
+            </>
+          );
+        })()}
 
         {/* By platform strip */}
         <div style={{ padding: '16px 16px 4px' }}>
