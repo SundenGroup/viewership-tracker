@@ -40,10 +40,26 @@ export default function App() {
             {/* Public routes — no auth required. Wrap in ErrorBoundary so a
                 single render crash doesn't leave fans staring at a blank page. */}
             <Route
+              path="/public/:shortName/report/simple/:scopeSlug"
+              element={
+                <ErrorBoundary>
+                  <ReportPage variant="simple" />
+                </ErrorBoundary>
+              }
+            />
+            <Route
               path="/public/:shortName/report/simple"
               element={
                 <ErrorBoundary>
                   <ReportPage variant="simple" />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/public/:shortName/report/detailed/:scopeSlug"
+              element={
+                <ErrorBoundary>
+                  <ReportPage variant="detailed" />
                 </ErrorBoundary>
               }
             />

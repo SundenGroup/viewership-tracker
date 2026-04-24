@@ -53,8 +53,12 @@ const REGION_LABELS: Record<string, { label: string; desc: string }> = {
 export type ReportVariant = 'simple' | 'detailed';
 
 export function ReportPage({ variant }: { variant: ReportVariant }) {
-  const { shortName } = useParams<{ shortName: string }>();
+  const { shortName, scopeSlug } = useParams<{ shortName: string; scopeSlug?: string }>();
   const [searchParams] = useSearchParams();
+  // Legacy query params (backwards-compat for shared links that used UUIDs):
+  //   ?day=<uuid>, ?stage=<uuid>
+  // New friendly path segment lives at /report/:variant/:scopeSlug, where
+  // scopeSlug is YYYY-MM-DD (day), stage-<order> (stage), or a raw UUID.
   const stageIdFromUrl = searchParams.get('stage') ?? undefined;
   const dayIdFromUrl = searchParams.get('day') ?? undefined;
 
@@ -130,12 +134,39 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
   }, [seriesInfo]);
 
   // Pick the report's scope:
-  //   - explicit ?stage=<id> or ?day=<id> URL param wins
+  //   - /report/:variant/:scopeSlug path segment wins (YYYY-MM-DD → day,
+  //     stage-<order> → stage, UUID → day or stage)
+  //   - legacy ?stage=<id> / ?day=<id> query params still resolve
   //   - otherwise auto-pick the latest stage where every broadcast day is
   //     marked completed (so the preview always lands on real post-event data)
   //   - else fall back to series-level scope
   const resolvedScope: { level: ScopeLevel; id: string; label: string } | null = useMemo(() => {
     if (!seriesInfo) return null;
+
+    const allDays = seriesInfo.stages.flatMap((s) => s.broadcast_days);
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const STAGE_RE = /^stage-(\d+)$/i;
+
+    if (scopeSlug) {
+      if (DATE_RE.test(scopeSlug)) {
+        const d = allDays.find((x) => String(x.date).startsWith(scopeSlug));
+        if (d) return { level: 'day', id: d.id, label: d.label };
+      }
+      const stageMatch = scopeSlug.match(STAGE_RE);
+      if (stageMatch) {
+        const order = parseInt(stageMatch[1]!, 10);
+        const s = seriesInfo.stages.find((x) => x.order === order);
+        if (s) return { level: 'stage', id: s.id, label: s.name };
+      }
+      if (UUID_RE.test(scopeSlug)) {
+        const d = allDays.find((x) => x.id === scopeSlug);
+        if (d) return { level: 'day', id: d.id, label: d.label };
+        const s = seriesInfo.stages.find((x) => x.id === scopeSlug);
+        if (s) return { level: 'stage', id: s.id, label: s.name };
+      }
+    }
+
     if (dayIdFromUrl) {
       for (const s of seriesInfo.stages) {
         const d = s.broadcast_days.find((x) => x.id === dayIdFromUrl);
@@ -158,7 +189,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     const pick = completedStages[0];
     if (pick) return { level: 'stage', id: pick.id, label: pick.name };
     return { level: 'series', id: seriesInfo.id, label: seriesInfo.name };
-  }, [seriesInfo, stageIdFromUrl, dayIdFromUrl]);
+  }, [seriesInfo, scopeSlug, stageIdFromUrl, dayIdFromUrl]);
 
   // Scoped metrics — override pollingData.metrics when we have a sub-scope.
   const needsScopedFetch = !!resolvedScope && resolvedScope.level !== 'series';

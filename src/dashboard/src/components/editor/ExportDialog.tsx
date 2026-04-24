@@ -163,10 +163,18 @@ export function ExportDialog({
       const shortName = seriesDetail?.short_name?.trim();
       if (!shortName) return 'needs short_name';
       const base = import.meta.env.BASE_URL.replace(/\/$/, '');
-      let url = `${base}/public/${shortName}/report/${detail}`;
-      if (scopeLevel === 'day') url += `?day=${id.slice(0, 6)}…`;
-      else if (scopeLevel === 'stage') url += `?stage=${id.slice(0, 6)}…`;
-      return url;
+      let slug = '';
+      if (scopeLevel === 'day') {
+        const day = seriesDetail?.stages
+          .flatMap((s) => s.broadcast_days)
+          .find((d) => d.id === id);
+        const date = day?.date ? String(day.date).slice(0, 10) : '';
+        slug = date || `${id.slice(0, 6)}…`;
+      } else if (scopeLevel === 'stage') {
+        const stage = seriesDetail?.stages.find((s) => s.id === id);
+        slug = stage ? `stage-${stage.order}` : `${id.slice(0, 6)}…`;
+      }
+      return `${base}/public/${shortName}/report/${detail}${slug ? `/${slug}` : ''}`;
     }
     const slugBase =
       seriesDetail?.short_name?.trim() || seriesDetail?.name || 'series';
@@ -202,16 +210,30 @@ export function ExportDialog({
   // Build the preview ReportPage URL for a given scope + detail level.
   // The SPA renders the v6+ redesign live from the API — no server-side
   // template involved, always fresh against the DB.
+  //
+  // URL format:
+  //   Series: /public/<short>/report/<variant>
+  //   Stage:  /public/<short>/report/<variant>/stage-<order>
+  //   Day:    /public/<short>/report/<variant>/<YYYY-MM-DD>
+  // Falls back to the raw UUID slug if we can't resolve the friendlier form.
   const buildSpaReportUrl = (): string | null => {
     const shortName = seriesDetail?.short_name?.trim();
     if (!shortName) return null;
     const { scopeLevel, id } = resolveTarget();
-    // BASE_URL is "/preview/" in the preview build, "/" otherwise
     const base = import.meta.env.BASE_URL.replace(/\/$/, '');
-    let url = `${window.location.origin}${base}/public/${shortName}/report/${detail}`;
-    if (scopeLevel === 'day') url += `?day=${encodeURIComponent(id)}`;
-    else if (scopeLevel === 'stage') url += `?stage=${encodeURIComponent(id)}`;
-    return url;
+    let slug = '';
+    if (scopeLevel === 'day') {
+      const day = seriesDetail?.stages
+        .flatMap((s) => s.broadcast_days)
+        .find((d) => d.id === id);
+      const date = day?.date ? String(day.date).slice(0, 10) : '';
+      slug = date || id;
+    } else if (scopeLevel === 'stage') {
+      const stage = seriesDetail?.stages.find((s) => s.id === id);
+      slug = stage ? `stage-${stage.order}` : id;
+    }
+    const path = `${base}/public/${shortName}/report/${detail}${slug ? `/${slug}` : ''}`;
+    return `${window.location.origin}${path}`;
   };
 
   const handleDownload = async () => {
