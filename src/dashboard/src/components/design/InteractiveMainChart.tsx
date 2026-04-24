@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Row } from './Layout';
 import { Tab } from './Tab';
 import { AreaChart, LineChart, StackedAreaChart, type SeriesData } from './charts';
 import { PlatformPip } from './PlatformPip';
-import { fmtCompact } from '@/design/format';
+import { fmtCompact, fmtN } from '@/design/format';
 
 export type ChartDimension = 'platform' | 'region' | 'language' | 'total';
 /** `stacked` = stacked areas per series. `line` = one line per series. */
@@ -135,7 +135,18 @@ export function InteractiveMainChart({
           )}
         </Row>
       </Row>
-      <div style={{ height, position: 'relative' }}>
+      <ChartHoverOverlay
+        height={height}
+        width={width}
+        timestamps={timestamps}
+        timezone={timezone}
+        totalData={totalData}
+        visible={visible}
+        stackTotals={stackTotals}
+        dimension={dimension}
+        mode={mode}
+        showTotal={showTotal}
+      >
         {dimension === 'total' ? (
           // Total dimension always renders a single filled area chart.
           <AreaChart data={stackTotals.length ? stackTotals : totalData} width={width} height={height} />
@@ -187,7 +198,7 @@ export function InteractiveMainChart({
             />
           </div>
         )}
-      </div>
+      </ChartHoverOverlay>
 
       {/* X-axis time ticks — rendered as a separate row below the plot so
           they don't have to fight the SVG viewBox scale. About 6 evenly
@@ -358,4 +369,268 @@ function daytag(d: Date, tz?: string): string {
   } catch {
     return d.toISOString().slice(0, 10);
   }
+}
+
+// ── Hover overlay: vertical tracker line + per-sample tooltip ────────────
+// Wraps the SVG chart with a same-size div that owns pointer events. On
+// move, we map pointer-x → data index, draw a vertical rule, and float a
+// compact tooltip near the cursor showing the timestamp + per-series
+// values at that sample. On pointer-leave the overlay vanishes.
+
+function ChartHoverOverlay({
+  height,
+  width,
+  timestamps,
+  timezone,
+  totalData,
+  visible,
+  stackTotals,
+  dimension,
+  mode,
+  showTotal,
+  children,
+}: {
+  height: number;
+  width: number;
+  timestamps?: string[];
+  timezone?: string;
+  totalData: number[];
+  visible: SeriesData[];
+  stackTotals: number[];
+  dimension: ChartDimension;
+  mode: ChartMode;
+  showTotal: boolean;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [hoverX, setHoverX] = useState<number | null>(null);
+
+  // Pick the authoritative sample count — prefer timestamps, then the
+  // actual rendered series so the tracker locks onto the rightmost sample
+  // when the pointer rides the trailing edge.
+  const n = timestamps?.length
+    ? timestamps.length
+    : dimension === 'total'
+      ? totalData.length
+      : visible[0]?.data.length ?? 0;
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (n < 2) return;
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = e.clientX - rect.left;
+    const frac = Math.max(0, Math.min(1, x / rect.width));
+    const idx = Math.round(frac * (n - 1));
+    setHoverIdx(idx);
+    setHoverX(x);
+  };
+  const onPointerLeave = () => {
+    setHoverIdx(null);
+    setHoverX(null);
+  };
+
+  // Build tooltip rows based on the current dimension + mode.
+  const rows = useMemo(() => {
+    if (hoverIdx == null) return [];
+    if (dimension === 'total') {
+      const v =
+        (stackTotals.length ? stackTotals : totalData)[hoverIdx] ?? 0;
+      return [{ id: 'total', name: 'Total CCV', color: 'var(--red)', value: v }];
+    }
+    const out = visible.map((s) => ({
+      id: s.id,
+      name: s.name ?? s.id,
+      color: s.color,
+      value: s.data[hoverIdx] ?? 0,
+    }));
+    if (showTotal && totalData.length > 0) {
+      out.push({
+        id: '__total',
+        name: 'Total',
+        color: 'var(--fg-muted)',
+        value: totalData[hoverIdx] ?? 0,
+      });
+    }
+    // Sort desc by value so the biggest series bubbles to the top
+    return out.sort((a, b) => b.value - a.value);
+  }, [hoverIdx, dimension, mode, visible, totalData, stackTotals, showTotal]);
+
+  const label = useMemo(() => {
+    if (hoverIdx == null || !timestamps || !timestamps[hoverIdx]) return '';
+    const d = new Date(timestamps[hoverIdx]);
+    if (!Number.isFinite(d.getTime())) return '';
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(d);
+    } catch {
+      return d.toISOString();
+    }
+  }, [hoverIdx, timestamps, timezone]);
+
+  // Pixel x of the active sample — map data-index back to container width.
+  const trackerX =
+    hoverIdx != null && n > 1 && ref.current
+      ? (hoverIdx / (n - 1)) * ref.current.getBoundingClientRect().width
+      : null;
+
+  // Tooltip positioning: clamp to container so it never overflows.
+  // When the cursor is in the right half, flip the tooltip to the left.
+  const tooltipStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: 8,
+    pointerEvents: 'none',
+    zIndex: 5,
+    background:
+      'color-mix(in oklab, var(--bg-card) 95%, transparent)',
+    border: '1px solid var(--border-strong)',
+    borderRadius: 6,
+    padding: '8px 10px',
+    boxShadow: 'var(--shadow-md)',
+    minWidth: 140,
+    maxWidth: 240,
+    fontSize: 11.5,
+    lineHeight: 1.4,
+  };
+  if (hoverX != null && ref.current) {
+    const w = ref.current.getBoundingClientRect().width;
+    if (hoverX > w / 2) {
+      tooltipStyle.right = Math.max(8, w - hoverX + 12);
+    } else {
+      tooltipStyle.left = hoverX + 12;
+    }
+  }
+
+  return (
+    <div
+      ref={ref}
+      onPointerMove={onPointerMove}
+      onPointerLeave={onPointerLeave}
+      style={{
+        height,
+        width: '100%',
+        position: 'relative',
+        cursor: hoverIdx != null ? 'crosshair' : 'default',
+      }}
+    >
+      {children}
+
+      {/* Vertical tracker line + dot */}
+      {hoverIdx != null && trackerX != null && (
+        <>
+          <div
+            style={{
+              position: 'absolute',
+              left: trackerX,
+              top: 0,
+              bottom: 0,
+              width: 1,
+              background: 'var(--fg-muted)',
+              opacity: 0.5,
+              pointerEvents: 'none',
+            }}
+          />
+          {/* Per-series dots at intersection */}
+          {rows.map((r) => {
+            // Reuse series max so dot Y matches the rendered line.
+            const seriesMax =
+              dimension === 'total'
+                ? Math.max(
+                    ...(stackTotals.length ? stackTotals : totalData),
+                    1,
+                  )
+                : mode === 'stacked'
+                  ? Math.max(...stackTotals, ...totalData, 1)
+                  : Math.max(...visible.flatMap((s) => s.data), 1);
+            const pct = seriesMax > 0 ? r.value / seriesMax : 0;
+            // Match LineChart padding of 24 (and AreaChart padding of 8).
+            const pad = dimension === 'total' ? 8 : 24;
+            const yTop = pad + (height - pad * 2) * (1 - pct);
+            return (
+              <div
+                key={r.id}
+                style={{
+                  position: 'absolute',
+                  left: trackerX - 3,
+                  top: yTop - 3,
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: r.color,
+                  border: '1.5px solid var(--bg)',
+                  pointerEvents: 'none',
+                }}
+              />
+            );
+          })}
+        </>
+      )}
+
+      {/* Tooltip */}
+      {hoverIdx != null && rows.length > 0 && (
+        <div style={tooltipStyle}>
+          {label && (
+            <div
+              style={{
+                color: 'var(--fg)',
+                fontWeight: 600,
+                marginBottom: 4,
+                letterSpacing: '0.01em',
+              }}
+            >
+              {label}
+            </div>
+          )}
+          {rows.map((r) => (
+            <div
+              key={r.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                color: 'var(--fg-muted)',
+              }}
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 2,
+                  background: r.color,
+                  flexShrink: 0,
+                }}
+              />
+              <span
+                style={{
+                  flex: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {r.name}
+              </span>
+              <span
+                className="tabular"
+                style={{
+                  color: 'var(--fg)',
+                  fontWeight: 500,
+                  fontFamily: 'var(--font-mono)',
+                }}
+                title={fmtN(r.value)}
+              >
+                {fmtCompact(r.value)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

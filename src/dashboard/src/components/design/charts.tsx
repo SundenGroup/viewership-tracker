@@ -1,8 +1,8 @@
 /* Charts — SVG, lightweight, theme-aware.
    Ported 1:1 from design_handoff_clutch_tracker/reference/src/charts.jsx. */
 
-import { useId } from 'react';
-import { fmtCompact } from '@/design/format';
+import { useId, useMemo, useRef, useState } from 'react';
+import { fmtCompact, fmtN } from '@/design/format';
 
 // ── AreaChart ──────────────────────────────────────────────────────────────
 
@@ -13,6 +13,9 @@ export function AreaChart({
   color = 'var(--red)',
   showGrid = true,
   padding = 8,
+  timestamps,
+  timezone,
+  label = 'Value',
 }: {
   data: number[];
   width?: number;
@@ -20,8 +23,19 @@ export function AreaChart({
   color?: string;
   showGrid?: boolean;
   padding?: number;
+  /** When provided along with `data`, enables a hover tracker that pops
+   *  a tooltip with the timestamp + value at the nearest sample. */
+  timestamps?: string[];
+  /** IANA timezone for formatting hover timestamps (e.g. Europe/Stockholm). */
+  timezone?: string;
+  /** Tooltip row label for the single series. Defaults to "Value". */
+  label?: string;
 }) {
   const baseId = useId();
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [hoverX, setHoverX] = useState<number | null>(null);
+
   if (!data || !data.length) return null;
   const max = Math.max(...data);
   const min = 0;
@@ -38,42 +52,186 @@ export function AreaChart({
   const first = points[0]!;
   const area = line + ` L${last[0]},${padding + h} L${first[0]},${padding + h} Z`;
   const gid = `af-${baseId}`;
+
+  const hoverEnabled = data.length > 1;
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!hoverEnabled) return;
+    const rect = hostRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = e.clientX - rect.left;
+    const frac = Math.max(0, Math.min(1, x / rect.width));
+    setHoverIdx(Math.round(frac * (data.length - 1)));
+    setHoverX(x);
+  };
+  const onPointerLeave = () => {
+    setHoverIdx(null);
+    setHoverX(null);
+  };
+
+  const hoverLabel = useMemo(() => {
+    if (hoverIdx == null || !timestamps || !timestamps[hoverIdx]) return '';
+    const d = new Date(timestamps[hoverIdx]);
+    if (!Number.isFinite(d.getTime())) return '';
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(d);
+    } catch {
+      return '';
+    }
+  }, [hoverIdx, timestamps, timezone]);
+
+  const hoverPct =
+    hoverIdx != null && hostRef.current && data.length > 1
+      ? hoverIdx / (data.length - 1)
+      : null;
+
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      width="100%"
-      height={height}
-      preserveAspectRatio="none"
+    <div
+      ref={hostRef}
+      onPointerMove={onPointerMove}
+      onPointerLeave={onPointerLeave}
+      style={{
+        position: 'relative',
+        width: '100%',
+        height,
+        cursor: hoverEnabled && hoverIdx != null ? 'crosshair' : 'default',
+      }}
     >
-      <defs>
-        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.35" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      {showGrid &&
-        [0.25, 0.5, 0.75].map((f) => (
-          <line
-            key={f}
-            x1={padding}
-            x2={width - padding}
-            y1={padding + h * f}
-            y2={padding + h * f}
-            stroke="var(--border)"
-            strokeDasharray="2 4"
-            strokeWidth="1"
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        width="100%"
+        height={height}
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.35" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {showGrid &&
+          [0.25, 0.5, 0.75].map((f) => (
+            <line
+              key={f}
+              x1={padding}
+              x2={width - padding}
+              y1={padding + h * f}
+              y2={padding + h * f}
+              stroke="var(--border)"
+              strokeDasharray="2 4"
+              strokeWidth="1"
+            />
+          ))}
+        <path d={area} fill={`url(#${gid})`} />
+        <path
+          d={line}
+          fill="none"
+          stroke={color}
+          strokeWidth="1.6"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+      </svg>
+
+      {/* Hover tracker + tooltip */}
+      {hoverEnabled && hoverIdx != null && hoverPct != null && hoverX != null && (
+        <>
+          <div
+            style={{
+              position: 'absolute',
+              left: `${hoverPct * 100}%`,
+              top: 0,
+              bottom: 0,
+              width: 1,
+              background: 'var(--fg-muted)',
+              opacity: 0.5,
+              pointerEvents: 'none',
+            }}
           />
-        ))}
-      <path d={area} fill={`url(#${gid})`} />
-      <path
-        d={line}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.6"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-    </svg>
+          {/* Dot at intersection */}
+          <div
+            style={{
+              position: 'absolute',
+              left: `calc(${hoverPct * 100}% - 3px)`,
+              top:
+                (padding +
+                  h -
+                  ((data[hoverIdx] ?? 0) / range) * h) *
+                (height / (height + 0)) -
+                3,
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: color,
+              border: '1.5px solid var(--bg)',
+              pointerEvents: 'none',
+            }}
+          />
+          {/* Tooltip */}
+          <div
+            style={{
+              position: 'absolute',
+              ...(hostRef.current && hoverX > hostRef.current.getBoundingClientRect().width / 2
+                ? { right: Math.max(8, hostRef.current.getBoundingClientRect().width - hoverX + 10) }
+                : { left: hoverX + 10 }),
+              top: 4,
+              pointerEvents: 'none',
+              zIndex: 5,
+              background: 'color-mix(in oklab, var(--bg-card) 95%, transparent)',
+              border: '1px solid var(--border-strong)',
+              borderRadius: 5,
+              padding: '6px 8px',
+              boxShadow: 'var(--shadow-md)',
+              minWidth: 90,
+              fontSize: 11,
+              lineHeight: 1.35,
+            }}
+          >
+            {hoverLabel && (
+              <div style={{ color: 'var(--fg)', fontWeight: 600 }}>
+                {hoverLabel}
+              </div>
+            )}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                marginTop: hoverLabel ? 3 : 0,
+              }}
+            >
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: 2,
+                  background: color,
+                }}
+              />
+              <span style={{ color: 'var(--fg-muted)', flex: 1 }}>{label}</span>
+              <span
+                className="tabular"
+                style={{
+                  color: 'var(--fg)',
+                  fontWeight: 500,
+                  fontFamily: 'var(--font-mono)',
+                }}
+                title={fmtN(data[hoverIdx] ?? 0)}
+              >
+                {fmtCompact(data[hoverIdx] ?? 0)}
+              </span>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

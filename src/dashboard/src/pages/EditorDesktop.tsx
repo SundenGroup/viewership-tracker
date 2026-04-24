@@ -258,6 +258,10 @@ export function EditorDesktop({
 
   // Recent 48-minute slice for the hero mini chart
   const heroAreaData = useMemo(() => timeline.total.slice(-48), [timeline.total]);
+  const heroAreaTimestamps = useMemo(
+    () => timeline.timestamps.slice(-48),
+    [timeline.timestamps],
+  );
 
   // ── Rail collapse state (persisted) ───────────────────────────────────
 
@@ -780,7 +784,14 @@ export function EditorDesktop({
               </div>
               <div style={{ flex: 1, minHeight: 80 }}>
                 {heroAreaData.length > 0 ? (
-                  <AreaChart data={heroAreaData} width={360} height={90} />
+                  <AreaChart
+                    data={heroAreaData}
+                    width={360}
+                    height={90}
+                    timestamps={heroAreaTimestamps}
+                    timezone={seriesDetail?.timezone}
+                    label="Total CCV"
+                  />
                 ) : (
                   <div
                     className="placeholder"
