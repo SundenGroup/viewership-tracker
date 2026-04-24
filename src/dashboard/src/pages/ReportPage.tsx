@@ -814,6 +814,35 @@ function DetailedReport({
         />
       </div>
 
+      {/* Section 01 — timeline */}
+      <Section
+        eyebrow="01 · Timeline"
+        title="Concurrent viewers — interactive"
+        right={<Pill>{totalDayCount}-day span</Pill>}
+      >
+        {timeline.total.length > 0 ? (
+          <InteractiveMainChart
+            height={280}
+            width={1040}
+            series={{
+              platform: timeline.platform,
+              region: timeline.region,
+              language: timeline.language,
+              total: timeline.total,
+            }}
+            totalData={timeline.total}
+            timestamps={timeline.timestamps}
+            timezone={seriesInfo.timezone}
+          />
+        ) : (
+          <div className="placeholder" style={{ height: 280 }}>
+            {timeline.loading ? 'Loading…' : 'No time-series data'}
+          </div>
+        )}
+      </Section>
+
+      <div style={{ height: 24 }} />
+
       {/* Leaders strip — 3 cards per v5, with PlatformPip on relevant cards */}
       <div
         style={{
@@ -871,35 +900,6 @@ function DetailedReport({
           })}
       </div>
 
-      {/* Section 01 — timeline */}
-      <Section
-        eyebrow="01 · Timeline"
-        title="Concurrent viewers — interactive"
-        right={<Pill>{totalDayCount}-day span</Pill>}
-      >
-        {timeline.total.length > 0 ? (
-          <InteractiveMainChart
-            height={280}
-            width={1040}
-            series={{
-              platform: timeline.platform,
-              region: timeline.region,
-              language: timeline.language,
-              total: timeline.total,
-            }}
-            totalData={timeline.total}
-            timestamps={timeline.timestamps}
-            timezone={seriesInfo.timezone}
-          />
-        ) : (
-          <div className="placeholder" style={{ height: 280 }}>
-            {timeline.loading ? 'Loading…' : 'No time-series data'}
-          </div>
-        )}
-      </Section>
-
-      <div style={{ height: 24 }} />
-
       {/* Section 02 — By category (tier breakdown) */}
       {(() => {
         // Filter out tiers with zero data so empty buckets (e.g. no Partner
@@ -920,8 +920,8 @@ function DetailedReport({
               eyebrow="02 · By category"
               title={
                 tierMetric === 'hours'
-                  ? 'Viewed hours by tier'
-                  : 'Peak concurrent by tier'
+                  ? 'Viewed hours by category'
+                  : 'Peak concurrent by category'
               }
               right={
                 <MetricToggle value={tierMetric} onChange={setTierMetric} />
@@ -1237,7 +1237,7 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
     </button>
   );
 
-  const cols = '28px 1.4fr 100px 110px 52px 90px 90px 100px';
+  const cols = '28px 1.4fr 110px 52px 90px 90px 100px';
 
   return (
     <div>
@@ -1251,8 +1251,7 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
       >
         <div />
         <H k="name">Channel</H>
-        <H k="region">Region</H>
-        <H k="tier">Tier</H>
+        <H k="tier">Category</H>
         <H k="language">Lang</H>
         <H k="peak" align="right">
           Peak
@@ -1292,11 +1291,6 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
               {c.name}
             </span>
           </Row>
-          <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
-            {c.region
-              ? REGION_LABELS[c.region.toLowerCase()]?.label ?? c.region.toUpperCase()
-              : '—'}
-          </div>
           <div>
             <TierBadge tier={c.tier} />
           </div>

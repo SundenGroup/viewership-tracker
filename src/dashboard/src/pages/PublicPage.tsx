@@ -1264,7 +1264,7 @@ function SortableChannelTable({
         <div />
         <H k="name">Channel</H>
         <H k="region">Region</H>
-        <H k="tier">Tier</H>
+        <H k="tier">Category</H>
         <H k="language">Lang</H>
         {live && <H k="live" align="right">Live</H>}
         <H k="peak" align="right">Peak</H>

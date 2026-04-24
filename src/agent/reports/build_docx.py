@@ -353,7 +353,7 @@ def build_community_reach(doc: Document, payload: Dict, narratives: Dict, brandi
         table.style = 'Table Grid'
 
         hdr = table.add_row()
-        for i, label in enumerate(['Tier', 'Channels']):
+        for i, label in enumerate(['Category', 'Channels']):
             cell = hdr.cells[i]
             cell.text = label
             set_cell_shading(cell, branding.get('table_header_bg', '#1e293b'))

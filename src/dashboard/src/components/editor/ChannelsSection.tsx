@@ -164,7 +164,7 @@ export function ChannelsSection({
         <ColHead>Channel</ColHead>
         <ColHead>Platform</ColHead>
         <ColHead>Region</ColHead>
-        <ColHead>Tier</ColHead>
+        <ColHead>Category</ColHead>
         <ColHead>Days</ColHead>
         <ColHead>Source</ColHead>
         <ColHead>Status</ColHead>
@@ -462,7 +462,7 @@ function InlineRowEditor({
             style={fieldStyle}
           />
         </Field>
-        <Field label="Tier">
+        <Field label="Category">
           <select
             value={tier}
             onChange={(e) => setTier(e.target.value as ChannelTier)}
