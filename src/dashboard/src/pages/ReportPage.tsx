@@ -540,10 +540,33 @@ function DetailedReport({
   const headline =
     scopeLevel === 'series' ? seriesInfo.name : `${seriesInfo.name} — ${scopeLabel}`;
 
-  // Leaders
+  // Leaders — sort authoritatively by peak from the timeline where we can.
+  // metrics.languageBreakdown is returned in whatever order the API chose
+  // (often by total hours, not peak), so picking [0] was giving us the
+  // wrong "top language" whenever a language peaked higher but shorter.
   const topChannel = [...model.leaderboard].sort((a, b) => b.peak - a.peak)[0];
-  const topPlatform = model.platformRows[0];
-  const topLang = model.languageBreakdown[0];
+  const topPlatform = [...model.platformRows].sort((a, b) => b.ccv - a.ccv)[0];
+  const topLang = useMemo(() => {
+    // Prefer timeline peaks — same trick we use for the tier cards.
+    const byPeak = new Map<string, number>();
+    for (const s of timeline.language) {
+      const id = (s.id ?? '').toLowerCase();
+      if (!id) continue;
+      byPeak.set(id, s.sum ?? (s.data.length ? Math.max(...s.data) : 0));
+    }
+    const enriched = model.languageBreakdown
+      .map((l) => {
+        const key = (l.language ?? l.key ?? '').toLowerCase();
+        const timelinePeak = byPeak.get(key);
+        const peak =
+          timelinePeak != null && timelinePeak > 0
+            ? timelinePeak
+            : l.peakCCV ?? Number(l.peak_ccv ?? 0) ?? 0;
+        return { ...l, _peak: peak, _key: key };
+      })
+      .sort((a, b) => b._peak - a._peak);
+    return enriched[0];
+  }, [model.languageBreakdown, timeline.language]);
   const topRegion = model.regionBreakdown[0];
 
   const concurrency =
@@ -619,36 +642,56 @@ function DetailedReport({
   }, [model.leaderboard, model.platformRows]);
 
   const languageStats = useMemo(() => {
+    // Hours come from the leaderboard (no per-language viewed-hours on the
+    // breakdown endpoint). Peaks come from the timeline — same trick as
+    // the tier cards — because metrics.languageBreakdown.peakCCV can lag
+    // or under-report for stages where channels peaked at the same minute.
     const hoursByLang = new Map<string, number>();
     for (const c of model.leaderboard) {
       const lang = (c.language ?? '').toLowerCase();
       if (!lang) continue;
       hoursByLang.set(lang, (hoursByLang.get(lang) ?? 0) + (c.hours ?? 0));
     }
+    const peakByLang = new Map<string, number>();
+    for (const s of timeline.language) {
+      const id = (s.id ?? '').toLowerCase();
+      if (!id) continue;
+      peakByLang.set(id, s.sum ?? (s.data.length ? Math.max(...s.data) : 0));
+    }
+    // Union of keys across the breakdown, timeline, and leaderboard so we
+    // don't miss a language that only shows up in one signal.
+    const allKeys = new Set<string>();
+    for (const l of model.languageBreakdown) {
+      const k = (l.language ?? l.key ?? '').toLowerCase();
+      if (k) allKeys.add(k);
+    }
+    for (const k of peakByLang.keys()) allKeys.add(k);
+    for (const k of hoursByLang.keys()) allKeys.add(k);
+
     const totalHours = Array.from(hoursByLang.values()).reduce(
       (a, b) => a + b,
       0,
     );
-    const totalPeak = model.languageBreakdown.reduce(
-      (a, b) => a + (b.peakCCV ?? Number(b.peak_ccv ?? 0) ?? 0),
-      0,
-    );
-    return model.languageBreakdown
-      .map((l) => {
-        const key = (l.language ?? l.key ?? '').toLowerCase();
-        const peak = l.peakCCV ?? Number(l.peak_ccv ?? 0) ?? 0;
-        const hours = hoursByLang.get(key) ?? 0;
-        return {
-          key,
-          label: key.toUpperCase() || '—',
-          peak,
-          hours,
-          peakShare: totalPeak > 0 ? peak / totalPeak : 0,
-          hoursShare: totalHours > 0 ? hours / totalHours : 0,
-        };
-      })
-      .filter((l) => l.peak > 0 || l.hours > 0);
-  }, [model.leaderboard, model.languageBreakdown]);
+    const rows = Array.from(allKeys).map((key) => {
+      const breakdown = model.languageBreakdown.find(
+        (l) => (l.language ?? l.key ?? '').toLowerCase() === key,
+      );
+      const timelinePeak = peakByLang.get(key) ?? 0;
+      const breakdownPeak =
+        breakdown?.peakCCV ?? Number(breakdown?.peak_ccv ?? 0) ?? 0;
+      const peak = timelinePeak > 0 ? timelinePeak : breakdownPeak;
+      const hours = hoursByLang.get(key) ?? 0;
+      return { key, label: key.toUpperCase() || '—', peak, hours };
+    });
+    const totalPeak = rows.reduce((a, r) => a + r.peak, 0);
+    return rows
+      .map((r) => ({
+        ...r,
+        peakShare: totalPeak > 0 ? r.peak / totalPeak : 0,
+        hoursShare: totalHours > 0 ? r.hours / totalHours : 0,
+      }))
+      .filter((r) => r.peak > 0 || r.hours > 0);
+  }, [model.leaderboard, model.languageBreakdown, timeline.language]);
 
   // ── Correct tier peaks from the timeline ────────────────────────────
   // The tier peak in model.tierRows is Math.max() of per-channel peaks,
@@ -762,8 +805,10 @@ function DetailedReport({
           },
           topLang && {
             label: 'Top language',
-            value: (topLang.language ?? topLang.key ?? '').toUpperCase() || '—',
-            sub: `${fmtCompact(topLang.peakCCV ?? Number(topLang.peak_ccv ?? 0) ?? topLang.totalCCV)} peak CCV`,
+            value: topLang._key.toUpperCase() || '—',
+            // _peak is timeline-derived and is what sorted this entry to
+            // the top — display it here so the number agrees with the chart.
+            sub: `${fmtCompact(topLang._peak)} peak CCV`,
             pip: null,
           },
         ]
