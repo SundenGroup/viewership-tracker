@@ -69,16 +69,11 @@ export function ChannelsSection({
   const [filter, setFilter] = useState<Filter>('active');
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Curated list excludes auto-paused discovery candidates
-  // (those live in the Discovery feed section below).
-  const curated = useMemo(() => {
-    return channels.filter((c) => {
-      const autoPaused = (c.metadata as { auto_paused?: boolean })?.auto_paused === true;
-      // Hide auto-paused auto-discovered candidates — they belong in Discovery.
-      if (autoPaused && c.source === 'auto_discovered' && !c.is_active) return false;
-      return true;
-    });
-  }, [channels]);
+  // Show every channel attached to the series (active + inactive). The
+  // legacy main-branch ChannelListPanel did the same — operators expect
+  // to see auto-paused / never-approved discovery candidates here too,
+  // not only in the Discovery feed section.
+  const curated = channels;
 
   const counts = useMemo(
     () => ({
