@@ -168,8 +168,17 @@ export function getTimezoneAbbr(date: Date, timezone: string): string {
 }
 
 /**
+ * Pick AM/PM vs 24-hour based on the IANA timezone's region. Americas
+ * → 12-hour ("7pm EDT"); Europe/Asia/Africa → 24-hour ("21:35 CEST").
+ */
+function shouldUseAmPm(timezone: string | null | undefined): boolean {
+  return !!timezone && /^America\//.test(timezone);
+}
+
+/**
  * Format a UTC ISO timestamp as time in a specific IANA timezone.
  * e.g. formatTimeInTz("2026-03-10T11:00:00Z", "Europe/Moscow") → "14:00 MSK"
+ *      formatTimeInTz("2026-04-26T02:32:00Z", "America/New_York") → "10:32pm EDT"
  */
 export function formatTimeInTz(
   iso: string | null | undefined,
@@ -177,19 +186,28 @@ export function formatTimeInTz(
 ): string {
   if (!iso) return '—';
   const d = new Date(iso);
-  const timePart = d.toLocaleTimeString('en-US', {
-    hour: '2-digit',
+  const useAmPm = shouldUseAmPm(timezone);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
     minute: '2-digit',
-    hour12: false,
+    hour12: useAmPm,
     timeZone: timezone,
-  });
+  }).formatToParts(d);
+  const hour = parts.find((p) => p.type === 'hour')?.value ?? '00';
+  const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
+  const dayPeriod = parts.find((p) => p.type === 'dayPeriod')?.value?.toLowerCase() ?? '';
   const tzAbbr = getTimezoneAbbr(d, timezone);
-  return `${timePart} ${tzAbbr}`;
+  const timeText = useAmPm
+    ? minute === '00'
+      ? `${hour}${dayPeriod}`
+      : `${hour}:${minute}${dayPeriod}`
+    : `${hour}:${minute}`;
+  return `${timeText} ${tzAbbr}`;
 }
 
 /**
  * Format a UTC ISO timestamp as date+time in a specific IANA timezone.
- * e.g. "Mar 10, 14:00 MSK"
+ * e.g. "Mar 10, 14:00 MSK" / "Apr 25, 7pm EDT"
  */
 export function formatDateTimeInTz(
   iso: string | null | undefined,
@@ -197,16 +215,27 @@ export function formatDateTimeInTz(
 ): string {
   if (!iso) return '—';
   const d = new Date(iso);
-  const parts = d.toLocaleString('en-US', {
+  const useAmPm = shouldUseAmPm(timezone);
+  const parts = new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
-    hour: '2-digit',
+    hour: 'numeric',
     minute: '2-digit',
-    hour12: false,
+    hour12: useAmPm,
     timeZone: timezone,
-  });
+  }).formatToParts(d);
+  const month = parts.find((p) => p.type === 'month')?.value ?? '';
+  const day = parts.find((p) => p.type === 'day')?.value ?? '';
+  const hour = parts.find((p) => p.type === 'hour')?.value ?? '00';
+  const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
+  const dayPeriod = parts.find((p) => p.type === 'dayPeriod')?.value?.toLowerCase() ?? '';
   const tzAbbr = getTimezoneAbbr(d, timezone);
-  return `${parts} ${tzAbbr}`;
+  const timeText = useAmPm
+    ? minute === '00'
+      ? `${hour}${dayPeriod}`
+      : `${hour}:${minute}${dayPeriod}`
+    : `${hour}:${minute}`;
+  return `${month} ${day}, ${timeText} ${tzAbbr}`;
 }
 
 /**

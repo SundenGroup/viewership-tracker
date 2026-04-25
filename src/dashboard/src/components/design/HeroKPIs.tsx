@@ -189,21 +189,34 @@ export function HeroKPIs({
     if (peakAt) {
       try {
         const d = new Date(peakAt);
+        // Western timezones (Americas) read clock time as AM/PM by convention;
+        // Europe/Asia read 24-hour. Pick automatically from the IANA region
+        // prefix so the PUBG Americas event prints "7pm EDT" while the
+        // Europe-based PEC keeps "21:35 CEST".
+        const useAmPm = !!timezone && /^America\//.test(timezone);
         const parts = new Intl.DateTimeFormat('en-US', {
           timeZone: timezone,
           month: peakIncludeDate ? 'short' : undefined,
           day: peakIncludeDate ? 'numeric' : undefined,
-          hour: '2-digit',
+          hour: 'numeric',
           minute: '2-digit',
-          hour12: false,
+          hour12: useAmPm,
         }).formatToParts(d);
         const month = parts.find((p) => p.type === 'month')?.value ?? '';
         const day = parts.find((p) => p.type === 'day')?.value ?? '';
         const hour = parts.find((p) => p.type === 'hour')?.value ?? '00';
         const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
+        const dayPeriod = parts.find((p) => p.type === 'dayPeriod')?.value?.toLowerCase() ?? '';
         const tz = timezone ? getTimezoneAbbr(d, timezone) : '';
         const datePart = peakIncludeDate && month && day ? `${month} ${day} · ` : '';
-        peakLabel = `peak at ${datePart}${hour}:${minute}${tz ? ` ${tz}` : ''}`;
+        // For AM/PM regions: drop the leading minute zero when on the hour
+        // ("7pm EDT" beats "07:00pm EDT"). 24-hour stays "07:00".
+        const timeText = useAmPm
+          ? minute === '00'
+            ? `${hour}${dayPeriod}`
+            : `${hour}:${minute}${dayPeriod}`
+          : `${hour}:${minute}`;
+        peakLabel = `peak at ${datePart}${timeText}${tz ? ` ${tz}` : ''}`;
       } catch {
         const pct = timeSeries.length > 1 ? Math.round((peakIdx / (timeSeries.length - 1)) * 100) : 0;
         peakLabel = `peak hit at ${pct}% of event`;
