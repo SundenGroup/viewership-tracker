@@ -25,6 +25,7 @@ import {
 import { fmtDateLong } from '@/design/format';
 import { getPlatform } from '@/design/platforms';
 import * as api from '@/services/api';
+import { AddChannelDialog } from './AddChannelDialog';
 
 type Filter = 'all' | 'active' | 'inactive';
 
@@ -134,13 +135,37 @@ export function ChannelsSection({
 
   // ── Render ────────────────────────────────────────────────────────────
 
+  const [addOpen, setAddOpen] = useState(false);
+
   return (
     <CollapsibleSection
       storageKey="ct-channels"
       eyebrow="Channels"
       title={countText}
       right={
-        <Row gap={4}>
+        <Row gap={6} align="center">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setAddOpen(true);
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              padding: '5px 10px',
+              borderRadius: 6,
+              border: 'none',
+              background: 'var(--red)',
+              color: '#fff',
+              fontSize: 11.5,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            <IconPlus size={11} /> Add channel
+          </button>
           {(['all', 'active', 'inactive'] as Filter[]).map((f) => (
             <FilterPill
               key={f}
@@ -358,16 +383,13 @@ export function ChannelsSection({
         )}
       </div>
 
-      {/* Footer: Add channel hint — the bulk/detail add flow is in the legacy series editor */}
-      <Row justify="flex-end" style={{ marginTop: 8 }}>
-        <a
-          href={`/${seriesId}/edit`}
-          className="btn btn-xs"
-          style={{ color: 'var(--fg-muted)' }}
-        >
-          <IconPlus size={11} /> Manage channels
-        </a>
-      </Row>
+      <AddChannelDialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        seriesId={seriesId}
+        broadcastDays={broadcastDays}
+        onAdded={onMutate}
+      />
     </CollapsibleSection>
   );
 }
