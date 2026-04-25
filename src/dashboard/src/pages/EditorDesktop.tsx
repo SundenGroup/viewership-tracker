@@ -1113,7 +1113,7 @@ export function EditorDesktop({
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '28px 1fr 100px 110px 90px 100px 110px 110px',
+              gridTemplateColumns: '28px 1fr 100px 110px 110px 90px 100px 110px',
               gap: 0,
               padding: '0 4px 6px',
               borderBottom: '1px solid var(--border)',
@@ -1129,6 +1129,9 @@ export function EditorDesktop({
             <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="tier">
               Category
             </SortHeader>
+            <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="language">
+              Language
+            </SortHeader>
             <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="live" align="right">
               Live
             </SortHeader>
@@ -1138,9 +1141,6 @@ export function EditorDesktop({
             <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="hours" align="right">
               Viewed Hours
             </SortHeader>
-            <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="language" align="right">
-              Language
-            </SortHeader>
           </div>
           <div style={{ maxHeight: 420, overflowY: 'auto' }}>
             {lb.sorted.map((c: ChannelRow, i: number) => (
@@ -1148,7 +1148,7 @@ export function EditorDesktop({
                 key={c.id}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '28px 1fr 100px 110px 90px 100px 110px 110px',
+                  gridTemplateColumns: '28px 1fr 100px 110px 110px 90px 100px 110px',
                   padding: '7px 4px',
                   borderBottom: '1px solid var(--border-faint)',
                   fontSize: 12.5,
@@ -1179,9 +1179,23 @@ export function EditorDesktop({
                           href={url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          style={{ ...nameStyle, color: 'inherit', textDecoration: 'none', display: 'block' }}
-                          onMouseEnter={(e) => (e.currentTarget.style.textDecoration = 'underline')}
-                          onMouseLeave={(e) => (e.currentTarget.style.textDecoration = 'none')}
+                          style={{
+                            ...nameStyle,
+                            color: 'var(--fg)',
+                            textDecoration: 'underline',
+                            textDecorationColor: 'var(--border)',
+                            textDecorationThickness: '1px',
+                            textUnderlineOffset: '3px',
+                            display: 'block',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.textDecorationColor = 'var(--red)';
+                            e.currentTarget.style.color = 'var(--red)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.textDecorationColor = 'var(--border)';
+                            e.currentTarget.style.color = 'var(--fg)';
+                          }}
                         >
                           {c.name}
                         </a>
@@ -1210,6 +1224,9 @@ export function EditorDesktop({
                 <div>
                   <TierBadge tier={c.tier} />
                 </div>
+                <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+                  {languageFullName(c.language)}
+                </div>
                 <div
                   className="tabular"
                   style={{
@@ -1230,9 +1247,6 @@ export function EditorDesktop({
                   style={{ textAlign: 'right', color: 'var(--fg-muted)' }}
                 >
                   {fmtN(c.hours)}
-                </div>
-                <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--fg-muted)' }}>
-                  {languageFullName(c.language)}
                 </div>
               </div>
             ))}

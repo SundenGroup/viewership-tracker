@@ -1298,9 +1298,24 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
                   href={url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ ...nameStyle, color: 'inherit', textDecoration: 'none', display: 'block', minWidth: 0 }}
-                  onMouseEnter={(e) => (e.currentTarget.style.textDecoration = 'underline')}
-                  onMouseLeave={(e) => (e.currentTarget.style.textDecoration = 'none')}
+                  style={{
+                    ...nameStyle,
+                    color: 'var(--fg)',
+                    textDecoration: 'underline',
+                    textDecorationColor: 'var(--border)',
+                    textDecorationThickness: '1px',
+                    textUnderlineOffset: '3px',
+                    display: 'block',
+                    minWidth: 0,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.textDecorationColor = 'var(--red)';
+                    e.currentTarget.style.color = 'var(--red)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.textDecorationColor = 'var(--border)';
+                    e.currentTarget.style.color = 'var(--fg)';
+                  }}
                 >
                   {c.name}
                 </a>
