@@ -231,12 +231,15 @@ export function useDashboardModel({
     platformRowsRaw.sort((a, b) => b.ccv - a.ccv);
 
     // Tier breakdown — computed from the full leaderboard (live CCV + metrics peak).
+    // Display order (left → right): Official, Watch Party, Player POV, Partner,
+    // Community. Puts the largest-audience buckets first so the report reads
+    // top-of-funnel first; Player streams sit on the right of the live trio.
     const TIER_ORDER: Array<{ key: string; label: string; color: string }> = [
       { key: 'official', label: 'Official', color: 'var(--red)' },
-      { key: 'partner', label: 'Partner', color: 'var(--info)' },
-      { key: 'player', label: 'Player POV', color: 'var(--warn)' },
-      { key: 'community', label: 'Community', color: 'var(--fg-muted)' },
       { key: 'watch_party', label: 'Watch Party', color: 'var(--live)' },
+      { key: 'player', label: 'Player POV', color: 'var(--warn)' },
+      { key: 'partner', label: 'Partner', color: 'var(--info)' },
+      { key: 'community', label: 'Community', color: 'var(--fg-muted)' },
     ];
     const tierCcv = new Map<string, number>();
     const tierPeak = new Map<string, number>();
