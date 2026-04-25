@@ -21,6 +21,8 @@ import {
   IconExternal,
   IconTrash,
   IconPlus,
+  SortHeader,
+  useSortable,
 } from '@/components/design';
 import { fmtDateLong } from '@/design/format';
 import { getPlatform } from '@/design/platforms';
@@ -90,10 +92,26 @@ export function ChannelsSection({
     return curated.filter((c) => !c.is_active);
   }, [curated, filter]);
 
-  const sorted = useMemo(
-    () => [...filtered].sort((a, b) => b.added_at.localeCompare(a.added_at)),
+  // Augment rows with derived sort keys (days count, status as number,
+  // null-safe platform/region/source/language) so any column header
+  // returns a sensible order.
+  const sortable = useMemo(
+    () =>
+      filtered.map((c) => ({
+        ...c,
+        _days: c.broadcast_day_ids?.length ?? 0,
+        _status: c.is_active ? 1 : 0,
+        _platform: (c.platform ?? '').toString(),
+        _region: (c.region ?? '').toString(),
+        _source: (c.source ?? '').toString(),
+        _tier: (c.tier ?? '').toString(),
+        _name: (c.display_name ?? '').toString(),
+      })),
     [filtered],
   );
+  type SortableRow = typeof sortable[number];
+  const lb = useSortable<SortableRow>(sortable, 'added_at', 'desc');
+  const sorted = lb.sorted;
 
   const broadcastDays = useMemo<BroadcastDay[]>(() => {
     if (!seriesDetail) return [];
@@ -181,14 +199,14 @@ export function ChannelsSection({
           borderBottom: '1px solid var(--border)',
         }}
       >
-        <ColHead>Channel</ColHead>
-        <ColHead>Platform</ColHead>
-        <ColHead>Region</ColHead>
-        <ColHead>Category</ColHead>
-        <ColHead>Days</ColHead>
-        <ColHead>Source</ColHead>
-        <ColHead>Status</ColHead>
-        <ColHead>Added</ColHead>
+        <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_name">Channel</SortHeader>
+        <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_platform">Platform</SortHeader>
+        <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_region">Region</SortHeader>
+        <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_tier">Category</SortHeader>
+        <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_days">Days</SortHeader>
+        <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_source">Source</SortHeader>
+        <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_status">Status</SortHeader>
+        <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="added_at">Added</SortHeader>
         <ColHead align="right">Actions</ColHead>
       </div>
 
