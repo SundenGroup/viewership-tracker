@@ -30,6 +30,7 @@ export interface StartPageProps {
   onSeriesChange: (id: string) => void;
   onCreate: () => void;
   onOpenUsers?: () => void;
+  onOpenYouTubeKeys?: () => void;
 }
 
 type StatusFilter = 'all' | 'active' | 'draft' | 'completed';
@@ -40,6 +41,7 @@ export function StartPage({
   onSeriesChange,
   onCreate,
   onOpenUsers,
+  onOpenYouTubeKeys,
 }: StartPageProps) {
   const { user, logout, isAdmin } = useAuth();
   const [filter, setFilter] = useState<StatusFilter>('all');
@@ -189,6 +191,25 @@ export function StartPage({
                 title="User management"
               >
                 <IconUsers size={12} /> Users
+              </button>
+            )}
+            {isAdmin && onOpenYouTubeKeys && (
+              <button
+                type="button"
+                onClick={onOpenYouTubeKeys}
+                className="btn"
+                style={{
+                  fontSize: 12,
+                  padding: '5px 10px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  background: 'transparent',
+                  border: '1px solid var(--border)',
+                }}
+                title="YouTube API keys"
+              >
+                YT Keys
               </button>
             )}
             <ThemeToggle />

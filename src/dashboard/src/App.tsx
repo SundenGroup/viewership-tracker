@@ -13,6 +13,7 @@ import { SeriesFormPage } from '@/pages/SeriesForm';
 import { StartPage } from '@/pages/StartPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { UserManagementPage } from '@/pages/UserManagementPage';
+import { YouTubeKeysPage } from '@/pages/YouTubeKeysPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Spinner } from '@/components/common/Loader';
@@ -119,6 +120,7 @@ function AuthGate() {
       <Routes>
         <Route path="/new" element={<AppContent />} />
         <Route path="/users" element={<AppContent />} />
+        <Route path="/settings/youtube-keys" element={<AppContent />} />
         <Route path="/:seriesId/edit" element={<AppContent />} />
         <Route path="/:seriesId" element={<AppContent />} />
         <Route path="/" element={<AppContent />} />
@@ -142,6 +144,7 @@ function AppContent() {
   const isEditPage = pathname.endsWith('/edit');
   const isNewPage = pathname === '/new';
   const isUsersPage = pathname === '/users';
+  const isYouTubeKeysPage = pathname === '/settings/youtube-keys';
 
   // ── Data fetching ─────────────────────────────────────────────────────
 
@@ -357,7 +360,7 @@ function AppContent() {
   // Desktop StartPage (no series selected) is also self-contained — it
   // brings its own top bar and doesn't need the legacy Sidebar's "select
   // a series…" placeholder columns.
-  if (!isMobile && !isUsersPage && !isNewPage && !isEditPage && !selectedSeriesId) {
+  if (!isMobile && !isUsersPage && !isYouTubeKeysPage && !isNewPage && !isEditPage && !selectedSeriesId) {
     return (
       <StartPage
         seriesList={seriesList ?? []}
@@ -365,13 +368,14 @@ function AppContent() {
         onSeriesChange={handleSeriesChange}
         onCreate={() => navigate('/new')}
         onOpenUsers={() => navigate('/users')}
+        onOpenYouTubeKeys={() => navigate('/settings/youtube-keys')}
       />
     );
   }
 
   // Editor Desktop / Mobile are self-contained surfaces with their own shell.
   // The legacy Header/Sidebar/MainLayout is only kept for the edit/setup/users routes.
-  if (!isUsersPage && !isNewPage && !isEditPage && selectedSeriesId) {
+  if (!isUsersPage && !isYouTubeKeysPage && !isNewPage && !isEditPage && selectedSeriesId) {
     if (isMobile) {
       return (
         <EditorMobile
@@ -449,6 +453,8 @@ function AppContent() {
     >
       {isUsersPage ? (
         <UserManagementPage />
+      ) : isYouTubeKeysPage ? (
+        <YouTubeKeysPage />
       ) : isNewPage ? (
         <SeriesSetupPage
           onCreated={handleSeriesCreated}

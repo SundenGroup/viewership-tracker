@@ -457,3 +457,61 @@ export type WsServerMessage =
   | WsStatusUpdate
   | WsPong
   | WsError;
+
+// ── YouTube API keys (admin) ─────────────────────────────────────────────
+
+export interface YouTubeApiKey {
+  id: string;
+  label: string;
+  partner: string | null;
+  /** Masked secret like "••••a4b2" — never the full key. */
+  secret_preview: string;
+  daily_quota: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string | null;
+}
+
+export interface CreateYouTubeApiKey {
+  label: string;
+  partner?: string | null;
+  secret: string;
+  daily_quota?: number;
+}
+
+export interface UpdateYouTubeApiKey {
+  label?: string;
+  partner?: string | null;
+  secret?: string;
+  daily_quota?: number;
+  is_active?: boolean;
+}
+
+export interface YouTubeQuotaPerKey {
+  id: string;
+  label: string;
+  partner: string | null;
+  secret_preview: string;
+  daily_quota: number;
+  used: number;
+}
+
+export interface YouTubeQuotaPerPartner {
+  partner: string | null;
+  used: number;
+  limit: number;
+  keys: number;
+}
+
+export interface YouTubeQuotaResponse {
+  polling: { used: number; limit: number; remaining: number; percentage: number };
+  discoveryPool: { used: number; limit: number; remaining: number; percentage: number };
+  byPartner: YouTubeQuotaPerPartner[];
+  perKey: YouTubeQuotaPerKey[];
+  // Back-compat fields
+  used: number;
+  limit: number;
+  remaining: number;
+  percentage: number;
+}

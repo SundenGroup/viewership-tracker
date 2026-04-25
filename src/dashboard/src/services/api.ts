@@ -330,6 +330,42 @@ export function getYouTubeQuota() {
   return request<YouTubeQuota>('/api/polling/youtube-quota');
 }
 
+// ── YouTube API key pool (admin) ────────────────────────────────────────
+
+import type {
+  YouTubeApiKey,
+  CreateYouTubeApiKey,
+  UpdateYouTubeApiKey,
+  YouTubeQuotaResponse,
+} from '@/types/api';
+
+export function listYouTubeKeys(includeInactive = false) {
+  const qs = includeInactive ? '?includeInactive=1' : '';
+  return request<{ keys: YouTubeApiKey[] }>(`/api/youtube-keys${qs}`);
+}
+
+export function createYouTubeKey(data: CreateYouTubeApiKey) {
+  return request<YouTubeApiKey>('/api/youtube-keys', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateYouTubeKey(id: string, data: UpdateYouTubeApiKey) {
+  return request<YouTubeApiKey>(`/api/youtube-keys/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteYouTubeKey(id: string) {
+  return request<void>(`/api/youtube-keys/${id}`, { method: 'DELETE' });
+}
+
+export function getYouTubeQuotaDetailed() {
+  return request<YouTubeQuotaResponse>('/api/polling/youtube-quota');
+}
+
 export function triggerPollCycle() {
   return request<PollCycleResult>('/api/polling/trigger', { method: 'POST' });
 }
