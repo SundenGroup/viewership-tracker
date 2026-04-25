@@ -83,16 +83,56 @@ router.post('/stop', (_req: Request, res: Response, next: NextFunction) => {
 });
 
 // GET /api/polling/youtube-quota — Get YouTube API quota usage (admin only)
-router.get('/youtube-quota', (_req: Request, res: Response, next: NextFunction) => {
+router.get('/youtube-quota', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const orch = ensureOrchestrator(res);
     if (!orch) return;
-    const quota = orch.getYouTubeQuota();
+    const polling = orch.getYouTubeQuota();
+    const poolUsage = orch.getYouTubePoolQuota();
+
+    // Join per-key usage with the keys table to build per-partner aggregates
+    const keys = await import('../../models/youtube-api-key').then((m) => m.listKeys(false));
+    const perKey = keys.map((k) => ({
+      id: k.id,
+      label: k.label,
+      partner: k.partner,
+      secret_preview: k.secret_preview,
+      daily_quota: k.daily_quota,
+      used: poolUsage[k.id] ?? 0,
+    }));
+    const byPartner: Record<string, { partner: string | null; used: number; limit: number; keys: number }> = {};
+    for (const k of perKey) {
+      const partnerKey = k.partner ?? '__shared__';
+      const entry = byPartner[partnerKey] ?? { partner: k.partner, used: 0, limit: 0, keys: 0 };
+      entry.used += k.used;
+      entry.limit += k.daily_quota;
+      entry.keys += 1;
+      byPartner[partnerKey] = entry;
+    }
+    const aggregateUsed = perKey.reduce((sum, k) => sum + k.used, 0);
+    const aggregateLimit = perKey.reduce((sum, k) => sum + k.daily_quota, 0);
+
     res.json({
-      used: quota.used,
-      limit: quota.limit,
-      remaining: quota.limit - quota.used,
-      percentage: quota.limit > 0 ? Math.round((quota.used / quota.limit) * 100) : 0,
+      polling: {
+        used: polling.used,
+        limit: polling.limit,
+        remaining: polling.limit - polling.used,
+        percentage: polling.limit > 0 ? Math.round((polling.used / polling.limit) * 100) : 0,
+      },
+      discoveryPool: {
+        used: aggregateUsed,
+        limit: aggregateLimit,
+        remaining: aggregateLimit - aggregateUsed,
+        percentage: aggregateLimit > 0 ? Math.round((aggregateUsed / aggregateLimit) * 100) : 0,
+      },
+      byPartner: Object.values(byPartner),
+      perKey,
+      // Back-compat: keep the original flat shape for any caller still
+      // expecting { used, limit, remaining, percentage }.
+      used: polling.used,
+      limit: polling.limit,
+      remaining: polling.limit - polling.used,
+      percentage: polling.limit > 0 ? Math.round((polling.used / polling.limit) * 100) : 0,
     });
   } catch (err) {
     next(err);

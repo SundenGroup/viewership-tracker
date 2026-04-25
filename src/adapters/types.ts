@@ -30,5 +30,9 @@ export interface PlatformAdapter {
     gameId?: string,
     keywords?: string[],
     categoryIds?: string[],
+    /** Partner string from tournament_series.partner — only consulted by
+     *  the YouTube adapter for partner-tagged API key routing. Other
+     *  adapters ignore this. */
+    partner?: string | null,
   ): Promise<DiscoveredStream[]>;
 }

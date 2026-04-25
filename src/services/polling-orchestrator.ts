@@ -156,6 +156,20 @@ export class PollingOrchestrator {
     }
   }
 
+  /**
+   * Per-key usage map for the discovery key pool. Keyed by youtube_api_keys.id.
+   * Combined with the keys table, the admin UI renders per-key + per-partner
+   * usage breakdowns.
+   */
+  getYouTubePoolQuota(): Record<string, number> {
+    try {
+      const ytAdapter = this.registry.getAdapter('youtube') as import('../adapters/youtube').YouTubeAdapter;
+      return ytAdapter.getPoolQuotaUsage().perKey;
+    } catch {
+      return {};
+    }
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────────────────
 
   start(): void {

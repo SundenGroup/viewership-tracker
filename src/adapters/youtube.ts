@@ -4,6 +4,7 @@ import * as path from 'path';
 import logger from '../utils/logger';
 import { config } from '../utils/config';
 import type { PlatformAdapter, ChannelSnapshot, DiscoveredStream } from './types';
+import * as YouTubeApiKeyModel from '../models/youtube-api-key';
 
 const API_BASE = 'https://www.googleapis.com/youtube/v3';
 const MAX_VIDEO_IDS_PER_REQUEST = 50;
@@ -101,12 +102,22 @@ export class YouTubeAdapter implements PlatformAdapter {
   private readonly quotaLimit: number;
   private static readonly QUOTA_FILE = path.resolve(process.cwd(), '.youtube-quota.json');
 
+  /**
+   * Per-key usage counters for the discovery key pool. The keys are DB-stored
+   * partner-tagged keys consulted only by the discovery path; polling stays
+   * on the legacy single-key counter above.
+   */
+  private perKeyUsed = new Map<string, number>();
+  private perKeyResetDate: string = todayDateString();
+  private static readonly POOL_QUOTA_FILE = path.resolve(process.cwd(), '.youtube-pool-quota.json');
+
   constructor(apiKey?: string, quotaLimit?: number) {
     this.apiKey = apiKey ?? config.youtube.apiKey;
     this.quotaLimit = quotaLimit ?? DEFAULT_DAILY_QUOTA;
 
     // Restore quota counter from disk (survives PM2 restarts)
     this.loadQuotaFromDisk();
+    this.loadPoolQuotaFromDisk();
 
     this.client = axios.create({
       baseURL: API_BASE,
@@ -190,6 +201,71 @@ export class YouTubeAdapter implements PlatformAdapter {
     } catch {
       // Non-critical — quota counter will just reset on next restart
     }
+  }
+
+  // ── Pool quota tracking (discovery only) ──────────────────────────────
+
+  /**
+   * Pool quota state for the partner-tagged key pool used by discovery.
+   * Polling continues using the legacy single-key tracking above.
+   */
+  getPoolQuotaUsage(): { date: string; perKey: Record<string, number> } {
+    this.resetPoolQuotaIfNewDay();
+    return {
+      date: this.perKeyResetDate,
+      perKey: Object.fromEntries(this.perKeyUsed),
+    };
+  }
+
+  private resetPoolQuotaIfNewDay(): void {
+    const today = todayDateString();
+    if (today !== this.perKeyResetDate) {
+      this.perKeyUsed.clear();
+      this.perKeyResetDate = today;
+      this.savePoolQuotaToDisk();
+    }
+  }
+
+  private loadPoolQuotaFromDisk(): void {
+    try {
+      if (fs.existsSync(YouTubeAdapter.POOL_QUOTA_FILE)) {
+        const raw = fs.readFileSync(YouTubeAdapter.POOL_QUOTA_FILE, 'utf-8');
+        const data = JSON.parse(raw) as { date: string; perKey: Record<string, number> };
+        if (data.date === todayDateString()) {
+          this.perKeyResetDate = data.date;
+          this.perKeyUsed = new Map(Object.entries(data.perKey ?? {}));
+        }
+      }
+    } catch {
+      // Start fresh
+    }
+  }
+
+  private savePoolQuotaToDisk(): void {
+    try {
+      fs.writeFileSync(
+        YouTubeAdapter.POOL_QUOTA_FILE,
+        JSON.stringify({
+          date: this.perKeyResetDate,
+          perKey: Object.fromEntries(this.perKeyUsed),
+        }),
+      );
+    } catch {
+      // Non-critical
+    }
+  }
+
+  /**
+   * Reserve `cost` units against a specific pool key. Returns true if charged,
+   * false if the key has insufficient remaining quota.
+   */
+  private chargePoolKey(keyId: string, dailyQuota: number, cost: number): boolean {
+    this.resetPoolQuotaIfNewDay();
+    const used = this.perKeyUsed.get(keyId) ?? 0;
+    if (used + cost > dailyQuota) return false;
+    this.perKeyUsed.set(keyId, used + cost);
+    this.savePoolQuotaToDisk();
+    return true;
   }
 
   // ── Multi-stream management ──────────────────────────────────────────
@@ -1093,6 +1169,7 @@ export class YouTubeAdapter implements PlatformAdapter {
     gameId?: string,
     keywords?: string[],
     _categoryIds?: string[],
+    partner?: string | null,
   ): Promise<DiscoveredStream[]> {
     // Determine search term(s):
     // - If gameId is set: single search for the game name (e.g. "Counter-Strike 2")
@@ -1110,10 +1187,47 @@ export class YouTubeAdapter implements PlatformAdapter {
     const searchResults: Array<{ videoId: string; snippet: YouTubeSearchItem['snippet'] }> = [];
     const MAX_PAGES = 4; // 4 pages × 50 = up to 200 results per search term
 
-    for (const searchTerm of searchTerms) {
-      if (!this.consumeQuota(QUOTA_COST.search, `searchLiveStreams("${searchTerm}")`)) {
-        break;
+    /**
+     * Pick a key from the discovery pool that has enough remaining quota,
+     * charge it, and return a one-shot axios client bound to that key. If
+     * no pool key has room, returns null — discovery skips for this cycle
+     * (no fall-through to the legacy single key on purpose; the operator
+     * sees pool exhaustion in the Settings UI and adds keys).
+     */
+    const acquirePoolClient = async (
+      cost: number,
+      context: string,
+    ): Promise<{ client: AxiosInstance; keyId: string; keyLabel: string } | null> => {
+      const picked = await YouTubeApiKeyModel.pickBestKey(
+        partner ?? null,
+        cost,
+        this.perKeyUsed,
+      );
+      if (!picked) {
+        logger.error(
+          `YouTube discovery pool exhausted (partner=${partner ?? 'shared'}, ` +
+          `need ${cost} for ${context}). Add a key in Settings or wait for daily reset.`,
+        );
+        return null;
       }
+      if (!this.chargePoolKey(picked.id, picked.daily_quota, cost)) {
+        logger.warn(`YouTube pool key ${picked.label} couldn't accept ${cost} units`);
+        return null;
+      }
+      // Touch last_used_at lazily; failure isn't fatal
+      YouTubeApiKeyModel.touchLastUsed(picked.id).catch(() => {});
+      const client = axios.create({
+        baseURL: API_BASE,
+        params: { key: picked.secret },
+      });
+      return { client, keyId: picked.id, keyLabel: picked.label };
+    };
+
+    for (const searchTerm of searchTerms) {
+      const acquired = await acquirePoolClient(QUOTA_COST.search, `searchLiveStreams("${searchTerm}")`);
+      if (!acquired) break;
+      let activeClient = acquired.client;
+      let activeKeyLabel = acquired.keyLabel;
 
       let nextPageToken: string | undefined;
 
@@ -1128,12 +1242,12 @@ export class YouTubeAdapter implements PlatformAdapter {
           };
           if (nextPageToken) params.pageToken = nextPageToken;
 
-          const { data } = await this.client.get<YouTubeListResponse<YouTubeSearchItem>>(
+          const { data } = await activeClient.get<YouTubeListResponse<YouTubeSearchItem>>(
             '/search',
             { params },
           );
           return data;
-        }, `searchLiveStreams("${searchTerm}" p${page + 1})`);
+        }, `searchLiveStreams("${searchTerm}" p${page + 1}, key=${activeKeyLabel})`);
 
         if (!result || result.items.length === 0) break;
 
@@ -1147,9 +1261,16 @@ export class YouTubeAdapter implements PlatformAdapter {
         nextPageToken = result.nextPageToken;
         if (!nextPageToken) break; // No more pages
 
-        // Additional pages cost quota too
-        if (page < MAX_PAGES - 1 && !this.consumeQuota(QUOTA_COST.search, `searchLiveStreams("${searchTerm}") p${page + 2}`)) {
-          break;
+        // Additional pages cost quota too — pick a (potentially different)
+        // pool key for the next page.
+        if (page < MAX_PAGES - 1) {
+          const nextAcquired = await acquirePoolClient(
+            QUOTA_COST.search,
+            `searchLiveStreams("${searchTerm}") p${page + 2}`,
+          );
+          if (!nextAcquired) break;
+          activeClient = nextAcquired.client;
+          activeKeyLabel = nextAcquired.keyLabel;
         }
       }
     }
@@ -1205,7 +1326,8 @@ export class YouTubeAdapter implements PlatformAdapter {
     logger.debug(`YouTube searchLiveStreams: found ${streams.length} streams (after keyword filter)`, {
       gameId,
       keywords,
-      quotaUsed: this.quotaUsed,
+      partner: partner ?? null,
+      poolUsed: Object.fromEntries(this.perKeyUsed),
     });
     return streams;
   }

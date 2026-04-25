@@ -59,6 +59,18 @@ async function bootstrap(): Promise<void> {
     } else {
       logger.info('[CVT] Database schema up to date (no pending migrations)');
     }
+
+    // Migrate legacy env YOUTUBE_API_KEY into the discovery key pool so
+    // existing setups keep discovering without manual setup. No-op if any
+    // key already exists in the table.
+    try {
+      const ytKeyModel = await import('./models/youtube-api-key');
+      await ytKeyModel.bootstrapLegacyKey(process.env.YOUTUBE_API_KEY);
+    } catch (err) {
+      logger.warn('[CVT] YouTube key bootstrap skipped', {
+        error: (err as Error).message,
+      });
+    }
   } catch (err) {
     logger.error('[CVT] Database initialization failed', {
       error: (err as Error).message,

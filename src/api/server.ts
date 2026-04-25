@@ -14,6 +14,7 @@ import exportRouter from './routes/export';
 import reportPayloadRouter from './routes/report-payload';
 import pollingRouter from './routes/polling';
 import reportsRouter from './routes/reports';
+import youtubeKeysRouter from './routes/youtube-keys';
 import authRouter from './routes/auth';
 import publicRouter from './routes/public';
 import relayRouter from './routes/relay';
@@ -101,6 +102,7 @@ export function createApp() {
 
   // Admin-only routes
   app.use('/api/polling', requireRole('admin'), pollingRouter);
+  app.use('/api/youtube-keys', requireRole('admin'), youtubeKeysRouter);
 
   // ── 404 handler ───────────────────────────────────────────────────────
 
