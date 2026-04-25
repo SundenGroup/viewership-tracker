@@ -13,6 +13,7 @@ import {
   ClutchWordmark,
   Pill,
   PlatformPip,
+  ChannelNameWithLink,
   TierBadge,
   Donut,
   HBar,
@@ -46,7 +47,7 @@ import {
 } from '@/design/format';
 import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
-import { getStreamUrl, languageFullName } from '@/utils/formatters';
+import { languageFullName } from '@/utils/formatters';
 import { useApi, usePollingApi } from '@/hooks/useApi';
 import { useNow } from '@/hooks/useNow';
 import * as api from '@/services/api';
@@ -1188,44 +1189,11 @@ export function EditorDesktop({
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                   <PlatformPip id={c.platform} />
-                  <div style={{ minWidth: 0 }}>
-                    {(() => {
-                      const url = c.channelIdentifier
-                        ? getStreamUrl(c.platform, c.channelIdentifier)
-                        : null;
-                      const nameStyle = {
-                        fontWeight: 500,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      } as const;
-                      return url ? (
-                        <a
-                          href={url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{
-                            ...nameStyle,
-                            color: 'var(--info)',
-                            textDecoration: 'underline',
-                            textDecorationThickness: '1px',
-                            textUnderlineOffset: '3px',
-                            display: 'block',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.color = 'var(--red)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.color = 'var(--info)';
-                          }}
-                        >
-                          {c.name}
-                        </a>
-                      ) : (
-                        <div style={nameStyle}>{c.name}</div>
-                      );
-                    })()}
-                  </div>
+                  <ChannelNameWithLink
+                    name={c.name}
+                    platform={c.platform}
+                    channelIdentifier={c.channelIdentifier}
+                  />
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
                   {getPlatform(c.platform)?.name ?? c.platform ?? '—'}

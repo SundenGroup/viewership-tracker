@@ -17,6 +17,7 @@ import {
   ClutchWordmark,
   Pill,
   PlatformPip,
+  ChannelNameWithLink,
   TierBadge,
   AreaChart,
   VBarChart,
@@ -30,7 +31,7 @@ import { fmtCompact, fmtN, fmtDateLong } from '@/design/format';
 import { PLATFORMS, getPlatform } from '@/design/platforms';
 import { useDashboardModel, type ChannelRow } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
-import { getStreamUrl, languageFullName } from '@/utils/formatters';
+import { languageFullName } from '@/utils/formatters';
 import { usePublicPollingData } from '@/hooks/usePublicPollingData';
 import { usePollingApi } from '@/hooks/useApi';
 import { useViewportBelow } from '@/hooks/useViewport';
@@ -1291,42 +1292,11 @@ function SortableChannelTable({
             <Row gap={8} style={{ minWidth: 0 }}>
               <PlatformPip id={c.platform} />
               <div style={{ minWidth: 0 }}>
-                {(() => {
-                  const url = c.channelIdentifier
-                    ? getStreamUrl(c.platform, c.channelIdentifier)
-                    : null;
-                  const nameStyle = {
-                    fontWeight: 500,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  } as const;
-                  return url ? (
-                    <a
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{
-                        ...nameStyle,
-                        color: 'var(--info)',
-                        textDecoration: 'underline',
-                        textDecorationThickness: '1px',
-                        textUnderlineOffset: '3px',
-                        display: 'block',
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.color = 'var(--red)';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.color = 'var(--info)';
-                      }}
-                    >
-                      {c.name}
-                    </a>
-                  ) : (
-                    <div style={nameStyle}>{c.name}</div>
-                  );
-                })()}
+                <ChannelNameWithLink
+                  name={c.name}
+                  platform={c.platform}
+                  channelIdentifier={c.channelIdentifier}
+                />
                 {c.title && (
                   <div
                     style={{
