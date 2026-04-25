@@ -53,6 +53,7 @@ import * as api from '@/services/api';
 import { ChannelsSection } from '@/components/editor/ChannelsSection';
 import { DiscoveryFeedSection } from '@/components/editor/DiscoveryFeedSection';
 import { ExportDialog } from '@/components/editor/ExportDialog';
+import { AddChannelDialog } from '@/components/editor/AddChannelDialog';
 import type {
   TournamentSeries,
   SeriesWithStages,
@@ -145,6 +146,7 @@ export function EditorDesktop({
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
   const [viewGroup, setViewGroup] = useState<string>('all');
   const [exportOpen, setExportOpen] = useState(false);
+  const [sidebarAddOpen, setSidebarAddOpen] = useState(false);
 
   const stageOptions = useMemo(() => {
     if (!seriesDetail) return [];
@@ -591,6 +593,29 @@ export function EditorDesktop({
                   Channels · {model.trackedChannelCount}
                 </div>
               </Row>
+              <div style={{ padding: '0 12px 8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setSidebarAddOpen(true)}
+                  style={{
+                    width: '100%',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    border: 'none',
+                    background: 'var(--red)',
+                    color: '#fff',
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <IconPlus size={12} /> Add channel
+                </button>
+              </div>
               <div
                 style={{
                   padding: '0 12px',
@@ -1181,20 +1206,17 @@ export function EditorDesktop({
                           rel="noopener noreferrer"
                           style={{
                             ...nameStyle,
-                            color: 'var(--fg)',
+                            color: 'var(--info)',
                             textDecoration: 'underline',
-                            textDecorationColor: 'var(--border)',
                             textDecorationThickness: '1px',
                             textUnderlineOffset: '3px',
                             display: 'block',
                           }}
                           onMouseEnter={(e) => {
-                            e.currentTarget.style.textDecorationColor = 'var(--red)';
                             e.currentTarget.style.color = 'var(--red)';
                           }}
                           onMouseLeave={(e) => {
-                            e.currentTarget.style.textDecorationColor = 'var(--border)';
-                            e.currentTarget.style.color = 'var(--fg)';
+                            e.currentTarget.style.color = 'var(--info)';
                           }}
                         >
                           {c.name}
@@ -1203,19 +1225,6 @@ export function EditorDesktop({
                         <div style={nameStyle}>{c.name}</div>
                       );
                     })()}
-                    {c.title && (
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: 'var(--fg-dim)',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {c.title}
-                      </div>
-                    )}
                   </div>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
@@ -1700,6 +1709,14 @@ export function EditorDesktop({
         }}
         activeViewGroupName={viewGroup === 'all' ? null : viewGroup}
         viewGroups={viewGroups as ViewGroup[]}
+      />
+
+      <AddChannelDialog
+        open={sidebarAddOpen}
+        onClose={() => setSidebarAddOpen(false)}
+        seriesId={seriesId}
+        broadcastDays={allDays}
+        onAdded={refetchChannels}
       />
     </div>
   );

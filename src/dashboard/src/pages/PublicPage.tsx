@@ -1308,20 +1308,17 @@ function SortableChannelTable({
                       rel="noopener noreferrer"
                       style={{
                         ...nameStyle,
-                        color: 'var(--fg)',
+                        color: 'var(--info)',
                         textDecoration: 'underline',
-                        textDecorationColor: 'var(--border)',
                         textDecorationThickness: '1px',
                         textUnderlineOffset: '3px',
                         display: 'block',
                       }}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.textDecorationColor = 'var(--red)';
                         e.currentTarget.style.color = 'var(--red)';
                       }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.textDecorationColor = 'var(--border)';
-                        e.currentTarget.style.color = 'var(--fg)';
+                        e.currentTarget.style.color = 'var(--info)';
                       }}
                     >
                       {c.name}
