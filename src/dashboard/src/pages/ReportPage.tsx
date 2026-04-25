@@ -218,11 +218,79 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     { intervalMs: 60_000, enabled: needsScopedFetch && !!shortName },
   );
 
+  // Find the previous broadcast day in the same series (or stage) — used to
+  // compute trend deltas for HeroKPIs. Only meaningful for day/stage scope.
+  const previousScope = useMemo<
+    { level: 'day' | 'stage'; id: string; label: string } | null
+  >(() => {
+    if (!seriesInfo || !resolvedScope) return null;
+    if (resolvedScope.level === 'day') {
+      // Find the stage that holds this day, then the day immediately before it
+      // (within the same stage when possible, else any earlier day in series).
+      const allDays = seriesInfo.stages.flatMap((s) =>
+        s.broadcast_days.map((d) => ({
+          ...d,
+          stage_id: s.id,
+        })),
+      );
+      const current = allDays.find((d) => d.id === resolvedScope.id);
+      if (!current) return null;
+      const stageMates = allDays
+        .filter(
+          (d) => d.stage_id === current.stage_id && d.date < current.date && (d.status === 'completed' || d.status === 'live'),
+        )
+        .sort((a, b) => b.date.localeCompare(a.date));
+      const prev = stageMates[0]
+        ?? allDays
+          .filter((d) => d.date < current.date && (d.status === 'completed' || d.status === 'live'))
+          .sort((a, b) => b.date.localeCompare(a.date))[0];
+      return prev ? { level: 'day', id: prev.id, label: prev.label } : null;
+    }
+    if (resolvedScope.level === 'stage') {
+      const current = seriesInfo.stages.find((s) => s.id === resolvedScope.id);
+      if (!current) return null;
+      const prev = [...seriesInfo.stages]
+        .filter((s) => s.order < current.order)
+        .sort((a, b) => b.order - a.order)[0];
+      return prev ? { level: 'stage', id: prev.id, label: prev.name } : null;
+    }
+    return null;
+  }, [seriesInfo, resolvedScope]);
+
+  const { data: prevMetrics } = usePollingApi<MetricsResponse>(
+    () =>
+      previousScope && shortName
+        ? api.getPublicMetrics(shortName, previousScope.level, previousScope.id)
+        : Promise.resolve(null as unknown as MetricsResponse),
+    [shortName, previousScope?.id ?? ''],
+    { intervalMs: 60_000, enabled: !!previousScope && !!shortName },
+  );
+
+  // (trend deltas computed below, after model is defined)
+
   const model = useDashboardModel({
     seriesDetail,
     metrics: needsScopedFetch ? scopedMetrics : pollingData.metrics,
     liveCCV: needsScopedFetch ? scopedLiveCCV : pollingData.liveCCV,
   });
+
+  // Trend deltas vs the previous broadcast day / stage (matches the legacy
+  // HTML report's TrendData behavior). Returns fractions, e.g. +0.18 = +18%.
+  const trend = useMemo(() => {
+    if (!prevMetrics || !previousScope) return null;
+    const safeDelta = (cur: number | null | undefined, prev: number | null | undefined) => {
+      const c = Number(cur ?? 0);
+      const p = Number(prev ?? 0);
+      if (!p || p <= 0) return null;
+      return (c - p) / p;
+    };
+    return {
+      label: previousScope.label,
+      peak: safeDelta(model.peakTotal, prevMetrics.peakCCV?.totalCCV ?? null),
+      avg: safeDelta(model.avgTotal, prevMetrics.avgCCV ?? null),
+      hours: safeDelta(model.viewedHours, prevMetrics.totalViewedHours ?? null),
+    };
+  }, [prevMetrics, previousScope, model.peakTotal, model.avgTotal, model.viewedHours]);
 
   const scope = resolvedScope
     ? { level: resolvedScope.level, id: resolvedScope.id }
@@ -324,6 +392,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
         scopeLevel={resolvedScope?.level ?? 'series'}
         scopeStart={scopeStart}
         scopeEnd={scopeEnd}
+        trend={trend}
       />
     );
   }
@@ -337,8 +406,16 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       scopeLevel={resolvedScope?.level ?? 'series'}
       scopeStart={scopeStart}
       scopeEnd={scopeEnd}
+      trend={trend}
     />
   );
+}
+
+interface TrendDeltas {
+  label: string;
+  peak: number | null;
+  avg: number | null;
+  hours: number | null;
 }
 
 // ── Simple report ──────────────────────────────────────────────────────────
@@ -352,6 +429,7 @@ function SimpleReport({
   scopeLevel,
   scopeStart,
   scopeEnd,
+  trend,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
@@ -361,6 +439,7 @@ function SimpleReport({
   scopeLevel: ScopeLevel;
   scopeStart: string | null;
   scopeEnd: string | null;
+  trend: TrendDeltas | null;
 }) {
   const totalDayCount = useMemo(() => {
     if (scopeLevel === 'day') return 1;
@@ -444,6 +523,10 @@ function SimpleReport({
           peakAt={model.peakTotalAt}
           timezone={seriesInfo.timezone}
           peakIncludeDate={scopeLevel !== 'day'}
+          yoyPeak={trend?.peak ?? null}
+          yoyAvg={trend?.avg ?? null}
+          yoyHours={trend?.hours ?? null}
+          yoyLabel={trend?.label}
         />
       </div>
 
@@ -552,6 +635,7 @@ function DetailedReport({
   scopeLevel,
   scopeStart,
   scopeEnd,
+  trend,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
@@ -561,6 +645,7 @@ function DetailedReport({
   scopeLevel: ScopeLevel;
   scopeStart: string | null;
   scopeEnd: string | null;
+  trend: TrendDeltas | null;
 }) {
   const totalDayCount = useMemo(() => {
     if (scopeLevel === 'day') return 1;
@@ -814,6 +899,10 @@ function DetailedReport({
           peakAt={model.peakTotalAt}
           timezone={seriesInfo.timezone}
           peakIncludeDate={scopeLevel !== 'day'}
+          yoyPeak={trend?.peak ?? null}
+          yoyAvg={trend?.avg ?? null}
+          yoyHours={trend?.hours ?? null}
+          yoyLabel={trend?.label}
         />
       </div>
 

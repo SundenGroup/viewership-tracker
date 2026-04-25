@@ -48,6 +48,7 @@ export function HeroKPIs({
   yoyPeak,
   yoyAvg,
   yoyHours,
+  yoyLabel,
   days = 3,
   timeSeries,
   peakAt,
@@ -61,6 +62,8 @@ export function HeroKPIs({
   yoyPeak?: number | null;
   yoyAvg?: number | null;
   yoyHours?: number | null;
+  /** Tooltip / aria-label for the trend chip (e.g. "vs Day 1"). */
+  yoyLabel?: string;
   days?: number;
   /** Per-minute total CCV series, drives the sparkline + peak marker. */
   timeSeries?: number[];
@@ -119,6 +122,7 @@ export function HeroKPIs({
         </div>
         {yoy != null && (
           <div
+            title={yoyLabel ? `vs ${yoyLabel}` : undefined}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -141,7 +145,11 @@ export function HeroKPIs({
             }}
           >
             {yoy >= 0 ? '▲' : '▼'} {fmtPct(yoy).replace('+', '')}
-            <span style={{ opacity: 0.7, marginLeft: 3, fontWeight: 500 }}>YoY</span>
+            {yoyLabel && (
+              <span style={{ opacity: 0.7, marginLeft: 3, fontWeight: 500 }}>
+                vs {yoyLabel}
+              </span>
+            )}
           </div>
         )}
       </div>

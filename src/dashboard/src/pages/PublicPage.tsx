@@ -882,6 +882,65 @@ function PublicRecap({
           ? `${seriesInfo.name} · ${activeDay.label}`
           : seriesInfo.name;
 
+  // ── Trend vs previous broadcast (day → previous day in stage; stage →
+  // previous stage in series). Powers the +/-% chip on HeroKPIs.
+  const previousScope = useMemo<
+    { level: 'day' | 'stage'; id: string; label: string } | null
+  >(() => {
+    if (scope.level === 'day') {
+      const allDaysWithStage = seriesInfo.stages.flatMap((s) =>
+        s.broadcast_days.map((d) => ({ ...d, stage_id: s.id })),
+      );
+      const cur = allDaysWithStage.find((d) => d.id === scope.id);
+      if (!cur) return null;
+      const stageMates = allDaysWithStage
+        .filter((d) =>
+          d.stage_id === cur.stage_id && d.date < cur.date && (d.status === 'completed' || d.status === 'live'),
+        )
+        .sort((a, b) => b.date.localeCompare(a.date));
+      const prev =
+        stageMates[0]
+        ?? allDaysWithStage
+          .filter((d) => d.date < cur.date && (d.status === 'completed' || d.status === 'live'))
+          .sort((a, b) => b.date.localeCompare(a.date))[0];
+      return prev ? { level: 'day', id: prev.id, label: prev.label } : null;
+    }
+    if (scope.level === 'stage') {
+      const cur = seriesInfo.stages.find((s) => s.id === scope.id);
+      if (!cur) return null;
+      const prev = [...seriesInfo.stages]
+        .filter((s) => s.order < cur.order)
+        .sort((a, b) => b.order - a.order)[0];
+      return prev ? { level: 'stage', id: prev.id, label: prev.name } : null;
+    }
+    return null;
+  }, [seriesInfo, scope.level, scope.id]);
+
+  const { data: prevMetrics } = usePollingApi<MetricsResponse>(
+    () =>
+      previousScope && shortName
+        ? api.getPublicMetrics(shortName, previousScope.level, previousScope.id)
+        : Promise.resolve(null as unknown as MetricsResponse),
+    [shortName, previousScope?.id ?? ''],
+    { intervalMs: 60_000, enabled: !!previousScope && !!shortName },
+  );
+
+  const trend = useMemo(() => {
+    if (!prevMetrics || !previousScope) return null;
+    const safe = (cur: number | null | undefined, prev: number | null | undefined) => {
+      const c = Number(cur ?? 0);
+      const p = Number(prev ?? 0);
+      if (!p || p <= 0) return null;
+      return (c - p) / p;
+    };
+    return {
+      label: previousScope.label,
+      peak: safe(model.peakTotal, prevMetrics.peakCCV?.totalCCV ?? null),
+      avg: safe(model.avgTotal, prevMetrics.avgCCV ?? null),
+      hours: safe(model.viewedHours, prevMetrics.totalViewedHours ?? null),
+    };
+  }, [prevMetrics, previousScope, model.peakTotal, model.avgTotal, model.viewedHours]);
+
   const palette = [
     'var(--red)', 'var(--info)', 'var(--warn)', 'var(--live)',
     'var(--twitch)', 'var(--tiktok)', 'var(--youtube)', 'var(--kick)',
@@ -970,6 +1029,10 @@ function PublicRecap({
           hours={model.viewedHours}
           days={totalDayCount}
           timeSeries={timeline.total}
+          yoyPeak={trend?.peak ?? null}
+          yoyAvg={trend?.avg ?? null}
+          yoyHours={trend?.hours ?? null}
+          yoyLabel={trend?.label}
         />
       </section>
 
