@@ -203,6 +203,11 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
     .join('channels', 'channels.id', 'viewership_snapshots.channel_id')
     .where('viewership_snapshots.series_id', seriesId)
     .where('viewership_snapshots.timestamp', latestTs)
+    // Hide rows whose owning channel record has since been disabled — stale
+    // post-deactivation snapshots otherwise pollute the live-CCV response
+    // until the next bulk poll, leaving "0 viewers" rows in the leaderboard
+    // for channels the operator just removed.
+    .where('channels.is_active', true)
     .select(
       'viewership_snapshots.*',
       'channels.display_name',
@@ -241,6 +246,7 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
         AND vs.platform = 'tiktok'
         AND vs."timestamp" > NOW() - INTERVAL '2 minutes'
         AND vs.concurrent_viewers > 0
+        AND c.is_active = true
       ORDER BY vs.channel_id, vs."timestamp" DESC
     `, { seriesId }).then((r: { rows: Array<ViewershipSnapshot & { display_name: string; channel_identifier: string; tier: string | null }> }) => r.rows);
 
@@ -446,6 +452,7 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
        GROUP BY minute_bucket, channel_id, platform
      ) pc
      JOIN channels c ON c.id = pc.channel_id
+     WHERE c.is_active = true
      GROUP BY pc.channel_id, c.display_name, c.channel_identifier, c.tier, c.language, pc.platform
      ORDER BY SUM(pc.channel_ccv) DESC
      LIMIT :limit`,
