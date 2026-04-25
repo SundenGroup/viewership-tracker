@@ -145,11 +145,6 @@ export function HeroKPIs({
             }}
           >
             {yoy >= 0 ? '▲' : '▼'} {fmtPct(yoy).replace('+', '')}
-            {yoyLabel && (
-              <span style={{ opacity: 0.7, marginLeft: 3, fontWeight: 500 }}>
-                vs {yoyLabel}
-              </span>
-            )}
           </div>
         )}
       </div>
