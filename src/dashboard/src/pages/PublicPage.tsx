@@ -888,21 +888,18 @@ function PublicRecap({
     { level: 'day' | 'stage'; id: string; label: string } | null
   >(() => {
     if (scope.level === 'day') {
+      // Match the legacy report (computeDayTrend): only compare with the
+      // previous broadcast day in the SAME stage. No cross-stage fallback.
       const allDaysWithStage = seriesInfo.stages.flatMap((s) =>
         s.broadcast_days.map((d) => ({ ...d, stage_id: s.id })),
       );
       const cur = allDaysWithStage.find((d) => d.id === scope.id);
       if (!cur) return null;
-      const stageMates = allDaysWithStage
+      const prev = allDaysWithStage
         .filter((d) =>
           d.stage_id === cur.stage_id && d.date < cur.date && (d.status === 'completed' || d.status === 'live'),
         )
-        .sort((a, b) => b.date.localeCompare(a.date));
-      const prev =
-        stageMates[0]
-        ?? allDaysWithStage
-          .filter((d) => d.date < cur.date && (d.status === 'completed' || d.status === 'live'))
-          .sort((a, b) => b.date.localeCompare(a.date))[0];
+        .sort((a, b) => b.date.localeCompare(a.date))[0];
       return prev ? { level: 'day', id: prev.id, label: prev.label } : null;
     }
     if (scope.level === 'stage') {
@@ -925,19 +922,23 @@ function PublicRecap({
     { intervalMs: 60_000, enabled: !!previousScope && !!shortName },
   );
 
+  // Match the legacy HTML report's TrendData rules — drop the whole trend
+  // when the previous scope has no usable data (both peak and avg ≤ 0).
   const trend = useMemo(() => {
     if (!prevMetrics || !previousScope) return null;
-    const safe = (cur: number | null | undefined, prev: number | null | undefined) => {
-      const c = Number(cur ?? 0);
-      const p = Number(prev ?? 0);
-      if (!p || p <= 0) return null;
-      return (c - p) / p;
+    const prevPeak = Number(prevMetrics.peakCCV?.totalCCV ?? 0);
+    const prevAvg = Number(prevMetrics.avgCCV ?? 0);
+    const prevHours = Number(prevMetrics.totalViewedHours ?? 0);
+    if (prevPeak <= 0 && prevAvg <= 0) return null;
+    const delta = (cur: number | null | undefined, prev: number) => {
+      if (prev <= 0) return null;
+      return (Number(cur ?? 0) - prev) / prev;
     };
     return {
       label: previousScope.label,
-      peak: safe(model.peakTotal, prevMetrics.peakCCV?.totalCCV ?? null),
-      avg: safe(model.avgTotal, prevMetrics.avgCCV ?? null),
-      hours: safe(model.viewedHours, prevMetrics.totalViewedHours ?? null),
+      peak: delta(model.peakTotal, prevPeak),
+      avg: delta(model.avgTotal, prevAvg),
+      hours: delta(model.viewedHours, prevHours),
     };
   }, [prevMetrics, previousScope, model.peakTotal, model.avgTotal, model.viewedHours]);
 

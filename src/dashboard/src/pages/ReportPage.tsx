@@ -225,25 +225,20 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
   >(() => {
     if (!seriesInfo || !resolvedScope) return null;
     if (resolvedScope.level === 'day') {
-      // Find the stage that holds this day, then the day immediately before it
-      // (within the same stage when possible, else any earlier day in series).
+      // Match the legacy report (computeDayTrend): only compare with the
+      // previous broadcast day in the SAME stage. No cross-stage fallback —
+      // the first day of a stage gets no trend chip, keeping the
+      // "vs <prev>" comparison meaningful within a stage.
       const allDays = seriesInfo.stages.flatMap((s) =>
-        s.broadcast_days.map((d) => ({
-          ...d,
-          stage_id: s.id,
-        })),
+        s.broadcast_days.map((d) => ({ ...d, stage_id: s.id })),
       );
       const current = allDays.find((d) => d.id === resolvedScope.id);
       if (!current) return null;
-      const stageMates = allDays
+      const prev = allDays
         .filter(
           (d) => d.stage_id === current.stage_id && d.date < current.date && (d.status === 'completed' || d.status === 'live'),
         )
-        .sort((a, b) => b.date.localeCompare(a.date));
-      const prev = stageMates[0]
-        ?? allDays
-          .filter((d) => d.date < current.date && (d.status === 'completed' || d.status === 'live'))
-          .sort((a, b) => b.date.localeCompare(a.date))[0];
+        .sort((a, b) => b.date.localeCompare(a.date))[0];
       return prev ? { level: 'day', id: prev.id, label: prev.label } : null;
     }
     if (resolvedScope.level === 'stage') {
@@ -274,21 +269,27 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     liveCCV: needsScopedFetch ? scopedLiveCCV : pollingData.liveCCV,
   });
 
-  // Trend deltas vs the previous broadcast day / stage (matches the legacy
-  // HTML report's TrendData behavior). Returns fractions, e.g. +0.18 = +18%.
+  // Trend deltas vs the previous broadcast day / stage. Mirrors the legacy
+  // HTML report's TrendData rules:
+  //   - drop the entire trend payload (no chip on any cell) when the
+  //     previous scope has no usable data (peak ≤ 0 AND avg ≤ 0)
+  //   - otherwise return fractions per metric; a single null chip shows
+  //     when only one metric's previous value is zero
   const trend = useMemo(() => {
     if (!prevMetrics || !previousScope) return null;
-    const safeDelta = (cur: number | null | undefined, prev: number | null | undefined) => {
-      const c = Number(cur ?? 0);
-      const p = Number(prev ?? 0);
-      if (!p || p <= 0) return null;
-      return (c - p) / p;
+    const prevPeak = Number(prevMetrics.peakCCV?.totalCCV ?? 0);
+    const prevAvg = Number(prevMetrics.avgCCV ?? 0);
+    const prevHours = Number(prevMetrics.totalViewedHours ?? 0);
+    if (prevPeak <= 0 && prevAvg <= 0) return null;
+    const delta = (cur: number | null | undefined, prev: number) => {
+      if (prev <= 0) return null;
+      return (Number(cur ?? 0) - prev) / prev;
     };
     return {
       label: previousScope.label,
-      peak: safeDelta(model.peakTotal, prevMetrics.peakCCV?.totalCCV ?? null),
-      avg: safeDelta(model.avgTotal, prevMetrics.avgCCV ?? null),
-      hours: safeDelta(model.viewedHours, prevMetrics.totalViewedHours ?? null),
+      peak: delta(model.peakTotal, prevPeak),
+      avg: delta(model.avgTotal, prevAvg),
+      hours: delta(model.viewedHours, prevHours),
     };
   }, [prevMetrics, previousScope, model.peakTotal, model.avgTotal, model.viewedHours]);
 
