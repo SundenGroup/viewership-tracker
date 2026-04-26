@@ -452,7 +452,11 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
        GROUP BY minute_bucket, channel_id, platform
      ) pc
      JOIN channels c ON c.id = pc.channel_id
-     WHERE c.is_active = true
+     -- NOTE: deliberately NOT filtering by c.is_active here — the report
+     -- leaderboard is a historical aggregation across the day window, and
+     -- a channel that streamed for hours then got disabled afterward
+     -- still earned its viewership. Live-CCV (getLatestSnapshot) keeps the
+     -- is_active filter so the dashboard's "right now" view stays clean.
      GROUP BY pc.channel_id, c.display_name, c.channel_identifier, c.tier, c.language, pc.platform
      ORDER BY SUM(pc.channel_ccv) DESC
      LIMIT :limit`,
