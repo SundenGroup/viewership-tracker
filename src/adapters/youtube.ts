@@ -97,6 +97,16 @@ export class YouTubeAdapter implements PlatformAdapter {
   private readonly liveVideoCache = new Map<string, CachedLiveVideo>();
   private readonly multiStreamCache = new Map<string, CachedMultiStreamVideoIds>();
   private multiStreamChannels = new Set<string>();
+  /**
+   * Per-channel "last seen" map for multi-stream videoIds. When a fresh
+   * scrape misses a videoId we recently saw on this channel, we keep it
+   * in the returned set for STICKY_TTL — the orchestrator will poll it
+   * one more time and only drop it if it confirms offline. Prevents the
+   * 8:38pm-style 1-minute crashes where the channel's main stream
+   * temporarily disappears from the /streams scrape.
+   */
+  private readonly stickyLiveVideoIds = new Map<string, Map<string, number>>();
+  private static readonly STICKY_VIDEO_TTL_MS = 10 * 60_000;
   private quotaUsed = 0;
   private quotaResetDate: string = todayDateString();
   private readonly quotaLimit: number;
@@ -375,17 +385,24 @@ export class YouTubeAdapter implements PlatformAdapter {
         verifiedIds = ownedIds;
       }
 
-      // Cache the result
+      // Merge with sticky history so a single noisy scrape that misses the
+      // channel's main stream doesn't crater attributed CCV. Any videoId
+      // observed in the last STICKY_VIDEO_TTL_MS minutes is retained even
+      // if absent from this scrape — the orchestrator will poll it one
+      // more time and only drop it if it actually reports offline.
+      const finalIds = this.applyStickyMerge(channelId, verifiedIds);
+
       this.multiStreamCache.set(channelId, {
-        videoIds: verifiedIds,
+        videoIds: finalIds,
         cachedAt: Date.now(),
       });
 
-      if (verifiedIds.length > 0) {
-        logger.info(`YouTube: found ${verifiedIds.length} live stream(s) on channel ${channelId}: ${verifiedIds.join(', ')}`);
+      if (finalIds.length > 0) {
+        logger.info(`YouTube: ${finalIds.length} live stream(s) on channel ${channelId}: ${finalIds.join(', ')}` +
+          (finalIds.length !== verifiedIds.length ? ` (sticky-restored ${finalIds.length - verifiedIds.length})` : ''));
       }
 
-      return verifiedIds;
+      return finalIds;
     } catch (err) {
       const errMsg = (err as Error).message;
       if (errMsg.includes('timeout') || errMsg.includes('ECONNRESET')) {
@@ -393,8 +410,43 @@ export class YouTubeAdapter implements PlatformAdapter {
       } else {
         logger.warn(`YouTube: multi-stream scrape failed for ${channelId}`, { error: errMsg });
       }
-      return [];
+      // On scrape failure, fall back to recently-seen videoIds so a transient
+      // network blip doesn't drop CCV to zero for the next minute.
+      const sticky = this.applyStickyMerge(channelId, []);
+      return sticky;
     }
+  }
+
+  /**
+   * Force-drop a videoId from the sticky cache once we've confirmed it's
+   * offline. Called by the multi-stream loop when scrapeVideoLiveData
+   * returns null (= /watch?v=VIDEO_ID does not show a live stream).
+   */
+  private dropStickyVideoId(channelId: string, videoId: string): void {
+    const history = this.stickyLiveVideoIds.get(channelId);
+    if (history) history.delete(videoId);
+  }
+
+  /**
+   * Merge a fresh-scrape videoId list with the per-channel sticky history.
+   * Returns the union of: the new list (timestamps refreshed) + any
+   * historical entry observed within STICKY_VIDEO_TTL_MS.
+   */
+  private applyStickyMerge(channelId: string, freshIds: string[]): string[] {
+    const now = Date.now();
+    const history = this.stickyLiveVideoIds.get(channelId) ?? new Map<string, number>();
+    // Refresh the lastSeenAt for everything in this scrape
+    for (const vid of freshIds) history.set(vid, now);
+    // Drop history entries beyond TTL
+    for (const [vid, ts] of [...history.entries()]) {
+      if (now - ts > YouTubeAdapter.STICKY_VIDEO_TTL_MS) history.delete(vid);
+    }
+    this.stickyLiveVideoIds.set(channelId, history);
+    // Return ordered: fresh videoIds first (likely the channel's current
+    // primary), then any sticky-only ones at the end.
+    const freshSet = new Set(freshIds);
+    const stickyOnly = [...history.keys()].filter((v) => !freshSet.has(v));
+    return [...freshIds, ...stickyOnly];
   }
 
   // ── Retry wrapper ─────────────────────────────────────────────────────
@@ -1101,7 +1153,12 @@ export class YouTubeAdapter implements PlatformAdapter {
             // because /channel/live returns wrong CCV when multiple streams are active
             const streamData = await this.scrapeVideoLiveData(liveVideoId);
 
-            if (!streamData) continue;
+            if (!streamData) {
+              // Confirmed offline — purge from sticky cache so we don't
+              // keep retrying it for STICKY_VIDEO_TTL_MS minutes.
+              this.dropStickyVideoId(resolvedId, liveVideoId);
+              continue;
+            }
 
             // Try API enrichment for this video
             const apiVideo = videoMap.get(liveVideoId);
