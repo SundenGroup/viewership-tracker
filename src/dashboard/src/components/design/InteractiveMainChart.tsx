@@ -507,9 +507,12 @@ function ChartHoverOverlay({
               pointerEvents: 'none',
             }}
           />
-          {/* Per-series dots at intersection */}
+          {/* Per-series dots at intersection — must use the EXACT same y-axis
+              max as the rendered chart, otherwise the dots float off the
+              lines. The line/stacked chart includes the dashed Total
+              overlay in its max when showTotal is on, so we must too,
+              otherwise per-series dots shift up and away from the lines. */}
           {rows.map((r) => {
-            // Reuse series max so dot Y matches the rendered line.
             const seriesMax =
               dimension === 'total'
                 ? Math.max(
@@ -518,7 +521,9 @@ function ChartHoverOverlay({
                   )
                 : mode === 'stacked'
                   ? Math.max(...stackTotals, ...totalData, 1)
-                  : Math.max(...visible.flatMap((s) => s.data), 1);
+                  : showTotal
+                    ? Math.max(...visible.flatMap((s) => s.data), ...totalData, 1)
+                    : Math.max(...visible.flatMap((s) => s.data), 1);
             const pct = seriesMax > 0 ? r.value / seriesMax : 0;
             // Match LineChart padding of 24 (and AreaChart padding of 8).
             const pad = dimension === 'total' ? 8 : 24;
