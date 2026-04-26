@@ -398,12 +398,30 @@ function ChartHoverOverlay({
       ? totalData.length
       : visible[0]?.data.length ?? 0;
 
+  // The SVG uses viewBox=0 0 width height with width="100%", so the chart
+  // padding (svg units) maps to a fraction of the rendered container width.
+  // We need this fraction to translate between mouse x and data-index in
+  // both directions: hover detection and tracker placement.
+  const svgPad = dimension === 'total' ? 8 : 24;
+  const padFracW = width > 0 ? svgPad / width : 0;
+
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (n < 2) return;
     const rect = ref.current?.getBoundingClientRect();
     if (!rect) return;
     const x = e.clientX - rect.left;
-    const frac = Math.max(0, Math.min(1, x / rect.width));
+    const dataLeft = padFracW * rect.width;
+    const dataRight = (1 - padFracW) * rect.width;
+    // Outside the actual chart area → no hover. Avoids the tooltip clinging
+    // to the last data point when the cursor is in the SVG padding zone.
+    if (x < dataLeft || x > dataRight) {
+      if (hoverIdx != null) {
+        setHoverIdx(null);
+        setHoverX(null);
+      }
+      return;
+    }
+    const frac = (x - dataLeft) / Math.max(1, dataRight - dataLeft);
     const idx = Math.round(frac * (n - 1));
     setHoverIdx(idx);
     setHoverX(x);
@@ -445,10 +463,17 @@ function ChartHoverOverlay({
     return formatChartTimeInTz(d, timezone, true) || d.toISOString();
   }, [hoverIdx, timestamps, timezone]);
 
-  // Pixel x of the active sample — map data-index back to container width.
+  // Pixel x of the active sample — map data-index back to container width,
+  // accounting for the SVG's left/right padding so the tracker sits exactly
+  // on the rendered data point (not in the padding zone).
   const trackerX =
     hoverIdx != null && n > 1 && ref.current
-      ? (hoverIdx / (n - 1)) * ref.current.getBoundingClientRect().width
+      ? (() => {
+          const rectW = ref.current.getBoundingClientRect().width;
+          const dataLeft = padFracW * rectW;
+          const dataWidth = rectW * (1 - 2 * padFracW);
+          return dataLeft + (hoverIdx / (n - 1)) * dataWidth;
+        })()
       : null;
 
   // Tooltip positioning: clamp to container so it never overflows.
