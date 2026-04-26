@@ -3,6 +3,7 @@ import { Row } from './Layout';
 import { Tab } from './Tab';
 import { AreaChart, LineChart, StackedAreaChart, type SeriesData } from './charts';
 import { PlatformPip } from './PlatformPip';
+import { formatChartTimeInTz } from '@/utils/formatters';
 import { fmtCompact, fmtN } from '@/design/format';
 
 export type ChartDimension = 'platform' | 'region' | 'language' | 'total';
@@ -283,25 +284,7 @@ function XAxisTicks({
       first && last
         ? daytag(first, timezone) === daytag(last, timezone)
         : true;
-    return (d: Date) => {
-      try {
-        const parts = new Intl.DateTimeFormat('en-US', {
-          timeZone: timezone,
-          month: sameDay ? undefined : 'short',
-          day: sameDay ? undefined : 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-        }).formatToParts(d);
-        const month = parts.find((p) => p.type === 'month')?.value ?? '';
-        const day = parts.find((p) => p.type === 'day')?.value ?? '';
-        const hour = parts.find((p) => p.type === 'hour')?.value ?? '00';
-        const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
-        return sameDay ? `${hour}:${minute}` : `${month} ${day} · ${hour}:${minute}`;
-      } catch {
-        return '';
-      }
-    };
+    return (d: Date) => formatChartTimeInTz(d, timezone, !sameDay);
   }, [timestamps, timezone, n]);
 
   const ticks: Array<{ pct: number; label: string }> = [];
@@ -459,19 +442,7 @@ function ChartHoverOverlay({
   const label = useMemo(() => {
     if (hoverIdx == null || !timestamps || !timestamps[hoverIdx]) return '';
     const d = new Date(timestamps[hoverIdx]);
-    if (!Number.isFinite(d.getTime())) return '';
-    try {
-      return new Intl.DateTimeFormat('en-US', {
-        timeZone: timezone,
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      }).format(d);
-    } catch {
-      return d.toISOString();
-    }
+    return formatChartTimeInTz(d, timezone, true) || d.toISOString();
   }, [hoverIdx, timestamps, timezone]);
 
   // Pixel x of the active sample — map data-index back to container width.

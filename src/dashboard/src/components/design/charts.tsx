@@ -3,6 +3,7 @@
 
 import { useId, useMemo, useRef, useState } from 'react';
 import { fmtCompact, fmtN } from '@/design/format';
+import { formatChartTimeInTz } from '@/utils/formatters';
 
 // ── AreaChart ──────────────────────────────────────────────────────────────
 
@@ -72,19 +73,7 @@ export function AreaChart({
   const hoverLabel = useMemo(() => {
     if (hoverIdx == null || !timestamps || !timestamps[hoverIdx]) return '';
     const d = new Date(timestamps[hoverIdx]);
-    if (!Number.isFinite(d.getTime())) return '';
-    try {
-      return new Intl.DateTimeFormat('en-US', {
-        timeZone: timezone,
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      }).format(d);
-    } catch {
-      return '';
-    }
+    return formatChartTimeInTz(d, timezone, true);
   }, [hoverIdx, timestamps, timezone]);
 
   const hoverPct =

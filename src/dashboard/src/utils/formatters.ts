@@ -171,8 +171,48 @@ export function getTimezoneAbbr(date: Date, timezone: string): string {
  * Pick AM/PM vs 24-hour based on the IANA timezone's region. Americas
  * → 12-hour ("7pm EDT"); Europe/Asia/Africa → 24-hour ("21:35 CEST").
  */
-function shouldUseAmPm(timezone: string | null | undefined): boolean {
+export function shouldUseAmPm(timezone: string | null | undefined): boolean {
   return !!timezone && /^America\//.test(timezone);
+}
+
+/**
+ * Render a Date as an axis-tick / tooltip label in a specific IANA tz.
+ * Picks AM/PM vs 24-hour from shouldUseAmPm(). Set `includeDate` to
+ * prepend "Mar 10 · ".
+ *
+ * Used by AreaChart, InteractiveMainChart x-axis, and the hover tooltip
+ * so all three honor the series' timezone formatting convention.
+ */
+export function formatChartTimeInTz(
+  d: Date,
+  timezone: string | null | undefined,
+  includeDate: boolean,
+): string {
+  if (!Number.isFinite(d.getTime())) return '';
+  try {
+    const useAmPm = shouldUseAmPm(timezone);
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone ?? undefined,
+      month: includeDate ? 'short' : undefined,
+      day: includeDate ? 'numeric' : undefined,
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: useAmPm,
+    }).formatToParts(d);
+    const month = parts.find((p) => p.type === 'month')?.value ?? '';
+    const day = parts.find((p) => p.type === 'day')?.value ?? '';
+    const hour = parts.find((p) => p.type === 'hour')?.value ?? '00';
+    const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
+    const dayPeriod = parts.find((p) => p.type === 'dayPeriod')?.value?.toLowerCase() ?? '';
+    const timeText = useAmPm
+      ? minute === '00'
+        ? `${hour}${dayPeriod}`
+        : `${hour}:${minute}${dayPeriod}`
+      : `${hour}:${minute}`;
+    return includeDate && month && day ? `${month} ${day} · ${timeText}` : timeText;
+  } catch {
+    return '';
+  }
 }
 
 /**
