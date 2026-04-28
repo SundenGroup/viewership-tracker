@@ -1,20 +1,17 @@
 /**
  * Settings → Notifications (editor + admin).
  *
- * Per-device push notification controls. Mirrors the auth-gate / page-shell
- * pattern of YouTubeKeysPage, but the role bar is editor+ instead of admin.
+ * Per-device push notification controls. Uses token-based styling
+ * (`.card`, `.btn`, CSS variables from tokens.css) so light + dark
+ * themes both work without any per-component overrides.
  *
  * Browser support:
  *   Desktop Chrome/Edge/Firefox/Safari 16.1+ — works in any tab
  *   Android Chrome/Firefox                  — works in any tab
  *   iOS Safari 16.4+                        — only inside an installed PWA
- *
- * The page renders a friendly fallback for non-editor users and a different
- * fallback (with install instructions) for iOS Safari users not in PWA mode.
  */
 
 import { useEffect, useState, useCallback } from 'react';
-import { Card, Button, Badge } from '@/components/common';
 import { SettingsShell } from '@/components/design';
 import { useAuth } from '@/hooks/useAuth';
 import * as api from '@/services/api';
@@ -65,7 +62,7 @@ const DEFAULT_PREFS: PushPreferences = {
 };
 
 export function NotificationsSettingsPage() {
-  const { user, isEditor, isAdmin } = useAuth();
+  const { user, isEditor } = useAuth();
 
   const [pushStatus, setPushStatus] = useState<push.PushStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
@@ -168,8 +165,6 @@ export function NotificationsSettingsPage() {
       return;
     }
     try {
-      // Bypass SW + push pipeline — show a notification directly from the page.
-      // If THIS doesn't appear, the issue is at the browser/OS permission layer.
       const n = new Notification('Local test notification', {
         body: 'Direct from this tab — no server, no push pipeline. If you see this, OS permissions are fine.',
         icon: '/favicon-192.png',
@@ -204,11 +199,11 @@ export function NotificationsSettingsPage() {
     return (
       <SettingsShell breadcrumb="Settings · Notifications" title="Push notifications">
         <div style={{ padding: 32 }}>
-          <Card>
-            <p style={{ padding: 20, fontSize: 14, color: 'var(--fg-muted, #9ca3af)' }}>
+          <div className="card" style={{ padding: 20 }}>
+            <p style={{ fontSize: 14, color: 'var(--fg-muted)', margin: 0 }}>
               Notifications are available for editors and admins.
             </p>
-          </Card>
+          </div>
         </div>
       </SettingsShell>
     );
@@ -217,64 +212,75 @@ export function NotificationsSettingsPage() {
   // ── Render ─────────────────────────────────────────────────────────────
 
   const enabled = pushStatus?.isSubscribed ?? false;
+  const enableDisabled =
+    working ||
+    pushStatus?.status === 'unsupported' ||
+    pushStatus?.status === 'unsupported-ios-safari' ||
+    pushStatus?.status === 'permission-denied';
 
   return (
     <SettingsShell breadcrumb="Settings · Notifications" title="Push notifications">
-    <div style={{ padding: '24px 32px', maxWidth: 880, margin: '0 auto' }}>
-      <div style={{ marginBottom: 18 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0 }}>Push notifications</h1>
-        <p style={{ fontSize: 13, color: 'var(--fg-muted, #9ca3af)', marginTop: 6, maxWidth: 720 }}>
-          Get OS-level notifications for live operations: broadcasts going live or about to end,
-          polling problems, YouTube quota exhaustion, and new auto-discovery candidates.
-          Configure each device independently — your laptop and phone can have different
-          preferences.
-        </p>
-      </div>
+      <div style={{ padding: '24px 32px', maxWidth: 880, margin: '0 auto' }}>
+        <div style={{ marginBottom: 18 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0, color: 'var(--fg)' }}>
+            Push notifications
+          </h1>
+          <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 6, maxWidth: 720 }}>
+            Get OS-level notifications for live operations: broadcasts going live or about to end,
+            polling problems, YouTube quota exhaustion, and new auto-discovery candidates.
+            Configure each device independently — your laptop and phone can have different
+            preferences.
+          </p>
+        </div>
 
-      {error && (
-        <Card>
-          <p style={{ padding: 14, color: 'var(--clutch-red, #FF154D)', fontSize: 13 }}>{error}</p>
-        </Card>
-      )}
+        {error && (
+          <div
+            className="card"
+            style={{
+              padding: 14,
+              marginBottom: 12,
+              borderColor: 'var(--red)',
+              background: 'var(--red-wash)',
+            }}
+          >
+            <p style={{ color: 'var(--red)', fontSize: 13, margin: 0 }}>{error}</p>
+          </div>
+        )}
 
-      {/* iOS Safari nudge */}
-      {pushStatus?.status === 'unsupported-ios-safari' && (
-        <Card>
-          <div style={{ padding: 18 }}>
-            <h2 style={{ fontSize: 14, fontWeight: 600, margin: 0, marginBottom: 6 }}>
+        {/* iOS Safari nudge */}
+        {pushStatus?.status === 'unsupported-ios-safari' && (
+          <div className="card" style={{ padding: 18, marginBottom: 14 }}>
+            <h2 style={{ fontSize: 14, fontWeight: 600, margin: 0, marginBottom: 6, color: 'var(--fg)' }}>
               One extra step on iPhone
             </h2>
-            <p style={{ fontSize: 13, color: 'var(--fg-muted, #9ca3af)', margin: 0, lineHeight: 1.5 }}>
+            <p style={{ fontSize: 13, color: 'var(--fg-muted)', margin: 0, lineHeight: 1.5 }}>
               On iOS, Web Push only works for sites added to the Home Screen.
               Tap the Share button (□↑) at the bottom of Safari and choose <strong>Add to Home Screen</strong>.
               Then open the app from the new icon and come back here to enable notifications.
             </p>
           </div>
-        </Card>
-      )}
+        )}
 
-      {/* Permission denied recovery hint */}
-      {pushStatus?.status === 'permission-denied' && (
-        <Card>
-          <div style={{ padding: 18 }}>
-            <h2 style={{ fontSize: 14, fontWeight: 600, margin: 0, marginBottom: 6 }}>
+        {/* Permission denied recovery hint */}
+        {pushStatus?.status === 'permission-denied' && (
+          <div className="card" style={{ padding: 18, marginBottom: 14 }}>
+            <h2 style={{ fontSize: 14, fontWeight: 600, margin: 0, marginBottom: 6, color: 'var(--fg)' }}>
               Notifications were blocked
             </h2>
-            <p style={{ fontSize: 13, color: 'var(--fg-muted, #9ca3af)', margin: 0, lineHeight: 1.5 }}>
+            <p style={{ fontSize: 13, color: 'var(--fg-muted)', margin: 0, lineHeight: 1.5 }}>
               You denied the permission prompt previously. To enable, click the lock icon
               in the address bar, set <strong>Notifications</strong> to <strong>Allow</strong>,
               then reload the page.
             </p>
           </div>
-        </Card>
-      )}
+        )}
 
-      {/* Status + Enable/Disable */}
-      <div style={{ height: 14 }} />
-      <Card>
+        {/* Status + Enable/Disable */}
         <div
+          className="card"
           style={{
             padding: 20,
+            marginBottom: 14,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -282,59 +288,55 @@ export function NotificationsSettingsPage() {
           }}
         >
           <div>
-            <div style={{ fontSize: 13, color: 'var(--fg-muted, #9ca3af)', marginBottom: 4 }}>
+            <div style={{ fontSize: 13, color: 'var(--fg-muted)', marginBottom: 4 }}>
               This device
             </div>
-            <div style={{ fontSize: 16, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 10 }}>
-              {statusLoading ? (
-                'Checking…'
-              ) : enabled ? (
-                <>
-                  Enabled <Badge variant="success">on</Badge>
-                </>
+            <div
+              style={{
+                fontSize: 16,
+                fontWeight: 500,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                color: 'var(--fg)',
+              }}
+            >
+              {statusLoading ? 'Checking…' : enabled ? (
+                <>Enabled <StatusPill kind="on">on</StatusPill></>
               ) : pushStatus?.status === 'unsupported' || pushStatus?.status === 'unsupported-ios-safari' ? (
-                <>
-                  Not supported <Badge variant="default">unavailable</Badge>
-                </>
+                <>Not supported <StatusPill kind="muted">unavailable</StatusPill></>
               ) : (
-                <>
-                  Disabled <Badge variant="default">off</Badge>
-                </>
+                <>Disabled <StatusPill kind="muted">off</StatusPill></>
               )}
             </div>
           </div>
           {enabled ? (
-            <Button variant="ghost" disabled={working} onClick={handleDisable}>
+            <button type="button" className="btn btn-ghost" disabled={working} onClick={handleDisable}>
               Disable
-            </Button>
+            </button>
           ) : (
-            <Button
-              variant="primary"
-              disabled={
-                working ||
-                pushStatus?.status === 'unsupported' ||
-                pushStatus?.status === 'unsupported-ios-safari' ||
-                pushStatus?.status === 'permission-denied'
-              }
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={enableDisabled}
               onClick={handleEnable}
             >
               Enable
-            </Button>
+            </button>
           )}
         </div>
-      </Card>
 
-      {/* Per-event toggles */}
-      {enabled && (
-        <>
-          <div style={{ height: 14 }} />
-          <Card>
-            <div style={{ padding: 20 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>What to be notified about</div>
-              <div style={{ fontSize: 12, color: 'var(--fg-muted, #9ca3af)', marginBottom: 14 }}>
+        {/* Per-event toggles */}
+        {enabled && (
+          <>
+            <div className="card" style={{ padding: 20, marginBottom: 14 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, color: 'var(--fg)' }}>
+                What to be notified about
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginBottom: 14 }}>
                 Each toggle applies to this device only.
               </div>
-              {EVENT_DESCRIPTORS.map((ev) => (
+              {EVENT_DESCRIPTORS.map((ev, i) => (
                 <div
                   key={ev.key}
                   style={{
@@ -342,13 +344,13 @@ export function NotificationsSettingsPage() {
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     padding: '10px 0',
-                    borderTop: '1px solid var(--border-subtle, rgba(255,255,255,0.05))',
+                    borderTop: i === 0 ? 'none' : '1px solid var(--border-faint)',
                     gap: 24,
                   }}
                 >
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{ev.label}</div>
-                    <div style={{ fontSize: 12, color: 'var(--fg-muted, #9ca3af)', marginTop: 2 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--fg)' }}>{ev.label}</div>
+                    <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 2 }}>
                       {ev.description}
                     </div>
                   </div>
@@ -359,14 +361,13 @@ export function NotificationsSettingsPage() {
                 </div>
               ))}
             </div>
-          </Card>
 
-          {/* Test notifications (editor+) */}
-          <div style={{ height: 14 }} />
-          <Card>
-            <div style={{ padding: 18 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Test notifications</div>
-              <div style={{ fontSize: 12, color: 'var(--fg-muted, #9ca3af)', marginBottom: 14, lineHeight: 1.6 }}>
+            {/* Test notifications */}
+            <div className="card" style={{ padding: 18, marginBottom: 14 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, color: 'var(--fg)' }}>
+                Test notifications
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginBottom: 14, lineHeight: 1.6 }}>
                 Two ways to test, useful for diagnosing if a notification doesn't arrive:
                 <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
                   <li>
@@ -386,8 +387,8 @@ export function NotificationsSettingsPage() {
                   style={{
                     fontSize: 12,
                     color: 'var(--fg)',
-                    background: 'var(--bg-sunken, #07080A)',
-                    border: '1px solid var(--border, #20242A)',
+                    background: 'var(--bg-sunken)',
+                    border: '1px solid var(--border)',
                     padding: 10,
                     borderRadius: 4,
                     marginBottom: 12,
@@ -398,17 +399,17 @@ export function NotificationsSettingsPage() {
                 </div>
               )}
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <Button variant="ghost" onClick={handleShowLocalTest}>
+                <button type="button" className="btn" onClick={handleShowLocalTest}>
                   Local test (skip server)
-                </Button>
-                <Button variant="primary" onClick={handleSendTest}>
+                </button>
+                <button type="button" className="btn btn-primary" onClick={handleSendTest}>
                   Server test (full pipeline)
-                </Button>
+                </button>
               </div>
               <div
                 style={{
                   fontSize: 11,
-                  color: 'var(--fg-dim, #6b7280)',
+                  color: 'var(--fg-dim)',
                   marginTop: 14,
                   lineHeight: 1.55,
                 }}
@@ -419,62 +420,115 @@ export function NotificationsSettingsPage() {
                 Alerts. Focus modes can also silently filter notifications.
               </div>
             </div>
-          </Card>
-        </>
-      )}
+          </>
+        )}
 
-      {/* Device list */}
-      {subs.length > 0 && (
-        <>
-          <div style={{ height: 14 }} />
-          <Card>
-            <div style={{ padding: 20 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Your subscribed devices</div>
-              <div style={{ fontSize: 12, color: 'var(--fg-muted, #9ca3af)', marginBottom: 14 }}>
-                {subs.length} device{subs.length === 1 ? '' : 's'} will receive your notifications.
-              </div>
-              {subs.map((s) => {
-                const isThis = pushStatus?.endpoint === s.endpoint;
-                return (
-                  <div
-                    key={s.id}
-                    style={{
+        {/* Device list */}
+        {subs.length > 0 && (
+          <div className="card" style={{ padding: 20, marginBottom: 14 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, color: 'var(--fg)' }}>
+              Your subscribed devices
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginBottom: 14 }}>
+              {subs.length} device{subs.length === 1 ? '' : 's'} will receive your notifications.
+            </div>
+            {subs.map((s, i) => {
+              const isThis = pushStatus?.endpoint === s.endpoint;
+              return (
+                <div
+                  key={s.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '10px 0',
+                    borderTop: i === 0 ? 'none' : '1px solid var(--border-faint)',
+                    gap: 16,
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 13,
+                      fontWeight: 500,
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '10px 0',
-                      borderTop: '1px solid var(--border-subtle, rgba(255,255,255,0.05))',
-                      gap: 16,
-                    }}
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {summariseUserAgent(s.user_agent)}
-                        {isThis && <Badge variant="info">this device</Badge>}
-                      </div>
-                      <div style={{ fontSize: 11.5, color: 'var(--fg-dim, #6b7280)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>
-                        Added {formatTimeAgo(s.created_at)}
-                        {s.last_notified_at ? ` · last notified ${formatTimeAgo(s.last_notified_at)}` : ''}
-                      </div>
+                      gap: 8,
+                      color: 'var(--fg)',
+                    }}>
+                      {summariseUserAgent(s.user_agent)}
+                      {isThis && <StatusPill kind="info">this device</StatusPill>}
                     </div>
-                    {!isThis && (
-                      <Button
-                        variant="ghost"
-                        disabled={working}
-                        onClick={() => handleRemoveDevice(s.endpoint)}
-                      >
-                        Remove
-                      </Button>
-                    )}
+                    <div
+                      style={{
+                        fontSize: 11.5,
+                        color: 'var(--fg-dim)',
+                        fontFamily: 'var(--font-mono)',
+                        marginTop: 3,
+                      }}
+                    >
+                      Added {formatTimeAgo(s.created_at)}
+                      {s.last_notified_at ? ` · last notified ${formatTimeAgo(s.last_notified_at)}` : ''}
+                    </div>
                   </div>
-                );
-              })}
-            </div>
-          </Card>
-        </>
-      )}
-    </div>
+                  {!isThis && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={working}
+                      onClick={() => handleRemoveDevice(s.endpoint)}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </SettingsShell>
+  );
+}
+
+// ── Status pill ───────────────────────────────────────────────────────────
+// Theme-aware replacement for the dark-only Badge.
+
+function StatusPill({ children, kind }: { children: React.ReactNode; kind: 'on' | 'muted' | 'info' }) {
+  const styles: Record<typeof kind, React.CSSProperties> = {
+    on: {
+      background: 'color-mix(in oklab, var(--live) 16%, transparent)',
+      color: 'var(--live)',
+      borderColor: 'color-mix(in oklab, var(--live) 35%, transparent)',
+    },
+    muted: {
+      background: 'var(--bg-hover)',
+      color: 'var(--fg-muted)',
+      borderColor: 'var(--border)',
+    },
+    info: {
+      background: 'color-mix(in oklab, var(--info) 14%, transparent)',
+      color: 'var(--info)',
+      borderColor: 'color-mix(in oklab, var(--info) 35%, transparent)',
+    },
+  };
+  return (
+    <span
+      style={{
+        ...styles[kind],
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: '2px 8px',
+        borderRadius: 999,
+        fontSize: 10.5,
+        fontWeight: 600,
+        letterSpacing: 0.3,
+        fontFamily: 'var(--font-mono)',
+        border: '1px solid',
+        textTransform: 'uppercase',
+      }}
+    >
+      {children}
+    </span>
   );
 }
 
@@ -492,20 +546,21 @@ function ToggleSwitch({ on, onChange }: { on: boolean; onChange: (v: boolean) =>
         width: 38,
         height: 22,
         borderRadius: 999,
-        border: 'none',
-        background: on ? 'var(--clutch-green, #4ade80)' : 'var(--bg-elevated, #2a2d3b)',
+        border: '1px solid var(--border)',
+        background: on ? 'var(--live)' : 'var(--bg-hover)',
         cursor: 'pointer',
         transition: 'background 120ms',
         flexShrink: 0,
+        padding: 0,
       }}
     >
       <span
         style={{
           position: 'absolute',
           top: 2,
-          left: on ? 18 : 2,
-          width: 18,
-          height: 18,
+          left: on ? 17 : 2,
+          width: 16,
+          height: 16,
           borderRadius: '50%',
           background: 'white',
           transition: 'left 120ms',
