@@ -10,6 +10,7 @@ import type { Channel } from '../models/channel';
 import type { DiscoveryService } from './discovery-service';
 import type { ReportAgent } from '../agent/report-agent';
 import type { PushNotifier } from './push-notifier';
+import { ccvAnomalyDetector } from './ccv-anomaly-detector';
 
 // ── Callback types ──────────────────────────────────────────────────────
 
@@ -238,6 +239,10 @@ export class PollingOrchestrator {
       // Fire "broadcast about to end" pushes for live days within the
       // 9-11 minute lookahead window. Cheap one-row-or-empty query each tick.
       await this.checkBroadcastEndingSoon();
+      // GC stale anomaly-detector state once per tick (~30 s). The detector
+      // only retains entries for 10 minutes anyway, so this is a small
+      // bookkeeping no-op most of the time.
+      ccvAnomalyDetector.gc();
     } catch (err) {
       logger.error('[Poll] Unhandled error in tick', {
         error: (err as Error).message,
@@ -789,6 +794,20 @@ export class PollingOrchestrator {
 
       for (const snap of channelSnapshots) {
         const viewers = snap.concurrentViewers ?? 0;
+
+        // Cliff anomaly check — drop a sample where CCV crashed >90% from
+        // the previous accepted value on the same (channel, stream) within
+        // the last 90 seconds. After two rejections in a row, the third is
+        // accepted (real drop). See ccv-anomaly-detector.ts for full
+        // explanation. Currently only applied to YouTube where the artefact
+        // is a known scraper failure mode; other adapters report stable
+        // platform-side CCVs.
+        if (
+          channel.platform === 'youtube' &&
+          ccvAnomalyDetector.shouldReject(channel.id, snap.streamId ?? null, viewers)
+        ) {
+          continue;
+        }
 
         for (const day of days) {
           // If channel has specific day assignments, only create snapshots for those days
