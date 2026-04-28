@@ -144,10 +144,45 @@ export function NotificationsSettingsPage() {
     setTestFlash(null);
     try {
       const r = await api.sendTestPush();
-      setTestFlash(`Test sent — ${r.sent} delivered, ${r.failed} failed, ${r.pruned} expired.`);
-      setTimeout(() => setTestFlash(null), 6000);
+      const msg = r.sent > 0
+        ? `Server pushed to ${r.sent} device${r.sent === 1 ? '' : 's'} (FCM accepted). If you don't see a banner within 10 seconds, check macOS Notifications → Chrome.`
+        : r.pruned > 0
+          ? `${r.pruned} subscription was expired and pruned. Click Disable then Enable to re-subscribe.`
+          : 'No active subscriptions found for your account.';
+      setTestFlash(msg);
+      setTimeout(() => setTestFlash(null), 12_000);
     } catch (err) {
       setError((err as Error).message);
+    }
+  };
+
+  const handleShowLocalTest = async () => {
+    setError(null);
+    setTestFlash(null);
+    if (!('Notification' in window)) {
+      setError('This browser does not support notifications.');
+      return;
+    }
+    if (Notification.permission !== 'granted') {
+      setError('Notification permission is not granted. Click Enable above first.');
+      return;
+    }
+    try {
+      // Bypass SW + push pipeline — show a notification directly from the page.
+      // If THIS doesn't appear, the issue is at the browser/OS permission layer.
+      const n = new Notification('Local test notification', {
+        body: 'Direct from this tab — no server, no push pipeline. If you see this, OS permissions are fine.',
+        icon: '/favicon-192.png',
+        tag: 'local-test',
+      });
+      n.onclick = () => {
+        window.focus();
+        n.close();
+      };
+      setTestFlash('Local test fired. If you see a banner, OS-level permissions are working — any failure with "Send server test" is in the push pipeline (SW or FCM).');
+      setTimeout(() => setTestFlash(null), 12_000);
+    } catch (err) {
+      setError(`Local notification failed: ${(err as Error).message}`);
     }
   };
 
@@ -326,38 +361,65 @@ export function NotificationsSettingsPage() {
             </div>
           </Card>
 
-          {/* Test push (admin only) */}
-          {isAdmin && (
-            <>
-              <div style={{ height: 14 }} />
-              <Card>
+          {/* Test notifications (editor+) */}
+          <div style={{ height: 14 }} />
+          <Card>
+            <div style={{ padding: 18 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Test notifications</div>
+              <div style={{ fontSize: 12, color: 'var(--fg-muted, #9ca3af)', marginBottom: 14, lineHeight: 1.6 }}>
+                Two ways to test, useful for diagnosing if a notification doesn't arrive:
+                <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+                  <li>
+                    <strong>Local test</strong> — fires <code>new Notification(…)</code> from this
+                    tab directly. Skips the server, the Service Worker, and Google's push gateway.
+                    If this doesn't appear, the problem is at the browser or OS permission layer.
+                  </li>
+                  <li style={{ marginTop: 4 }}>
+                    <strong>Server test</strong> — full pipeline: server signs a Web Push payload
+                    with VAPID, sends it to Google's FCM, FCM forwards to Chrome, Chrome wakes the
+                    Service Worker, the SW calls <code>showNotification(…)</code>. Tests every link.
+                  </li>
+                </ul>
+              </div>
+              {testFlash && (
                 <div
                   style={{
-                    padding: 18,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 16,
+                    fontSize: 12,
+                    color: 'var(--fg)',
+                    background: 'var(--bg-sunken, #07080A)',
+                    border: '1px solid var(--border, #20242A)',
+                    padding: 10,
+                    borderRadius: 4,
+                    marginBottom: 12,
+                    lineHeight: 1.5,
                   }}
                 >
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>Send a test notification</div>
-                    <div style={{ fontSize: 12, color: 'var(--fg-muted, #9ca3af)', marginTop: 2 }}>
-                      Fires a test push to every one of your devices that's enabled.
-                    </div>
-                    {testFlash && (
-                      <div style={{ fontSize: 12, color: 'var(--clutch-green, #4ade80)', marginTop: 6 }}>
-                        {testFlash}
-                      </div>
-                    )}
-                  </div>
-                  <Button variant="ghost" onClick={handleSendTest}>
-                    Send test
-                  </Button>
+                  {testFlash}
                 </div>
-              </Card>
-            </>
-          )}
+              )}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <Button variant="ghost" onClick={handleShowLocalTest}>
+                  Local test (skip server)
+                </Button>
+                <Button variant="primary" onClick={handleSendTest}>
+                  Server test (full pipeline)
+                </Button>
+              </div>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: 'var(--fg-dim, #6b7280)',
+                  marginTop: 14,
+                  lineHeight: 1.55,
+                }}
+              >
+                <strong>If no banner appears for either test on macOS:</strong> open
+                System Settings → Notifications → Google Chrome and make sure
+                "Allow notifications" is on, with banner style set to Banners or
+                Alerts. Focus modes can also silently filter notifications.
+              </div>
+            </div>
+          </Card>
         </>
       )}
 

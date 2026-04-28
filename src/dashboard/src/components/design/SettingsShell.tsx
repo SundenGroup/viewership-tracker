@@ -65,7 +65,8 @@ export function SettingsShell({ breadcrumb, title, children, backToSeriesId }: S
     <div
       style={{
         minHeight: '100vh',
-        background: 'var(--bg-app)',
+        background: 'var(--bg)',
+        color: 'var(--fg)',
         display: 'flex',
         flexDirection: 'column',
       }}
