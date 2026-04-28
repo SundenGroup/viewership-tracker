@@ -396,6 +396,16 @@ function AppContent() {
     );
   }
 
+  // Settings pages now render with the redesigned SettingsShell (top bar
+  // matching StartPage / EditorDesktop) instead of the legacy MainLayout +
+  // Sidebar chrome. Each page brings its own SettingsShell wrapper.
+  if (isYouTubeKeysPage) {
+    return <YouTubeKeysPage />;
+  }
+  if (isNotificationsPage) {
+    return <NotificationsSettingsPage />;
+  }
+
   // Editor Desktop / Mobile are self-contained surfaces with their own shell.
   // The legacy Header/Sidebar/MainLayout is only kept for the edit/setup/users routes.
   if (!isUsersPage && !isYouTubeKeysPage && !isNotificationsPage && !isNewPage && !isEditPage && selectedSeriesId) {

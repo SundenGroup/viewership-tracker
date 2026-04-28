@@ -42,7 +42,7 @@ import {
 import type { SeriesData } from '@/components/design';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
 import type { ScopeOption } from '@/components/design/ScopeScrubber';
-import { fmtCompact, fmtDateMD, fmtDateLong } from '@/design/format';
+import { fmtCompact, fmtN, fmtDateMD, fmtDateLong } from '@/design/format';
 import { formatChartTimeInTz } from '@/utils/formatters';
 import { useAuth } from '@/hooks/useAuth';
 import { useApi, usePollingApi } from '@/hooks/useApi';
@@ -943,7 +943,7 @@ function ExploreScopedView({
               Viewed Hours
             </SortHeader>
           </div>
-          <div style={{ maxHeight: 480, overflowY: 'auto' }}>
+          <div>
             {lbLoading && channels.length === 0 ? (
               <div className="placeholder" style={{ height: 100, margin: 12 }}>
                 Loading channels…
@@ -1005,22 +1005,73 @@ function ExploreScopedView({
                       {c.language ?? '—'}
                     </div>
                     <div className="tabular" style={{ textAlign: 'right' }}>
-                      {fmtCompact(c.peak)}
+                      {fmtN(c.peak)}
                     </div>
                     <div className="tabular" style={{ textAlign: 'right' }}>
-                      {fmtCompact(c.avg)}
+                      {fmtN(c.avg)}
                     </div>
                     <div className="tabular" style={{ textAlign: 'right' }}>
-                      {fmtCompact(c.hours)}
+                      {fmtN(c.hours)}
                     </div>
                   </div>
                 );
               })
             )}
           </div>
+          {/* Totals + average footer — sums across whatever the filter rail
+              produced (i.e. the rows actually visible in the table above). */}
+          {channels.length > 0 && (
+            <ChannelTableTotals rows={lb.sorted} />
+          )}
         </div>
       </Col>
     </ExploreShell>
+  );
+}
+
+// ── Totals / averages footer ──────────────────────────────────────────────
+function ChannelTableTotals({ rows }: { rows: { peak: number; avg: number; hours: number }[] }) {
+  const n = rows.length;
+  const sumPeak = rows.reduce((s, r) => s + (r.peak || 0), 0);
+  const sumAvg = rows.reduce((s, r) => s + (r.avg || 0), 0);
+  const sumHours = rows.reduce((s, r) => s + (r.hours || 0), 0);
+  const maxPeak = rows.reduce((m, r) => Math.max(m, r.peak || 0), 0);
+  const avgOfAvg = n > 0 ? Math.round(sumAvg / n) : 0;
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '40px 1fr 100px 110px 90px 100px 100px 110px',
+        padding: '10px 12px',
+        fontSize: 12,
+        borderTop: '2px solid var(--border)',
+        background: 'var(--bg-sunken)',
+        fontWeight: 600,
+      }}
+    >
+      <div />
+      <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+        {n.toLocaleString('en-US')} channel{n === 1 ? '' : 's'} — totals (per-channel avg below)
+      </div>
+      <div />
+      <div />
+      <div />
+      <div className="tabular" style={{ textAlign: 'right' }} title="Sum of per-channel peaks · max peak in parens">
+        {fmtN(sumPeak)}
+        <div style={{ fontSize: 10, color: 'var(--fg-dim)', fontWeight: 400 }}>
+          max {fmtN(maxPeak)}
+        </div>
+      </div>
+      <div className="tabular" style={{ textAlign: 'right' }} title="Sum of per-channel averages · cross-channel avg below">
+        {fmtN(sumAvg)}
+        <div style={{ fontSize: 10, color: 'var(--fg-dim)', fontWeight: 400 }}>
+          avg {fmtN(avgOfAvg)}
+        </div>
+      </div>
+      <div className="tabular" style={{ textAlign: 'right' }} title="Total viewed-hours across all visible channels">
+        {fmtN(Math.round(sumHours))}
+      </div>
+    </div>
   );
 }
 

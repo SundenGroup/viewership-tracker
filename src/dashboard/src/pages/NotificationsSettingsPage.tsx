@@ -15,6 +15,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { Card, Button, Badge } from '@/components/common';
+import { SettingsShell } from '@/components/design';
 import { useAuth } from '@/hooks/useAuth';
 import * as api from '@/services/api';
 import * as push from '@/services/push';
@@ -166,13 +167,15 @@ export function NotificationsSettingsPage() {
 
   if (!user || !isEditor) {
     return (
-      <div style={{ padding: 32 }}>
-        <Card>
-          <p style={{ padding: 20, fontSize: 14, color: 'var(--fg-muted, #9ca3af)' }}>
-            Notifications are available for editors and admins.
-          </p>
-        </Card>
-      </div>
+      <SettingsShell breadcrumb="Settings · Notifications" title="Push notifications">
+        <div style={{ padding: 32 }}>
+          <Card>
+            <p style={{ padding: 20, fontSize: 14, color: 'var(--fg-muted, #9ca3af)' }}>
+              Notifications are available for editors and admins.
+            </p>
+          </Card>
+        </div>
+      </SettingsShell>
     );
   }
 
@@ -181,11 +184,9 @@ export function NotificationsSettingsPage() {
   const enabled = pushStatus?.isSubscribed ?? false;
 
   return (
+    <SettingsShell breadcrumb="Settings · Notifications" title="Push notifications">
     <div style={{ padding: '24px 32px', maxWidth: 880, margin: '0 auto' }}>
       <div style={{ marginBottom: 18 }}>
-        <div className="eyebrow" style={{ fontSize: 10, color: 'var(--fg-dim, #6b7280)', marginBottom: 4 }}>
-          SETTINGS · NOTIFICATIONS
-        </div>
         <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0 }}>Push notifications</h1>
         <p style={{ fontSize: 13, color: 'var(--fg-muted, #9ca3af)', marginTop: 6, maxWidth: 720 }}>
           Get OS-level notifications for live operations: broadcasts going live or about to end,
@@ -411,6 +412,7 @@ export function NotificationsSettingsPage() {
         </>
       )}
     </div>
+    </SettingsShell>
   );
 }
 

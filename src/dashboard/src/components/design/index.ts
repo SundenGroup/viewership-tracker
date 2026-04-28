@@ -17,3 +17,4 @@ export * from './CollapsibleSection';
 export * from './InteractiveMainChart';
 export * from './ThemeToggle';
 export * from './ChannelNameWithLink';
+export * from './SettingsShell';

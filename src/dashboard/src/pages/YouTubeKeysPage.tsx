@@ -13,6 +13,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Card, Button, Modal, FormField, Select, TextInput } from '@/components/common';
+import { SettingsShell } from '@/components/design';
 import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/hooks/useAuth';
 import * as api from '@/services/api';
@@ -177,17 +178,20 @@ export function YouTubeKeysPage() {
 
   if (user?.role !== 'admin') {
     return (
-      <div style={{ padding: 32 }}>
-        <Card>
-          <p style={{ fontSize: 14, color: 'var(--fg-muted, #9ca3af)' }}>
-            YouTube API keys are admin-only.
-          </p>
-        </Card>
-      </div>
+      <SettingsShell breadcrumb="Settings · YouTube API keys" title="YouTube discovery key pool">
+        <div style={{ padding: 32 }}>
+          <Card>
+            <p style={{ fontSize: 14, color: 'var(--fg-muted, #9ca3af)' }}>
+              YouTube API keys are admin-only.
+            </p>
+          </Card>
+        </div>
+      </SettingsShell>
     );
   }
 
   return (
+    <SettingsShell breadcrumb="Settings · YouTube API keys" title="YouTube discovery key pool">
     <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 18 }}>
         <div>
@@ -473,6 +477,7 @@ export function YouTubeKeysPage() {
         </Modal>
       )}
     </div>
+    </SettingsShell>
   );
 }
 
