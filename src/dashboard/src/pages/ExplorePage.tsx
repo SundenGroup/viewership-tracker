@@ -1018,10 +1018,18 @@ function ExploreScopedView({
               })
             )}
           </div>
-          {/* Totals + average footer — sums across whatever the filter rail
-              produced (i.e. the rows actually visible in the table above). */}
+          {/* Totals + averages footer.
+              Sum-of-peaks and sum-of-averages are statistically meaningless
+              (peaks happen at different moments). The correct combined
+              metrics are MAX and AVG of the per-minute total CCV — which
+              `timeline.total` already gives us (it's the same series the
+              chart draws). Total viewed-hours IS additive and is summed
+              from the per-channel viewed-hours. */}
           {channels.length > 0 && (
-            <ChannelTableTotals rows={lb.sorted} />
+            <ChannelTableTotals
+              rows={lb.sorted}
+              totalSeries={timeline.total}
+            />
           )}
         </div>
       </Col>
@@ -1030,45 +1038,80 @@ function ExploreScopedView({
 }
 
 // ── Totals / averages footer ──────────────────────────────────────────────
-function ChannelTableTotals({ rows }: { rows: { peak: number; avg: number; hours: number }[] }) {
+// Stats that make sense across heterogeneous channels:
+//   • Combined peak  = MAX over time of (sum of all-channel CCV at that minute)
+//   • Combined avg   = AVG over live minutes of (sum of all-channel CCV)
+//   • Top channel    = single best peak in the visible rows (sortable info)
+//   • Total hours    = SUM of per-channel viewed-hours (genuinely additive)
+function ChannelTableTotals({
+  rows,
+  totalSeries,
+}: {
+  rows: { peak: number; avg: number; hours: number; name: string }[];
+  totalSeries: number[];
+}) {
   const n = rows.length;
-  const sumPeak = rows.reduce((s, r) => s + (r.peak || 0), 0);
-  const sumAvg = rows.reduce((s, r) => s + (r.avg || 0), 0);
   const sumHours = rows.reduce((s, r) => s + (r.hours || 0), 0);
-  const maxPeak = rows.reduce((m, r) => Math.max(m, r.peak || 0), 0);
-  const avgOfAvg = n > 0 ? Math.round(sumAvg / n) : 0;
+
+  // Top single-channel peak (just the biggest individual moment from the visible rows)
+  const top = rows.reduce(
+    (best, r) => ((r.peak || 0) > best.peak ? { peak: r.peak || 0, name: r.name } : best),
+    { peak: 0, name: '' },
+  );
+
+  // Combined metrics from the chart's per-minute total series.
+  // Live minutes = minutes with non-zero combined CCV (excludes pre/post-broadcast gaps).
+  const ccvs = totalSeries;
+  const liveCcvs = ccvs.filter((v) => v > 0);
+  const combinedPeak = ccvs.length > 0 ? Math.max(...ccvs) : 0;
+  const combinedAvg =
+    liveCcvs.length > 0 ? Math.round(liveCcvs.reduce((s, v) => s + v, 0) / liveCcvs.length) : 0;
+
   return (
     <div
       style={{
         display: 'grid',
         gridTemplateColumns: '40px 1fr 100px 110px 90px 100px 100px 110px',
-        padding: '10px 12px',
+        padding: '12px 12px',
         fontSize: 12,
         borderTop: '2px solid var(--border)',
         background: 'var(--bg-sunken)',
         fontWeight: 600,
+        rowGap: 4,
       }}
     >
       <div />
-      <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
-        {n.toLocaleString('en-US')} channel{n === 1 ? '' : 's'} — totals (per-channel avg below)
+      <div style={{ fontSize: 11, color: 'var(--fg-muted)', fontWeight: 500 }}>
+        {n.toLocaleString('en-US')} channel{n === 1 ? '' : 's'} · combined peak / avg / hours
       </div>
       <div />
       <div />
       <div />
-      <div className="tabular" style={{ textAlign: 'right' }} title="Sum of per-channel peaks · max peak in parens">
-        {fmtN(sumPeak)}
+      <div
+        className="tabular"
+        style={{ textAlign: 'right' }}
+        title="Combined peak — max of (sum of every channel's CCV at the same minute). Top single-channel peak shown below."
+      >
+        {fmtN(combinedPeak)}
         <div style={{ fontSize: 10, color: 'var(--fg-dim)', fontWeight: 400 }}>
-          max {fmtN(maxPeak)}
+          top: {top.name ? `${fmtN(top.peak)} (${top.name})` : '—'}
         </div>
       </div>
-      <div className="tabular" style={{ textAlign: 'right' }} title="Sum of per-channel averages · cross-channel avg below">
-        {fmtN(sumAvg)}
+      <div
+        className="tabular"
+        style={{ textAlign: 'right' }}
+        title="Combined average — average across live minutes of (sum of every channel's CCV). Excludes minutes with zero combined CCV."
+      >
+        {fmtN(combinedAvg)}
         <div style={{ fontSize: 10, color: 'var(--fg-dim)', fontWeight: 400 }}>
-          avg {fmtN(avgOfAvg)}
+          live mins: {fmtN(liveCcvs.length)}
         </div>
       </div>
-      <div className="tabular" style={{ textAlign: 'right' }} title="Total viewed-hours across all visible channels">
+      <div
+        className="tabular"
+        style={{ textAlign: 'right' }}
+        title="Sum of viewed-hours across all visible channels — genuinely additive."
+      >
         {fmtN(Math.round(sumHours))}
       </div>
     </div>
@@ -1923,7 +1966,16 @@ function AllChannelsAtTimestampPanel({
   onClose: () => void;
 }) {
   const sortable = useSortable(channels, 'ccv', 'desc');
+  const [expanded, setExpanded] = useState(false);
   const d = new Date(timestamp);
+
+  // Same column shape as the main channel table for visual continuity:
+  // Channel · Platform · Tier · Lang · CCV.
+  const COLS = '1fr 100px 110px 80px 110px';
+
+  // Combined CCV at this exact minute (sum of every channel's value).
+  const combined = channels.reduce((s, c) => s + (c.ccv || 0), 0);
+
   return (
     <div className="card" style={{ padding: 14 }}>
       <Row justify="space-between" align="center" style={{ marginBottom: 10 }}>
@@ -1935,19 +1987,32 @@ function AllChannelsAtTimestampPanel({
             {formatChartTimeInTz(d, timezone, true) || d.toUTCString()}
           </span>
         </Col>
-        <button
-          type="button"
-          className="btn btn-xs"
-          onClick={onClose}
-          style={{ background: 'transparent', border: '1px solid var(--border)' }}
-        >
-          Close
-        </button>
+        <Row gap={8} align="center">
+          <span
+            className="tabular"
+            style={{
+              fontSize: 11,
+              color: 'var(--fg-muted)',
+              fontFamily: 'var(--font-mono)',
+            }}
+            title="Sum of CCV across every channel reporting in this minute"
+          >
+            {channels.length} channels · combined {fmtN(combined)}
+          </span>
+          <button
+            type="button"
+            className="btn btn-xs"
+            onClick={onClose}
+            style={{ background: 'transparent', border: '1px solid var(--border)' }}
+          >
+            Close
+          </button>
+        </Row>
       </Row>
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: '1fr 90px 70px 90px',
+          gridTemplateColumns: COLS,
           padding: '6px 0',
           fontSize: 10,
           textTransform: 'uppercase',
@@ -1961,6 +2026,9 @@ function AllChannelsAtTimestampPanel({
         <SortHeader sort={sortable.sort as string} dir={sortable.dir} onClick={sortable.toggle as (k: string) => void} id="platform">
           Platform
         </SortHeader>
+        <SortHeader sort={sortable.sort as string} dir={sortable.dir} onClick={sortable.toggle as (k: string) => void} id="tier">
+          Category
+        </SortHeader>
         <SortHeader sort={sortable.sort as string} dir={sortable.dir} onClick={sortable.toggle as (k: string) => void} id="language">
           Lang
         </SortHeader>
@@ -1968,7 +2036,7 @@ function AllChannelsAtTimestampPanel({
           CCV
         </SortHeader>
       </div>
-      <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+      <div style={expanded ? undefined : { maxHeight: 320, overflowY: 'auto' }}>
         {sortable.sorted.length === 0 ? (
           <div className="placeholder" style={{ height: 60, marginTop: 8 }}>
             No channel had data at that minute.
@@ -1979,7 +2047,7 @@ function AllChannelsAtTimestampPanel({
               key={c.channelId}
               style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 90px 70px 90px',
+                gridTemplateColumns: COLS,
                 padding: '6px 0',
                 fontSize: 12,
                 borderBottom: '1px solid var(--border-faint)',
@@ -1993,16 +2061,38 @@ function AllChannelsAtTimestampPanel({
                 </span>
               </Row>
               <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{c.platform}</span>
+              <span><TierBadge tier={c.tier} /></span>
               <span style={{ fontSize: 11, color: 'var(--fg-muted)', textTransform: 'uppercase' }}>
                 {c.language ?? '—'}
               </span>
               <span className="tabular" style={{ textAlign: 'right' }}>
-                {fmtCompact(c.ccv)}
+                {fmtN(c.ccv)}
               </span>
             </div>
           ))
         )}
       </div>
+      {sortable.sorted.length > 0 && (
+        <Row justify="space-between" align="center" style={{ marginTop: 8 }}>
+          <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+            {expanded
+              ? `Showing all ${sortable.sorted.length} channels`
+              : sortable.sorted.length > 8
+                ? `Showing top 8 of ${sortable.sorted.length} — scroll for more or expand to fit all`
+                : `${sortable.sorted.length} channel${sortable.sorted.length === 1 ? '' : 's'}`}
+          </span>
+          {sortable.sorted.length > 8 && (
+            <button
+              type="button"
+              className="btn btn-xs"
+              onClick={() => setExpanded((v) => !v)}
+              style={{ background: 'transparent', border: '1px solid var(--border)' }}
+            >
+              {expanded ? 'Collapse' : 'Expand'}
+            </button>
+          )}
+        </Row>
+      )}
     </div>
   );
 }
@@ -2095,6 +2185,7 @@ function RangeStatsPanel({
   onClose: () => void;
 }) {
   const sortable = useSortable(channels, 'peakCCV', 'desc');
+  const [expanded, setExpanded] = useState(false);
   const fromDate = new Date(from);
   const toDate = new Date(to);
   const durMs = toDate.getTime() - fromDate.getTime();
@@ -2103,6 +2194,19 @@ function RangeStatsPanel({
     durMin >= 60
       ? `${Math.floor(durMin / 60)}h ${durMin % 60}m`
       : `${durMin} min`;
+
+  // Same column shape as the main channel table.
+  const COLS = '1fr 100px 110px 80px 100px 100px 100px';
+
+  // Total viewed-hours IS additive across channels.
+  const sumHours = sortable.sorted.reduce((s, c) => s + (c.viewedHours ?? 0), 0);
+  const top = sortable.sorted.reduce(
+    (best, c) => ((c.peakCCV ?? 0) > best.peak
+      ? { peak: c.peakCCV ?? 0, name: c.displayName }
+      : best),
+    { peak: 0, name: '' },
+  );
+
   return (
     <div className="card" style={{ padding: 14 }}>
       <Row justify="space-between" align="center" style={{ marginBottom: 10 }}>
@@ -2128,7 +2232,7 @@ function RangeStatsPanel({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: '1fr 90px 70px 80px 80px 90px',
+          gridTemplateColumns: COLS,
           padding: '6px 0',
           fontSize: 10,
           textTransform: 'uppercase',
@@ -2141,6 +2245,9 @@ function RangeStatsPanel({
         </SortHeader>
         <SortHeader sort={sortable.sort as string} dir={sortable.dir} onClick={sortable.toggle as (k: string) => void} id="platform">
           Platform
+        </SortHeader>
+        <SortHeader sort={sortable.sort as string} dir={sortable.dir} onClick={sortable.toggle as (k: string) => void} id="tier">
+          Category
         </SortHeader>
         <SortHeader sort={sortable.sort as string} dir={sortable.dir} onClick={sortable.toggle as (k: string) => void} id="language">
           Lang
@@ -2155,7 +2262,7 @@ function RangeStatsPanel({
           Viewed Hours
         </SortHeader>
       </div>
-      <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+      <div style={expanded ? undefined : { maxHeight: 360, overflowY: 'auto' }}>
         {sortable.sorted.length === 0 ? (
           <div className="placeholder" style={{ height: 60, marginTop: 8 }}>
             No channel had data in this window.
@@ -2166,7 +2273,7 @@ function RangeStatsPanel({
               key={c.channelId}
               style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 90px 70px 80px 80px 90px',
+                gridTemplateColumns: COLS,
                 padding: '6px 0',
                 fontSize: 12,
                 borderBottom: '1px solid var(--border-faint)',
@@ -2180,22 +2287,66 @@ function RangeStatsPanel({
                 </span>
               </Row>
               <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{c.platform}</span>
+              <span><TierBadge tier={c.tier} /></span>
               <span style={{ fontSize: 11, color: 'var(--fg-muted)', textTransform: 'uppercase' }}>
                 {c.language ?? '—'}
               </span>
               <span className="tabular" style={{ textAlign: 'right' }}>
-                {fmtCompact(c.peakCCV ?? 0)}
+                {fmtN(c.peakCCV ?? 0)}
               </span>
               <span className="tabular" style={{ textAlign: 'right' }}>
-                {fmtCompact(c.avgCCV ?? 0)}
+                {fmtN(c.avgCCV ?? 0)}
               </span>
               <span className="tabular" style={{ textAlign: 'right' }}>
-                {fmtCompact(c.viewedHours ?? 0)}
+                {fmtN(Math.round(c.viewedHours ?? 0))}
               </span>
             </div>
           ))
         )}
       </div>
+      {sortable.sorted.length > 0 && (
+        <>
+          {/* Totals row — only viewed-hours sums meaningfully. The table-level
+              peak / avg are intentionally NOT summed here (peaks happen at
+              different moments; sum-of-peaks is meaningless). The page-level
+              footer above the chart shows the time-aware combined peak/avg. */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: COLS,
+              padding: '10px 0',
+              fontSize: 12,
+              borderTop: '2px solid var(--border)',
+              fontWeight: 600,
+            }}
+          >
+            <div style={{ fontSize: 11, color: 'var(--fg-muted)', fontWeight: 500 }}>
+              {sortable.sorted.length} channel{sortable.sorted.length === 1 ? '' : 's'}
+              {top.name ? ` · top: ${fmtN(top.peak)} (${top.name})` : ''}
+            </div>
+            <div />
+            <div />
+            <div />
+            <div />
+            <div />
+            <div className="tabular" style={{ textAlign: 'right' }} title="Sum of viewed-hours across all channels in this window">
+              {fmtN(Math.round(sumHours))}
+            </div>
+          </div>
+          <Row justify="flex-end" align="center" style={{ marginTop: 4 }}>
+            {sortable.sorted.length > 10 && (
+              <button
+                type="button"
+                className="btn btn-xs"
+                onClick={() => setExpanded((v) => !v)}
+                style={{ background: 'transparent', border: '1px solid var(--border)' }}
+              >
+                {expanded ? 'Collapse' : `Expand (showing top 10 of ${sortable.sorted.length})`}
+              </button>
+            )}
+          </Row>
+        </>
+      )}
     </div>
   );
 }
