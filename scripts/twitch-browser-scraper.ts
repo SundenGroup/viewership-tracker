@@ -62,7 +62,7 @@ async function refreshChannelList(): Promise<void> {
     });
     if (!res.ok) throw new Error(`${res.status}`);
     const data = (await res.json()) as { channels: string[] };
-    CHANNELS = data.channels;
+    CHANNELS = data.channels.filter(c => c.toLowerCase() !== 'pubg_battlegrounds');
     lastChannelFetch = Date.now();
     log(`Channel list refreshed: ${CHANNELS.length} channels (officials + top CCV, max 20)`);
   } catch (err) {

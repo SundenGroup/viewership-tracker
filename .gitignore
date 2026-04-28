@@ -7,3 +7,5 @@ dist/
 src/dashboard/node_modules/
 src/dashboard/dist/
 .youtube-quota.json
+.youtube-pool-quota.json
+scripts/twitch-browser-profile/

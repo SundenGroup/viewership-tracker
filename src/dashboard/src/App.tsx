@@ -28,7 +28,11 @@ export default function App() {
 
   return (
     <AuthContext.Provider value={auth}>
-      <BrowserRouter>
+      {/* basename mirrors Vite's --base flag so the legacy build deployed at
+          /legacy/ navigates correctly while a dev/local build at / keeps
+          working. import.meta.env.BASE_URL is "/legacy/" or "/" depending on
+          the build flag. */}
+      <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
         <Routes>
           {/* Public routes — no auth required */}
           <Route path="/public/:shortName/*" element={<PublicDashboardPage />} />

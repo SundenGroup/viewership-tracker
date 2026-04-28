@@ -187,19 +187,19 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
         {statsLoading && !stats ? (
           <LoadingOverlay />
         ) : (
-          <div className="max-h-[720px] overflow-y-auto -mx-5 px-5">
-            <table className="w-full text-sm">
+          <div className="max-h-[720px] overflow-y-auto overflow-x-auto -mx-5 px-5">
+            <table className="w-full text-sm min-w-[600px] sm:min-w-0">
               <thead className="sticky top-0 bg-navy-850 z-10">
                 <tr className="border-b border-navy-700/50 text-xs text-gray-500">
                   <th className="pb-2 pr-2 text-left font-medium w-8">#</th>
                   {([
                     ['platform', 'Platform', 'text-left'],
                     ['displayName', 'Channel', 'text-left'],
-                    ['language', 'Lang', 'text-left'],
-                    ['tier', 'Tier', 'text-left'],
+                    ['language', 'Lang', 'text-left hidden sm:table-cell'],
+                    ['tier', 'Tier', 'text-left hidden md:table-cell'],
                     ['avgCCV', 'Avg CCV', 'text-right'],
                     ['peakCCV', 'Peak CCV', 'text-right'],
-                    ['viewedHours', 'Viewed Hrs', 'text-right'],
+                    ['viewedHours', 'Viewed Hrs', 'text-right hidden sm:table-cell'],
                     ['liveCCV', 'Live CCV', 'text-right'],
                   ] as [LeaderboardSortField, string, string][]).map(([field, label, align]) => (
                     <th
@@ -267,14 +267,14 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                         })()}
                       </div>
                     </td>
-                    <td className="py-2 pl-2">
+                    <td className="py-2 pl-2 hidden sm:table-cell">
                       {ch.language && (
                         <span className="rounded bg-navy-700 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">
                           {languageBadge(ch.language)}
                         </span>
                       )}
                     </td>
-                    <td className="py-2 pl-2 whitespace-nowrap">
+                    <td className="py-2 pl-2 whitespace-nowrap hidden md:table-cell">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${TIER_COLORS[ch.tier] ?? TIER_COLORS.community}`}>
                         {tierLabel(ch.tier)}
                       </span>
@@ -285,7 +285,7 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                     <td className="py-2 pl-2 text-right font-mono text-gray-300 whitespace-nowrap" title={formatNumber(ch.peakCCV)}>
                       {formatCompact(ch.peakCCV)}
                     </td>
-                    <td className="py-2 pl-2 text-right font-mono text-gray-400 whitespace-nowrap" title={formatNumber(ch.viewedHours)}>
+                    <td className="py-2 pl-2 text-right font-mono text-gray-400 whitespace-nowrap hidden sm:table-cell" title={formatNumber(ch.viewedHours)}>
                       {formatCompact(ch.viewedHours)}
                     </td>
                     <td className="py-2 pl-2 text-right whitespace-nowrap">
@@ -324,7 +324,7 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
               <th className="pb-2 pr-2 text-left font-medium w-8">#</th>
               <th className="pb-2 text-left font-medium">Platform</th>
               <th className="pb-2 text-left font-medium">Channel</th>
-              <th className="pb-2 text-left font-medium">Lang</th>
+              <th className="pb-2 text-left font-medium hidden sm:table-cell">Lang</th>
               <th className="pb-2 text-right font-medium">Live CCV</th>
             </tr>
           </thead>
@@ -383,7 +383,7 @@ export function ChannelLeaderboardPanel({ seriesId, liveCCV, loading, scope, pub
                       })()}
                     </div>
                   </td>
-                  <td className="py-2">
+                  <td className="py-2 hidden sm:table-cell">
                     {ch.language && (
                       <span className="rounded bg-navy-700 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">
                         {languageBadge(ch.language)}

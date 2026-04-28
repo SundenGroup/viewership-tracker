@@ -7,7 +7,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import path from 'path';
-import { stat } from 'fs/promises';
+import { stat, readFile } from 'fs/promises';
 import { requirePublicSeries } from '../middleware/auth';
 import * as ViewershipSnapshotModel from '../../models/viewership-snapshot';
 import * as TournamentSeriesModel from '../../models/tournament-series';
@@ -15,6 +15,67 @@ import db from '../../utils/db';
 
 const router = Router();
 const REPORTS_BASE_DIR = path.resolve(process.cwd(), 'reports');
+
+/**
+ * Map a legacy static-report filename back to the equivalent live URL in the
+ * redesigned dashboard.
+ *
+ * Filename grammar (see src/agent/report-agent.ts:1319-1338):
+ *   {scope}_{date|stage}{_<viewGroup>}{_<excludes>}.html
+ *     scope = day | stage | series
+ *     date  = YYYY-MM-DD
+ *     stage = sanitised stage name
+ *     viewGroup, excludes = optional filter suffixes (_west, _xc-N, _xt-..., _xl-...)
+ *
+ * Variants always link to the unfiltered redesign URL — the redesign URL
+ * scheme doesn't carry these filters, so we drop them and let the user
+ * re-apply filters in the UI if needed.
+ */
+function legacyReportToNewDesignUrl(shortName: string, filename: string): string {
+  // Strip extension and known variant suffixes (_xt-…, _xl-…, _xc-…, _<viewGroup>)
+  const stem = filename.replace(/\.html$/i, '');
+
+  // Day report: day_2026-04-19[…]
+  const dayMatch = stem.match(/^day_(\d{4}-\d{2}-\d{2})/);
+  if (dayMatch) {
+    return `/public/${shortName}/report/detailed/${dayMatch[1]}`;
+  }
+
+  // Series report: series_2026-04-19[…] → series-level redesign view
+  if (/^series_/.test(stem)) {
+    return `/public/${shortName}/report/detailed`;
+  }
+
+  // Stage report: stage_<sanitised>[…] → fall back to series-level since
+  // mapping the sanitised stage name back to its `order` would need a DB lookup.
+  if (/^stage_/.test(stem)) {
+    return `/public/${shortName}/report/detailed`;
+  }
+
+  // Unknown shape — series fallback.
+  return `/public/${shortName}/report/detailed`;
+}
+
+/**
+ * Build the "View in redesigned dashboard" banner HTML that gets spliced into
+ * each legacy static report. Theme-matched (dark, low-contrast accent) so it
+ * doesn't fight the report's own styling.
+ */
+function buildRedesignBanner(newDesignUrl: string): string {
+  return (
+    `<a href="${newDesignUrl}" class="ct-redesign-banner" style="` +
+    `display:block;` +
+    `background:#1a1d2b;` +
+    `color:#d4d6e0;` +
+    `border-bottom:1px solid #2a2d3b;` +
+    `padding:10px 24px;` +
+    `font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;` +
+    `font-size:13px;` +
+    `text-decoration:none;` +
+    `text-align:center;` +
+    `">View this report in the redesigned dashboard →</a>`
+  );
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -204,6 +265,7 @@ router.get('/:shortName/metrics', async (req: Request, res: Response, next: Next
         platform: e.platform,
         tier: e.tier ?? 'community',
         language: e.language ?? null,
+        region: e.region ?? null,
         peakCCV: parseInt(e.peak_ccv, 10),
         avgCCV: parseFloat(e.avg_ccv),
         totalViewedMinutes: parseInt(e.total_viewed_minutes, 10),
@@ -381,6 +443,7 @@ router.get('/:shortName/leaderboard', async (req: Request, res: Response, next: 
         platform: e.platform,
         tier: e.tier ?? 'community',
         language: e.language ?? null,
+        region: e.region ?? null,
         peakCCV: parseInt(e.peak_ccv, 10),
         avgCCV: Math.round(parseFloat(e.avg_ccv)),
         viewedHours: Math.round(parseInt(e.total_viewed_minutes, 10) / 60),
@@ -429,9 +492,33 @@ router.get(
         return;
       }
 
-      res.setHeader('Content-Type', 'text/html');
+      // Read the static HTML and inject the "View in redesigned dashboard"
+      // banner immediately after the first <div class="container"> opening
+      // tag. This preserves the underlying file on disk (still a true
+      // historical snapshot) while giving viewers a CTA to the live view.
+      let html: string;
+      try {
+        html = await readFile(filePath, 'utf8');
+      } catch {
+        res.status(500).json({ error: 'Failed to read report' });
+        return;
+      }
+
+      const newDesignUrl = legacyReportToNewDesignUrl(rawFolder, filename);
+      const banner = buildRedesignBanner(newDesignUrl);
+      // The report-builder template emits `<div class="container">` exactly once
+      // as the outer wrapper. If for some reason the marker is missing (very old
+      // report, unusual template), we fall through and serve the original file.
+      const marker = '<div class="container">';
+      const idx = html.indexOf(marker);
+      const out =
+        idx >= 0
+          ? html.slice(0, idx + marker.length) + banner + html.slice(idx + marker.length)
+          : html;
+
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-      res.sendFile(filePath);
+      res.send(out);
     } catch (err) {
       next(err);
     }

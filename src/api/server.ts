@@ -15,6 +15,7 @@ import reportPayloadRouter from './routes/report-payload';
 import pollingRouter from './routes/polling';
 import reportsRouter from './routes/reports';
 import youtubeKeysRouter from './routes/youtube-keys';
+import pushRouter, { pushPublicRouter } from './routes/push';
 import authRouter from './routes/auth';
 import publicRouter from './routes/public';
 import relayRouter from './routes/relay';
@@ -79,6 +80,9 @@ export function createApp() {
   // Public API routes — no authentication required
   app.use('/api/public', publicRouter);
 
+  // VAPID public key — public so clients can fetch it before subscribing
+  app.use('/api/push', pushPublicRouter);
+
   // Relay routes — external scrapers push data here (own token auth)
   app.use('/api/relay', relayRouter);
 
@@ -99,6 +103,7 @@ export function createApp() {
   // Editor+ routes
   app.use('/api/export', requireRole('admin', 'editor'), exportRouter);
   app.use('/api/reports', requireRole('admin', 'editor'), reportsRouter);
+  app.use('/api/push', requireRole('admin', 'editor'), pushRouter);
 
   // Admin-only routes
   app.use('/api/polling', requireRole('admin'), pollingRouter);

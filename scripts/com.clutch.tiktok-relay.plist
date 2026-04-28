@@ -6,7 +6,7 @@
     <string>com.clutch.tiktok-relay</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/npx</string>
+        <string>/opt/homebrew/bin/npx</string>
         <string>tsx</string>
         <string>/Users/silverfox/clutch-viewership-tracker/scripts/tiktok-relay.ts</string>
         <string>--loop</string>
@@ -24,7 +24,9 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin</string>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/silverfox</string>
     </dict>
 </dict>
 </plist>

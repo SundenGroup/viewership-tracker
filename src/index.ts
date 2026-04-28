@@ -23,6 +23,7 @@ import { PollingOrchestrator, type PollCycleResult } from './services/polling-or
 import { DiscoveryService } from './services/discovery-service';
 import { ReportAgent } from './agent/report-agent';
 import { ViewershipWebSocketServer } from './api/websocket';
+import { getPushNotifier } from './services/push-notifier';
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
 
@@ -98,6 +99,19 @@ async function bootstrap(): Promise<void> {
   logger.info('[CVT] Initializing report agent...');
   const reportAgent = new ReportAgent();
 
+  // ── 6b. Initialize PushNotifier (Web Push) ─────────────────────────────
+  // Loads (or generates on first run) the server's VAPID keypair and
+  // configures web-push. Safe to fail — push is non-critical. If init
+  // fails, notify() calls become no-ops and the rest of the system runs.
+  const pushNotifier = getPushNotifier();
+  try {
+    await pushNotifier.init();
+  } catch (err) {
+    logger.error('[CVT] PushNotifier init failed — push notifications disabled', {
+      error: (err as Error).message,
+    });
+  }
+
   // ── 7. Wire subsystems together ────────────────────────────────────────
 
   // Discovery lifecycle managed by the orchestrator (start/stop discovery
@@ -117,10 +131,43 @@ async function bootstrap(): Promise<void> {
   });
   orchestrator.setStatusBroadcast((seriesId, broadcastDayId, previousStatus, newStatus) => {
     wsServer.broadcastStatusUpdate(seriesId, broadcastDayId, previousStatus, newStatus);
+
+    // Push fan-out: broadcast went live → notify operators
+    if (newStatus === 'live' && previousStatus !== 'live') {
+      void db('broadcast_days')
+        .where({ id: broadcastDayId })
+        .first()
+        .then((bd: { label?: string } | undefined) => {
+          if (!bd) return;
+          return pushNotifier.notify('broadcast_started', {
+            title: 'Broadcast started',
+            body: `${bd.label || 'A broadcast'} is now live.`,
+            url: `/${seriesId}`,
+            tag: `broadcast-started-${broadcastDayId}`,
+          });
+        })
+        .catch((err: Error) => logger.warn('[Push] broadcast_started fan-out failed', { error: err.message }));
+    }
   });
   discoveryService.setDiscoveryBroadcast((result) => {
     wsServer.broadcastDiscoveryUpdate(result);
+
+    // Push fan-out: new auto-discovery candidate(s) → notify operators
+    if (result.added && result.added > 0) {
+      void pushNotifier
+        .notify('discovery_candidate', {
+          title: 'New discovery candidate',
+          body: `${result.added} new channel${result.added === 1 ? '' : 's'} pending approval.`,
+          url: '/',
+          tag: 'discovery_candidate',
+        })
+        .catch((err: Error) => logger.warn('[Push] discovery_candidate fan-out failed', { error: err.message }));
+    }
   });
+
+  // Push fan-out: polling stalled (5+ consecutive zero-result cycles)
+  // and broadcast about to end (within 9-11 minutes of broadcast_end).
+  orchestrator.setPushNotifier(pushNotifier);
 
   // Wire orchestrator, discovery, and report agent into the API routes
   // (module-level singleton injection pattern)

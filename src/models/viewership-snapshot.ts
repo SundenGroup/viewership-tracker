@@ -86,6 +86,7 @@ export interface LeaderboardEntry {
   platform: string;
   tier: string;
   language: string | null;
+  region: string | null;
   peak_ccv: string;
   avg_ccv: string;
   total_viewed_minutes: string;
@@ -434,6 +435,7 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
        c.channel_identifier,
        c.tier,
        c.language,
+       c.region,
        pc.platform,
        MAX(pc.channel_ccv)::text AS peak_ccv,
        ROUND(AVG(pc.channel_ccv))::text AS avg_ccv,
@@ -457,7 +459,7 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
      -- a channel that streamed for hours then got disabled afterward
      -- still earned its viewership. Live-CCV (getLatestSnapshot) keeps the
      -- is_active filter so the dashboard's "right now" view stays clean.
-     GROUP BY pc.channel_id, c.display_name, c.channel_identifier, c.tier, c.language, pc.platform
+     GROUP BY pc.channel_id, c.display_name, c.channel_identifier, c.tier, c.language, c.region, pc.platform
      ORDER BY SUM(pc.channel_ccv) DESC
      LIMIT :limit`,
     { id: scope.id, limit, ...f.bindings },

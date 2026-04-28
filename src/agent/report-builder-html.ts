@@ -434,7 +434,8 @@ export function buildHTMLReport(data: HTMLReportData): string {
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html { overflow-x: hidden; }
+  html { overflow-x: hidden; max-width: 100vw; }
+  img { max-width: 100%; height: auto; }
 
   body {
     font-family: 'DM Sans', sans-serif;
@@ -741,8 +742,81 @@ export function buildHTMLReport(data: HTMLReportData): string {
     font-size: 11px;
   }
 
+  /* ── Tablet ─────────────────────────────────────────────── */
   @media (max-width: 900px) {
     .kpi-row, .charts-row, .tables-grid { grid-template-columns: 1fr; }
+    body { padding: 24px 16px 48px; }
+    header { margin-bottom: 36px; }
+    header h1 { font-size: 22px; }
+  }
+
+  /* ── Mobile (≤ 600px) ──────────────────────────────────── */
+  @media (max-width: 600px) {
+    body { padding: 16px 12px 40px; }
+
+    header { margin-bottom: 28px; }
+    header h1 { font-size: 18px; letter-spacing: -0.3px; }
+    header p { font-size: 11px; }
+
+    .kpi { padding: 16px 14px; border-radius: 10px; }
+    .kpi-label { font-size: 9px; letter-spacing: 1.2px; margin-bottom: 4px; }
+    .kpi-value { font-size: 24px; }
+    .kpi-trend { font-size: 11px; }
+    .kpi-row { gap: 10px; margin-bottom: 20px; }
+
+    .section-title { font-size: 13px; letter-spacing: 1.2px; }
+
+    .narrative { padding: 16px; font-size: 13px; border-radius: 10px; margin-bottom: 24px; }
+
+    .chart-card { padding: 16px; border-radius: 10px; }
+    .chart-card h3 { font-size: 13px; flex-direction: column; align-items: flex-start; gap: 10px; }
+    .charts-row { gap: 12px; margin-bottom: 24px; }
+
+    /* Chart mode toggle: wrap and size down */
+    .chart-mode-btn { padding: 4px 10px; font-size: 11px; }
+
+    .table-card { padding: 16px; border-radius: 10px; margin-bottom: 16px; }
+    .table-card h3 { font-size: 13px; }
+    .tables-grid { gap: 12px; margin-bottom: 24px; }
+
+    table { font-size: 12px; }
+    th { font-size: 9px; padding: 8px 10px; letter-spacing: 1px; }
+    td { padding: 10px; }
+    td:not(:first-child) { font-size: 11px; }
+
+    .pie-canvas-wrap { max-width: 140px; }
+    .pie-legend-label { font-size: 12px; }
+    .pie-legend-value { font-size: 11px; }
+
+    /* Streamer table: horizontal scroll with hint */
+    .table-card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    /* Hide Category and Language columns on mobile */
+    .streamer-col-category,
+    .streamer-col-language { display: none; }
+
+    footer { margin-top: 32px; font-size: 10px; }
+  }
+
+  /* ── Small phone (≤ 400px) ─────────────────────────────── */
+  @media (max-width: 400px) {
+    body { padding: 12px 8px 32px; }
+
+    header h1 { font-size: 16px; }
+
+    .kpi { padding: 12px 10px; }
+    .kpi-value { font-size: 20px; }
+    .kpi-label { font-size: 8px; }
+
+    /* Stack KPIs in a compact grid on very small screens */
+    .kpi-row { gap: 8px; }
+
+    .chart-card { padding: 12px; }
+    .table-card { padding: 12px; }
+    .narrative { padding: 12px; font-size: 12px; }
+
+    th { padding: 6px 8px; }
+    td { padding: 8px; }
   }
 
   @media print {
@@ -928,8 +1002,8 @@ ${narratives.viewership_timeline ? `
         <tr>
           <th class="sortable-th" data-key="name" data-type="string">Streamer<span class="sort-icon"></span></th>
           <th class="sortable-th" data-key="platform" data-type="string" style="text-align:center">Platform<span class="sort-icon"></span></th>
-          <th class="sortable-th" data-key="tier" data-type="string" style="text-align:center">Category<span class="sort-icon"></span></th>
-          <th class="sortable-th" data-key="lang" data-type="string" style="text-align:center">Language<span class="sort-icon"></span></th>
+          <th class="sortable-th streamer-col-category" data-key="tier" data-type="string" style="text-align:center">Category<span class="sort-icon"></span></th>
+          <th class="sortable-th streamer-col-language" data-key="lang" data-type="string" style="text-align:center">Language<span class="sort-icon"></span></th>
           <th class="sortable-th desc" data-key="avg" data-type="number">Avg CCU<span class="sort-icon"></span></th>
           <th class="sortable-th" data-key="peak" data-type="number">Peak CCU<span class="sort-icon"></span></th>
           <th class="sortable-th" data-key="vh" data-type="number">Viewed Hours<span class="sort-icon"></span></th>
@@ -1194,8 +1268,8 @@ function renderTable(data) {
     tbody.innerHTML += '<tr>' +
       '<td style="font-weight:600">' + s.name + '</td>' +
       '<td style="text-align:center"><span class="badge"><span class="dot ' + dotClass + '"></span>' + platName + '</span></td>' +
-      '<td style="text-align:center"><span class="tag ' + tagClass + '">' + s.tier + '</span></td>' +
-      '<td style="text-align:center"><span style="background:#1e2530;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:500;color:#9ca3af">' + s.lang + '</span></td>' +
+      '<td class="streamer-col-category" style="text-align:center"><span class="tag ' + tagClass + '">' + s.tier + '</span></td>' +
+      '<td class="streamer-col-language" style="text-align:center"><span style="background:#1e2530;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:500;color:#9ca3af">' + s.lang + '</span></td>' +
       '<td>' + s.avg.toLocaleString() + '</td>' +
       '<td>' + s.peak.toLocaleString() + '</td>' +
       '<td>' + s.vh.toLocaleString() + '</td>' +

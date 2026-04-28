@@ -72,6 +72,39 @@ Relay Scripts ─┘                     │                                 │
 - **State:** React Context (auth), custom hooks (polling, WebSocket)
 - **Routing:** React Router 7
 
+### Dual-UI Layout (since 2026-04-27)
+
+Two independent SPAs share the same backend and database:
+
+| URL | Source repo | Build dir | `--base` |
+|-----|-------------|-----------|----------|
+| `tracker.clutch.game/` (default) | `clutch-viewership-tracker-redesign/src/dashboard/` | `/opt/clutch-viewership-tracker/src/dashboard/dist/` | `/` |
+| `tracker.clutch.game/legacy/` | `clutch-viewership-tracker/src/dashboard/` | `/opt/clutch-viewership-tracker/legacy-dist/` | `/legacy/` |
+
+The legacy build sets React Router's `basename` from `import.meta.env.BASE_URL` so all in-app navigation stays under `/legacy/`. Both UIs:
+- Share `/api/*`, `/ws`, JWT auth cookie, and the legacy static-HTML reports under `/api/public/<short>/reports/`
+- Read the same `viewership_snapshots` and channel metadata
+- Are served by the same nginx server block
+
+**`/preview/*` URLs** that were shared externally during the redesign-in-preview window are 301-redirected to the equivalent `/*` URL (path tail and query string preserved) by nginx.
+
+**Static report banner:** Express route `/api/public/:shortName/reports/:filename` injects a small "View this report in the redesigned dashboard →" banner immediately after `<div class="container">` at serve time. Files on disk are never modified.
+
+### Web Push notifications (since 2026-04-28)
+
+Operator alerts via Web Push (PWA-based, no native app). Five event types — broadcast started, broadcast about to end, polling stalled, YouTube quota exhausted, new auto-discovery candidate — fan out to subscribed editor + admin devices.
+
+| Component | File |
+|---|---|
+| Backend service | `src/services/push-notifier.ts` (singleton, web-push library) |
+| API routes | `src/api/routes/push.ts` |
+| DB tables | `push_subscriptions` (per device), `push_vapid_keys` (server-wide keypair, private key encrypted via `encryptSecret()`) |
+| Service Worker | `src/dashboard/public/sw.js` (push + notificationclick only; no caching) |
+| Web App Manifest | `src/dashboard/public/manifest.webmanifest` (enables iOS Add-to-Home-Screen) |
+| Settings UI | `src/dashboard/src/pages/NotificationsSettingsPage.tsx` at `/settings/notifications` |
+
+VAPID keypair is auto-generated on first server boot and stored in DB; the private key is encrypted at rest using the same JWT_SECRET-derived AES-256-GCM helper as `youtube_api_keys.secret_encrypted`. Subscriptions returning HTTP 410/404 (revoked by browser) are auto-pruned by the notifier on the next fan-out.
+
 ### External Dependencies
 
 | Service | Purpose | Auth |
@@ -686,17 +719,27 @@ Test database: `clutch_viewership_test` (from DATABASE_URL containing "test")
 
 ## 16. Frontend Dashboard
 
-### Pages
+### Pages (redesign at `/`, current as of 2026-04-27)
 
 | Page | Route | Description |
 |------|-------|-------------|
 | Login | `/` (unauthenticated) | Email/password login |
-| Dashboard | `/:seriesId` | Main viewership dashboard |
-| Series Setup | `/new` | Create new series wizard |
-| Series Edit | `/:seriesId/edit` | Edit series/stages/days |
+| Start (series list) | `/` (authenticated) | Greeting + filterable grid of series cards |
+| Editor (desktop) | `/:seriesId` | Three-pane series workspace (desktop viewport) |
+| Editor (mobile) | `/:seriesId` | Single-column with fixed bottom nav: Live / Channels / Discover / Ops (mobile viewport) |
+| Series Setup | `/new` | Create-new-series form |
+| Series Edit | `/:seriesId/edit` | Edit series / stages / broadcast days |
 | User Management | `/users` | Admin user CRUD |
-| Public Dashboard | `/public/:shortName` | Read-only public view |
+| YouTube API Keys | `/settings/youtube-keys` | Admin key pool — encrypted partner-tagged keys with live quota |
+| Public Dashboard | `/public/:shortName` | Read-only public series view |
+| Public Report (live) | `/public/:shortName/report/{simple\|detailed}[/<scopeSlug>]` | Live-rendered HTML report; scopeSlug = `YYYY-MM-DD`, `stage-<order>`, or UUID |
+| Static legacy report | `/api/public/:shortName/reports/:filename.html` | Pre-generated static HTML (Express route, served from `/opt/clutch-viewership-tracker/reports/<short-folder>/`); banner-injected at serve time |
+| Explore (post-event) | `/explore[/:seriesId]` | Editor+ post-event analysis surface — scope-aware channel table, multi-channel overlay chart, per-timestamp cross-channel CCV panel. URL-encoded state for bookmarkability. |
 | 404 | `*` | Page not found |
+
+### Pages (legacy at `/legacy/`)
+
+The legacy SPA exposes the same routes minus `/settings/youtube-keys` and the live-report URLs (`/public/.../report/...`). Routes are namespaced under `/legacy/` via the React Router `basename` derived from `import.meta.env.BASE_URL`.
 
 ### Dashboard Panels
 

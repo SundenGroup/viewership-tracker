@@ -191,6 +191,7 @@ router.get('/metrics', async (req: Request, res: Response, next: NextFunction) =
         platform: e.platform,
         tier: e.tier ?? 'community',
         language: e.language ?? null,
+        region: e.region ?? null,
         peakCCV: parseInt(e.peak_ccv, 10),
         avgCCV: parseFloat(e.avg_ccv),
         totalViewedMinutes: parseInt(e.total_viewed_minutes, 10),
@@ -369,9 +370,182 @@ router.get('/leaderboard/:seriesId', async (req: Request, res: Response, next: N
         platform: e.platform,
         tier: e.tier ?? 'community',
         language: e.language ?? null,
+        region: e.region ?? null,
         peakCCV: parseInt(e.peak_ccv, 10),
         avgCCV: Math.round(parseFloat(e.avg_ccv)),
         viewedHours: Math.round(parseInt(e.total_viewed_minutes, 10) / 60),
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /api/viewership/range-leaderboard ─────────────────────────────
+// Returns leaderboard stats (peak/avg/viewed-minutes per channel) for an
+// arbitrary timestamp range, scoped to a series. Used by the /explore page's
+// drag-to-select-range panel. Same aggregation philosophy as the existing
+// scope-based leaderboard query: SUM multi-stream per cycle, MAX across
+// cycles per channel per minute, then aggregate over the window.
+router.get('/range-leaderboard', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const seriesId = req.query.seriesId as string | undefined;
+    const fromStr = req.query.from as string | undefined;
+    const toStr = req.query.to as string | undefined;
+
+    if (!seriesId || !isValidUUID(seriesId)) {
+      res.status(400).json({ error: 'seriesId (UUID) is required' });
+      return;
+    }
+    if (!fromStr || !toStr) {
+      res.status(400).json({ error: 'from + to (ISO 8601) are required' });
+      return;
+    }
+    const from = new Date(fromStr);
+    const to = new Date(toStr);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      res.status(400).json({ error: 'from / to must be valid ISO 8601 strings' });
+      return;
+    }
+    if (to.getTime() <= from.getTime()) {
+      res.status(400).json({ error: 'to must be after from' });
+      return;
+    }
+
+    const result = await db.raw(
+      `WITH per_cycle AS (
+         SELECT vs.channel_id, date_trunc('minute', vs.timestamp) AS m,
+                vs.timestamp AS poll_ts,
+                SUM(vs.concurrent_viewers) AS cycle_ccv
+         FROM viewership_snapshots vs
+         WHERE vs.series_id = :seriesId
+           AND vs.timestamp >= :fromTs AND vs.timestamp <= :toTs
+         GROUP BY vs.channel_id, date_trunc('minute', vs.timestamp), vs.timestamp
+       ),
+       per_minute AS (
+         SELECT channel_id, m, MAX(cycle_ccv) AS ccv
+         FROM per_cycle GROUP BY channel_id, m
+       )
+       SELECT c.id AS channel_id,
+              c.display_name,
+              c.channel_identifier,
+              c.platform,
+              c.language,
+              c.region,
+              c.tier,
+              MAX(per_minute.ccv)::int AS peak_ccv,
+              AVG(per_minute.ccv)::float AS avg_ccv,
+              SUM(per_minute.ccv)::int AS total_viewed_minutes
+       FROM per_minute
+       JOIN channels c ON c.id = per_minute.channel_id
+       GROUP BY c.id, c.display_name, c.channel_identifier, c.platform, c.language, c.region, c.tier
+       HAVING MAX(per_minute.ccv) > 0
+       ORDER BY peak_ccv DESC`,
+      { seriesId, fromTs: from, toTs: to },
+    );
+    const rows = (result as { rows: Array<Record<string, unknown>> }).rows;
+
+    res.json({
+      seriesId,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      channels: rows.map((r) => ({
+        channelId: r.channel_id as string,
+        displayName: r.display_name as string,
+        channelIdentifier: r.channel_identifier as string,
+        platform: r.platform as string,
+        language: (r.language as string | null) ?? null,
+        tier: (r.tier as string | null) ?? 'community',
+        peakCCV: r.peak_ccv as number,
+        avgCCV: Math.round(r.avg_ccv as number),
+        viewedHours: Math.round((r.total_viewed_minutes as number) / 60),
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /api/viewership/snapshot-at-timestamp ──────────────────────────
+// Returns every channel's CCV at (or near) the requested timestamp,
+// scoped to a series. Used by the /explore page's "what was happening at
+// this exact minute?" panel.
+//
+// Query params:
+//   seriesId   (required, UUID) — series to scope to
+//   timestamp  (required, ISO 8601) — anchor moment
+//   within     (optional, seconds, default 60, max 300) — search window
+//
+// Aggregation matches the dashboard chart's per-minute pipeline:
+//   1. SUM multi-stream rows per poll cycle
+//   2. MAX across poll cycles per channel within the window
+//   3. Return per-channel rows ordered by ccv DESC
+router.get('/snapshot-at-timestamp', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const seriesId = req.query.seriesId as string | undefined;
+    const timestampStr = req.query.timestamp as string | undefined;
+    const withinSecRaw = req.query.within as string | undefined;
+
+    if (!seriesId || !isValidUUID(seriesId)) {
+      res.status(400).json({ error: 'seriesId (UUID) is required' });
+      return;
+    }
+    if (!timestampStr) {
+      res.status(400).json({ error: 'timestamp (ISO 8601) is required' });
+      return;
+    }
+    const ts = new Date(timestampStr);
+    if (Number.isNaN(ts.getTime())) {
+      res.status(400).json({ error: 'timestamp must be a valid ISO 8601 string' });
+      return;
+    }
+    let within = parseInt(withinSecRaw ?? '60', 10);
+    if (!Number.isFinite(within) || within < 0) within = 60;
+    if (within > 300) within = 300;
+
+    const fromTs = new Date(ts.getTime() - within * 1000);
+    const toTs = new Date(ts.getTime() + within * 1000);
+
+    // Three-level aggregation mirroring getTimeSeriesData:
+    // SUM per poll cycle, MAX across cycles per channel.
+    const result = await db.raw(
+      `SELECT c.id AS channel_id,
+              c.display_name,
+              c.channel_identifier,
+              c.platform,
+              c.language,
+              c.tier,
+              MAX(per_cycle.cycle_ccv)::int AS ccv
+       FROM (
+         SELECT vs.channel_id,
+                vs.timestamp AS poll_ts,
+                SUM(vs.concurrent_viewers) AS cycle_ccv
+         FROM viewership_snapshots vs
+         WHERE vs.series_id = :seriesId
+           AND vs.timestamp >= :fromTs
+           AND vs.timestamp <= :toTs
+         GROUP BY vs.channel_id, vs.timestamp
+       ) per_cycle
+       JOIN channels c ON c.id = per_cycle.channel_id
+       GROUP BY c.id, c.display_name, c.channel_identifier, c.platform, c.language, c.tier
+       HAVING MAX(per_cycle.cycle_ccv) > 0
+       ORDER BY ccv DESC`,
+      { seriesId, fromTs, toTs },
+    );
+    const rows = (result as { rows: Array<Record<string, unknown>> }).rows;
+
+    res.json({
+      seriesId,
+      timestamp: ts.toISOString(),
+      withinSeconds: within,
+      channels: rows.map((r) => ({
+        channelId: r.channel_id as string,
+        displayName: r.display_name as string,
+        channelIdentifier: r.channel_identifier as string,
+        platform: r.platform as string,
+        language: (r.language as string | null) ?? null,
+        tier: (r.tier as string | null) ?? 'community',
+        ccv: r.ccv as number,
       })),
     });
   } catch (err) {

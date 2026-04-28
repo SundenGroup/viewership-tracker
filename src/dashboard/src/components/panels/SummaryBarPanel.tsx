@@ -57,11 +57,11 @@ export function SummaryBarPanel({
 
   return (
     <Card noPadding>
-      <div className="flex flex-wrap divide-x divide-navy-700/50">
+      <div className="flex flex-wrap divide-navy-700/50 sm:divide-x">
         {stats.map((stat) => (
           <div
             key={stat.label}
-            className="flex flex-1 flex-col items-center px-4 py-3 min-w-[140px]"
+            className="flex flex-1 flex-col items-center px-3 py-2.5 min-w-[calc(50%-1px)] sm:min-w-[120px] sm:px-4 sm:py-3 border-b border-navy-700/50 sm:border-b-0 last:border-b-0"
           >
             <span className={`text-xl font-bold font-mono ${stat.color} ${loading && !metrics ? 'animate-pulse' : ''}`}>
               {stat.value}

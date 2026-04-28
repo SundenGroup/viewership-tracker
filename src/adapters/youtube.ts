@@ -5,6 +5,11 @@ import logger from '../utils/logger';
 import { config } from '../utils/config';
 import type { PlatformAdapter, ChannelSnapshot, DiscoveredStream } from './types';
 import * as YouTubeApiKeyModel from '../models/youtube-api-key';
+import { getPushNotifier } from '../services/push-notifier';
+
+/** Throttle: fire "quota exhausted" push at most once per 24h per process. */
+const QUOTA_EXHAUSTED_PUSH_THROTTLE_MS = 24 * 60 * 60_000;
+let lastQuotaExhaustedPushAt = 0;
 
 const API_BASE = 'https://www.googleapis.com/youtube/v3';
 const MAX_VIDEO_IDS_PER_REQUEST = 50;
@@ -169,6 +174,22 @@ export class YouTubeAdapter implements PlatformAdapter {
     this.resetQuotaIfNewDay();
     if (this.quotaUsed + cost > this.quotaLimit) {
       logger.error(`YouTube quota exhausted: ${this.quotaUsed}/${this.quotaLimit} used, need ${cost} for ${context}`);
+
+      // Push fan-out — at most once per 24h per process
+      const now = Date.now();
+      if (now - lastQuotaExhaustedPushAt >= QUOTA_EXHAUSTED_PUSH_THROTTLE_MS) {
+        lastQuotaExhaustedPushAt = now;
+        void getPushNotifier()
+          .notify('quota_exhausted', {
+            title: 'YouTube quota exhausted',
+            body: `Daily quota used: ${this.quotaUsed}/${this.quotaLimit}. Add or rotate keys to resume.`,
+            url: '/settings/youtube-keys',
+            tag: 'quota_exhausted',
+            urgent: true,
+          })
+          .catch((err) => logger.warn('[Push] quota_exhausted fan-out failed', { error: (err as Error).message }));
+      }
+
       return false;
     }
 

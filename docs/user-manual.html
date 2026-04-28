@@ -61,9 +61,16 @@
 <h1>Clutch Viewership Tracker</h1>
 <p class="subtitle">User Manual</p>
 
+<div class="callout" style="background:#1a1d2b;border-left:3px solid #d63a3a;">
+  <strong>2026-04-27 — Redesigned dashboard is now live.</strong><br>
+  The default URL <a href="https://tracker.clutch.game">tracker.clutch.game</a> now serves the redesigned UI. The layout, navigation, and many panels have been refreshed; concepts are the same but visuals differ from the screenshots in this manual. See <a href="#redesign">"What's new in the redesign"</a> below for the highlights.<br><br>
+  The old design remains accessible at <a href="https://tracker.clutch.game/legacy/">tracker.clutch.game/legacy/</a> for side-by-side comparison or as a fallback. All existing static report URLs (<code>/api/public/&lt;short&gt;/reports/&lt;file&gt;.html</code>) still work unchanged and now include a banner at the top linking to the same report rendered live in the redesigned dashboard.<br><br>
+  Old <code>/preview/&hellip;</code> URLs that were shared while the redesign was in preview now permanently redirect to the equivalent <code>/&hellip;</code> URLs &mdash; bookmarks and email links keep working.
+</div>
+
 <div class="callout">
   You currently have <strong>Admin</strong> access for testing purposes. This means you have full access to all features, including creating series and controlling polling/discovery.<br><br>
-  <strong>Login:</strong> Go to <a href="http://tracker.clutch.game">tracker.clutch.game</a> and sign in with the credentials shared with you.
+  <strong>Login:</strong> Go to <a href="https://tracker.clutch.game">tracker.clutch.game</a> and sign in with the credentials shared with you.
 </div>
 
 <div class="toc">
@@ -78,6 +85,7 @@
     <li><a href="#public">Public Dashboard &amp; Reports</a></li>
     <li><a href="#permissions">Role Permissions</a></li>
     <li><a href="#tips">Tips</a></li>
+    <li><a href="#redesign">What's new in the redesign (2026-04-27)</a></li>
   </ol>
 </div>
 
@@ -395,8 +403,53 @@
 
 <div class="tip"><strong>Filter active channels</strong> — The channel list defaults to showing only active channels. Switch to "All" to see disabled/blocked channels when needed.</div>
 
+<!-- ─── REDESIGN ─────────────────────────── -->
+
+<h2 id="redesign">10. What's new in the redesign (2026-04-27)</h2>
+
+<p>The dashboard at <a href="https://tracker.clutch.game">tracker.clutch.game</a> was redesigned for clarity and mobile use. Day-to-day concepts (series, channels, discovery, reports, polling) are unchanged &mdash; only the visual organisation differs. Highlights:</p>
+
+<h3>Navigation</h3>
+<ul>
+  <li><strong>Home / series list</strong> &mdash; Click the Clutch wordmark in the top-left of any page to return to the series list.</li>
+  <li><strong>Account &amp; admin menu</strong> &mdash; A new <code>⋯</code> (kebab) menu in the top-right of the dashboard exposes <em>Series list</em>, <em>Users</em> (admin), <em>YouTube API keys</em> (admin), and <em>Sign out</em> from any page. Previously these required navigating back to the start page.</li>
+  <li><strong>Mobile</strong> &mdash; The mobile dashboard has a fixed bottom-tab navigation bar (Live / Channels / Discover / Ops) that stays in view while scrolling. The schedule strip now shows all broadcast days, sorted with today's live day on top.</li>
+</ul>
+
+<h3>Reports</h3>
+<ul>
+  <li><strong>Live-rendered day &amp; stage reports</strong> &mdash; Open any series &rarr; <em>Export</em> &rarr; <em>HTML</em> &rarr; <em>New design (live)</em> to render a fresh report against the live database. URL pattern: <code>/public/&lt;short&gt;/report/detailed[/&lt;day-or-stage&gt;]</code>.</li>
+  <li><strong>Old static reports</strong> &mdash; Existing static HTML reports under <code>/api/public/&lt;short&gt;/reports/&lt;file&gt;.html</code> still work and are unchanged on disk. Each one now displays a small banner at the top linking to the same scope rendered live in the redesigned dashboard.</li>
+</ul>
+
+<h3>Discovery</h3>
+<ul>
+  <li>Each candidate row now shows the channel handle, language chip, source label, relative discovery time, and a direct external-link button to open the stream in a new tab for verification.</li>
+  <li>Sort by Recent / Viewers / Platform / Name / Language; filter by source; clear-all with confirmation.</li>
+</ul>
+
+<h3>YouTube API keys</h3>
+<ul>
+  <li>Admin &rarr; <em>YT Keys</em> in the account menu, or directly at <a href="https://tracker.clutch.game/settings/youtube-keys">tracker.clutch.game/settings/youtube-keys</a>. Manage encrypted partner-tagged keys for discovery quota; view live remaining quota per key. The legacy <code>YOUTUBE_API_KEY</code> environment variable still acts as the polling fallback.</li>
+</ul>
+
+<h3>Explore (post-event analysis)</h3>
+<p>A new top-level surface for browsing finished tournaments and digging into per-channel detail. <strong>Editor + Admin only.</strong></p>
+<ul>
+  <li>Open from the <code>&#x22ef;</code> account menu &rarr; <em>Explore (post-event)</em>, or directly at <a href="https://tracker.clutch.game/explore">tracker.clutch.game/explore</a>.</li>
+  <li><strong>Pick a scope</strong> &mdash; series, stage, or day; the channel list updates to show whoever streamed during that window.</li>
+  <li><strong>Filter by platform</strong> via the chip row; search by channel name.</li>
+  <li><strong>Sort the channel table</strong> by peak / avg / viewed-hours / name / platform.</li>
+  <li><strong>Click a row to graph that channel</strong> on the chart above. Click up to four rows to overlay them &mdash; useful for audience-flow analysis (e.g. when a stream raids, where do viewers go).</li>
+  <li><strong>Click any point on the chart</strong> to pin that timestamp. A panel appears showing every channel's CCV at that exact minute, sorted by viewer count.</li>
+  <li>The URL fully encodes the current view (scope, filters, selected channels, anchor timestamp), so any analysis can be bookmarked or shared in Slack.</li>
+</ul>
+
+<h3>Old design fallback</h3>
+<p>The previous dashboard remains accessible at <a href="https://tracker.clutch.game/legacy/">tracker.clutch.game/legacy/</a> for side-by-side comparison or as an emergency fallback. It will stay there indefinitely; we'll only remove it once the team is fully comfortable on the redesign.</p>
+
 <hr>
-<p style="font-size:12px;color:#999;text-align:center;margin-top:24px;">Clutch Viewership Tracker &mdash; User Manual &mdash; March 2026</p>
+<p style="font-size:12px;color:#999;text-align:center;margin-top:24px;">Clutch Viewership Tracker &mdash; User Manual &mdash; updated April 2026</p>
 
 </div>
 </body>

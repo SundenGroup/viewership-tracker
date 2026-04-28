@@ -4,6 +4,9 @@ Welcome to the Clutch Viewership Tracker. This guide covers everything you need 
 
 **Login:** Navigate to [tracker.clutch.game](https://tracker.clutch.game) and sign in with your credentials.
 
+> **2026-04-27 — Redesigned dashboard is now live.**
+> The default URL [tracker.clutch.game](https://tracker.clutch.game) now serves the redesigned UI. Concepts are unchanged from this manual, but the layout and navigation differ — see the **Migration history** appendix at the end for highlights and the location of the legacy build.
+
 ---
 
 ## Dashboard Overview
@@ -283,3 +286,92 @@ npm run test:watch  # Watch mode
 - **Use view groups** — Configure language/platform filters for focused regional reports
 - **Browser scraper for Twitch** — Gives real per-minute data for key channels, overcoming the API's 3-5 minute stepping
 - **Post-broadcast CSV import** — Twitch official CSV data from the Creator Dashboard can replace API-stepped data for higher accuracy
+
+---
+
+## Migration history
+
+### 2026-04-27 — Redesigned dashboard cutover
+
+The redesigned dashboard, previously available at `/preview/`, was promoted to the default URL `tracker.clutch.game/`. Concepts (series, channels, discovery, reports, polling) are unchanged; the UI layout, navigation, and several interaction patterns differ.
+
+**Routing after cutover:**
+- `tracker.clutch.game/` — redesigned dashboard (default)
+- `tracker.clutch.game/legacy/` — old design, kept indefinitely as a fallback and for side-by-side comparison
+- `tracker.clutch.game/preview/...` — 301-redirected to the equivalent `/...` URL (preserves any external links shared while the redesign was in preview)
+- `tracker.clutch.game/api/public/<short>/reports/<file>.html` — legacy static HTML reports unchanged on disk; now include a banner at the top linking to the same scope rendered live in the redesign
+
+**Builds:**
+- Redesign: built from `clutch-viewership-tracker-redesign/src/dashboard/` with `npx vite build --base=/`, deployed to `/opt/clutch-viewership-tracker/src/dashboard/dist/`
+- Legacy: built from `clutch-viewership-tracker/src/dashboard/` with `npx vite build --base=/legacy/`, deployed to `/opt/clutch-viewership-tracker/legacy-dist/`
+
+**Banner injection:** Implemented at-serve in `src/api/routes/public.ts` — the route reads the static HTML, splices a small dark banner (`View this report in the redesigned dashboard →`) immediately after the first `<div class="container">`, and streams the result. The on-disk file is never modified, preserving each report as a true historical snapshot.
+
+**Pre-cutover backup:** `/opt/clutch-viewership-tracker/backups/cutover-20260427-082406/` (DB dump 45 MB, full code+reports tarball 131 MB, nginx config snapshot). A copy was downloaded to the operator's laptop. Rollback procedure: revert nginx config from `/etc/nginx/backups/clutch-viewership.bak.20260427-082406`, swap `dist/` back to `dist-old.20260427-082406`, restart pm2. DB restore from the dump is the break-glass option (no destructive migrations were run during the cutover, so a code-only rollback is sufficient).
+
+**Highlights of the redesign for editors / engineers:**
+- New per-page chrome (sticky top header with clickable Clutch wordmark = "back to series list")
+- Account & admin overflow menu (`⋯` in top-right) on every series page → Series list / Explore / Users / YT Keys / Sign out
+- Mobile dashboard with fixed bottom nav (Live / Channels / Discover / Ops) and a redesigned Discovery card list (external link, language chip, handle, relative time, sort, source filter, clear-all)
+- Live-rendered HTML reports at `/public/<short>/report/{simple|detailed}[/<scopeSlug>]` (replaces the on-demand server-render path)
+- Encrypted YouTube API key pool (admin UI at `/settings/youtube-keys`) — partner-tagged keys for discovery, with the legacy `YOUTUBE_API_KEY` env var still acting as the polling-side fallback
+
+### 2026-04-27 — Explore page added
+
+A new editor/admin surface at `/explore[/<seriesId>]` for post-event tournament analysis. URL-encoded state (scope, filters, selected channels, anchor timestamp) makes any view bookmarkable.
+
+**Frontend:** `clutch-viewership-tracker-redesign/src/dashboard/src/pages/ExplorePage.tsx`
+
+**Features:**
+- Scope picker reusing the existing `ScopeScrubber` (series / stage / day; custom range deferred to Phase 2)
+- Sortable + filterable channel table (peak / avg / viewed-hours / name / platform)
+- Click rows to overlay 1–4 channels on the chart
+- Click any point on the chart to pin a timestamp; a panel below shows every channel's CCV at that exact minute (uses the new `GET /api/viewership/snapshot-at-timestamp` endpoint)
+- Platform-chip filter row + search box
+- Auth-gated to `isEditor` (editor + admin)
+
+**Backend addition:** `GET /api/viewership/snapshot-at-timestamp?seriesId=…&timestamp=ISO&within=60`
+returns `{ channels: { channelId, displayName, platform, language, tier, ccv }[] }` — every channel that had data within ±N seconds of the anchor, ordered by ccv DESC. Mirrors the dashboard chart's MAX-per-cycle aggregation.
+
+**Deferred to Phase 2:** custom date range, raw 30-second poll inspector, anomaly markers, cross-series compare.
+
+### 2026-04-28 — Web Push notifications
+
+Operators can now receive OS-level push notifications for live operational events: broadcasts going live or about to end, polling problems, YouTube quota exhaustion, and new auto-discovery candidates.
+
+**Settings page:** `/settings/notifications` (editor + admin). Per-device subscription with per-event-type toggles — your laptop and phone can have different preferences.
+
+**Browser support:**
+- **Desktop Chrome / Edge / Firefox / Safari 16.1+** — works in any tab, no install required.
+- **Android Chrome / Firefox** — same.
+- **iOS Safari 16.4+** — only works inside an installed PWA. Tap Share → Add to Home Screen first, then open the icon and enable from inside the standalone app. The settings page surfaces a banner explaining this when it detects iOS Safari without standalone mode.
+
+**Events fired (each is per-event toggleable on each device):**
+
+| Event | Trigger |
+|---|---|
+| `broadcast_started` | A broadcast day transitions `scheduled → live` |
+| `broadcast_ending` | A live broadcast's `broadcast_end` is 9–11 minutes away (one-shot per day) |
+| `polling_stalled` | 5 consecutive poll cycles returned zero results (1 hour throttle) |
+| `quota_exhausted` | YouTube daily quota hit 100% (24 hour throttle) |
+| `discovery_candidate` | Auto-discovery added one or more channels to the pending-approval feed |
+
+**Backend pieces:**
+- `src/services/push-notifier.ts` — singleton, loads/generates the VAPID keypair on boot and fans out via `web-push`.
+- `src/api/routes/push.ts` — `/api/push/{vapid-public-key,subscribe,unsubscribe,subscriptions,preferences,test}`.
+- `migrations/20260428100000_create_push_subscriptions.ts` — two new tables: `push_subscriptions` (per device) and `push_vapid_keys` (server-wide keypair, private key encrypted with the same `JWT_SECRET`-derived AES-256-GCM key as `youtube_api_keys.secret_encrypted`).
+
+**Frontend pieces:**
+- `src/dashboard/public/sw.js` — minimal Service Worker, push + notificationclick handlers only.
+- `src/dashboard/public/manifest.webmanifest` — PWA manifest (enables Add to Home Screen on iOS).
+- `src/dashboard/src/services/push.ts` — wraps SW registration, permission prompt, subscribe/unsubscribe.
+- `src/dashboard/src/pages/NotificationsSettingsPage.tsx` — settings UI.
+
+**Throttling:** PushNotifier doesn't throttle on its own; each caller decides. Current throttles:
+- `polling_stalled`: at most once per hour while stalled, resets on first successful cycle
+- `broadcast_ending`: exactly once per `broadcast_day_id` (in-memory `Set`, garbage-collected when broadcasts end)
+- `quota_exhausted`: at most once per 24 hours per process
+
+**410-Gone pruning:** When a browser revokes a subscription (user clears site data, uninstalls PWA), `web-push` returns 410 or 404. PushNotifier auto-deletes those rows on the next fan-out, so subscription churn is self-cleaning.
+
+**Test push:** Admin-only "Send test notification" button on `/settings/notifications` fires a notification to all of the caller's subscribed devices.

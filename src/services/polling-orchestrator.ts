@@ -9,6 +9,7 @@ import type { BroadcastDay } from '../models/broadcast-day';
 import type { Channel } from '../models/channel';
 import type { DiscoveryService } from './discovery-service';
 import type { ReportAgent } from '../agent/report-agent';
+import type { PushNotifier } from './push-notifier';
 
 // ── Callback types ──────────────────────────────────────────────────────
 
@@ -42,6 +43,13 @@ export interface OrchestratorStatus {
 
 const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 5;
 
+/** Re-fire "polling stalled" push at most once per hour even if we stay stalled. */
+const POLLING_STALL_PUSH_THROTTLE_MS = 60 * 60_000;
+
+/** Window in which "broadcast about to end" fires (relative to broadcast_end). */
+const BROADCAST_ENDING_LOOKAHEAD_MIN = 11;
+const BROADCAST_ENDING_LOOKAHEAD_FLOOR_MIN = 9;
+
 // ── PollingOrchestrator ─────────────────────────────────────────────────
 
 export class PollingOrchestrator {
@@ -60,6 +68,9 @@ export class PollingOrchestrator {
   private snapshotBroadcast: SnapshotBroadcastFn | null = null;
   private statusBroadcast: StatusBroadcastFn | null = null;
   private reportAgent: ReportAgent | null = null;
+  private pushNotifier: PushNotifier | null = null;
+  private lastStallPushAt = 0;
+  private endingNotifiedDayIds = new Set<string>();
 
   constructor(registry: AdapterRegistry, db: Knex) {
     this.registry = registry;
@@ -98,6 +109,15 @@ export class PollingOrchestrator {
    */
   setReportAgent(agent: ReportAgent): void {
     this.reportAgent = agent;
+  }
+
+  /**
+   * Attach a PushNotifier for Web Push fan-out (polling stalled,
+   * broadcast about to end). The broadcast_started and discovery_candidate
+   * events are wired in index.ts alongside the WS broadcast callbacks.
+   */
+  setPushNotifier(notifier: PushNotifier): void {
+    this.pushNotifier = notifier;
   }
 
   /**
@@ -215,6 +235,9 @@ export class PollingOrchestrator {
   private async tick(): Promise<void> {
     try {
       await this.executePollCycle();
+      // Fire "broadcast about to end" pushes for live days within the
+      // 9-11 minute lookahead window. Cheap one-row-or-empty query each tick.
+      await this.checkBroadcastEndingSoon();
     } catch (err) {
       logger.error('[Poll] Unhandled error in tick', {
         error: (err as Error).message,
@@ -855,6 +878,23 @@ export class PollingOrchestrator {
           `[Poll] CRITICAL: ${this.consecutiveZeroResults} consecutive cycles with zero results. ` +
           `Check adapter health and database connectivity.`,
         );
+
+        // Push fan-out — throttled to at most once per hour while stalled
+        if (this.pushNotifier) {
+          const now = Date.now();
+          if (now - this.lastStallPushAt >= POLLING_STALL_PUSH_THROTTLE_MS) {
+            this.lastStallPushAt = now;
+            void this.pushNotifier
+              .notify('polling_stalled', {
+                title: 'Polling stalled',
+                body: `${this.consecutiveZeroResults} consecutive cycles returned zero results. Check adapter health.`,
+                url: '/',
+                tag: 'polling_stalled',
+                urgent: true,
+              })
+              .catch((err) => logger.warn('[Push] polling_stalled fan-out failed', { error: (err as Error).message }));
+          }
+        }
       }
     } else {
       if (this.consecutiveZeroResults > 0) {
@@ -863,6 +903,52 @@ export class PollingOrchestrator {
         );
       }
       this.consecutiveZeroResults = 0;
+      this.lastStallPushAt = 0; // reset so the next stall re-fires immediately
+    }
+  }
+
+  // ── Broadcast-ending push check ───────────────────────────────────────
+  // Called from each tick. Looks for live broadcast_days whose broadcast_end
+  // is between 9 and 11 minutes from now and fires `broadcast_ending` push
+  // exactly once per broadcast_day_id.
+  private async checkBroadcastEndingSoon(): Promise<void> {
+    if (!this.pushNotifier) return;
+    try {
+      const now = new Date();
+      const floor = new Date(now.getTime() + BROADCAST_ENDING_LOOKAHEAD_FLOOR_MIN * 60_000);
+      const ceil = new Date(now.getTime() + BROADCAST_ENDING_LOOKAHEAD_MIN * 60_000);
+
+      const ending = await this.db<BroadcastDay>('broadcast_days')
+        .where('status', 'live')
+        .whereNotNull('broadcast_end')
+        .where('broadcast_end', '>=', floor)
+        .where('broadcast_end', '<=', ceil)
+        .select('id', 'series_id', 'label', 'broadcast_end');
+
+      for (const day of ending) {
+        if (this.endingNotifiedDayIds.has(day.id)) continue;
+        this.endingNotifiedDayIds.add(day.id);
+        await this.pushNotifier.notify('broadcast_ending', {
+          title: 'Broadcast ending in ~10 min',
+          body: `${day.label || 'A broadcast'} is scheduled to end soon. Extend the end time if needed.`,
+          url: `/${day.series_id}`,
+          tag: `broadcast-ending-${day.id}`,
+          urgent: true,
+        });
+      }
+
+      // Garbage-collect the in-memory set so it doesn't grow forever:
+      // drop ids whose broadcast_end is more than an hour in the past.
+      if (this.endingNotifiedDayIds.size > 100) {
+        const cutoff = new Date(now.getTime() - 60 * 60_000);
+        const stale = await this.db<BroadcastDay>('broadcast_days')
+          .whereIn('id', Array.from(this.endingNotifiedDayIds))
+          .andWhere('broadcast_end', '<', cutoff)
+          .pluck('id');
+        for (const id of stale) this.endingNotifiedDayIds.delete(id);
+      }
+    } catch (err) {
+      logger.warn('[Push] broadcast_ending check failed', { error: (err as Error).message });
     }
   }
 }
