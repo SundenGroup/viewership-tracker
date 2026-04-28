@@ -104,12 +104,20 @@ export function ExportDialog({
     return null;
   }, [seriesDetail, activeScope.dayId]);
 
-  // Current stage — if a day is selected, use the day's PARENT stage.
-  // That's what "the current stage" semantically means for export purposes.
-  // Only fall back to activeScope.stageId (from the scope scrubber) when
-  // no day is active.
+  // Current stage:
+  //   - When the top-bar scrubber is at STAGE level the user has explicitly
+  //     picked a stage — honor it even if a day from a *different* stage is
+  //     also remembered (e.g. sidebar still highlights yesterday's day).
+  //   - Otherwise, when a specific day is in scope, the semantically "current
+  //     stage" is that day's parent stage.
+  //   - Fallback: whatever stageId activeScope carries.
   const currentStage = useMemo(() => {
     if (!seriesDetail) return null;
+    if (activeScope.level === 'stage' && activeScope.stageId) {
+      return (
+        seriesDetail.stages.find((s) => s.id === activeScope.stageId) ?? null
+      );
+    }
     if (currentDay?.stageId) {
       return (
         seriesDetail.stages.find((s) => s.id === currentDay.stageId) ?? null
@@ -121,7 +129,7 @@ export function ExportDialog({
       );
     }
     return null;
-  }, [seriesDetail, activeScope.stageId, currentDay?.stageId]);
+  }, [seriesDetail, activeScope.level, activeScope.stageId, currentDay?.stageId]);
 
   // Human-readable scope labels
   const scopeLabelCurrent =

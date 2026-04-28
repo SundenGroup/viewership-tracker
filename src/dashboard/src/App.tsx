@@ -14,6 +14,8 @@ import { StartPage } from '@/pages/StartPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { UserManagementPage } from '@/pages/UserManagementPage';
 import { YouTubeKeysPage } from '@/pages/YouTubeKeysPage';
+import { NotificationsSettingsPage } from '@/pages/NotificationsSettingsPage';
+import { ExplorePage } from '@/pages/ExplorePage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Spinner } from '@/components/common/Loader';
@@ -121,6 +123,9 @@ function AuthGate() {
         <Route path="/new" element={<AppContent />} />
         <Route path="/users" element={<AppContent />} />
         <Route path="/settings/youtube-keys" element={<AppContent />} />
+        <Route path="/settings/notifications" element={<AppContent />} />
+        <Route path="/explore/:seriesId" element={<AppContent />} />
+        <Route path="/explore" element={<AppContent />} />
         <Route path="/:seriesId/edit" element={<AppContent />} />
         <Route path="/:seriesId" element={<AppContent />} />
         <Route path="/" element={<AppContent />} />
@@ -145,6 +150,8 @@ function AppContent() {
   const isNewPage = pathname === '/new';
   const isUsersPage = pathname === '/users';
   const isYouTubeKeysPage = pathname === '/settings/youtube-keys';
+  const isNotificationsPage = pathname === '/settings/notifications';
+  const isExplorePage = pathname.startsWith('/explore');
 
   // ── Data fetching ─────────────────────────────────────────────────────
 
@@ -357,10 +364,25 @@ function AppContent() {
     );
   }
 
-  // Desktop StartPage (no series selected) is also self-contained — it
-  // brings its own top bar and doesn't need the legacy Sidebar's "select
-  // a series…" placeholder columns.
-  if (!isMobile && !isUsersPage && !isYouTubeKeysPage && !isNewPage && !isEditPage && !selectedSeriesId) {
+  // ExplorePage — post-event analysis surface (editor+ only). Self-contained
+  // chrome; no MainLayout shell. URL: /explore or /explore/:seriesId.
+  if (isExplorePage) {
+    return (
+      <ExplorePage
+        seriesList={seriesList ?? []}
+        seriesId={selectedSeriesId ?? null}
+        seriesDetail={seriesDetail}
+        onSeriesChange={handleSeriesChange}
+      />
+    );
+  }
+
+  // StartPage (no series selected) is self-contained — it brings its own
+  // top bar and doesn't need the legacy Sidebar's "select a series…"
+  // placeholder columns. We render it on both mobile and desktop so that
+  // the EditorMobile hamburger ("back to series list") lands on the new
+  // chrome instead of falling through to the legacy MainLayout shell.
+  if (!isUsersPage && !isYouTubeKeysPage && !isNotificationsPage && !isNewPage && !isEditPage && !selectedSeriesId) {
     return (
       <StartPage
         seriesList={seriesList ?? []}
@@ -369,13 +391,14 @@ function AppContent() {
         onCreate={() => navigate('/new')}
         onOpenUsers={() => navigate('/users')}
         onOpenYouTubeKeys={() => navigate('/settings/youtube-keys')}
+        onOpenNotifications={() => navigate('/settings/notifications')}
       />
     );
   }
 
   // Editor Desktop / Mobile are self-contained surfaces with their own shell.
   // The legacy Header/Sidebar/MainLayout is only kept for the edit/setup/users routes.
-  if (!isUsersPage && !isYouTubeKeysPage && !isNewPage && !isEditPage && selectedSeriesId) {
+  if (!isUsersPage && !isYouTubeKeysPage && !isNotificationsPage && !isNewPage && !isEditPage && selectedSeriesId) {
     if (isMobile) {
       return (
         <EditorMobile
@@ -391,7 +414,11 @@ function AppContent() {
           onTriggerPoll={handleTriggerPoll}
           onStartPolling={handleStartPolling}
           onStopPolling={handleStopPolling}
+          onTriggerDiscovery={handleTriggerDiscovery}
+          onStartDiscovery={handleStartDiscovery}
+          onStopDiscovery={handleStopDiscovery}
           pollLoading={pollLoading}
+          discoveryLoading={discoveryLoading}
         />
       );
     }
@@ -455,6 +482,8 @@ function AppContent() {
         <UserManagementPage />
       ) : isYouTubeKeysPage ? (
         <YouTubeKeysPage />
+      ) : isNotificationsPage ? (
+        <NotificationsSettingsPage />
       ) : isNewPage ? (
         <SeriesSetupPage
           onCreated={handleSeriesCreated}

@@ -237,6 +237,7 @@ export interface LeaderboardEntry {
   platform: string;
   tier?: string;
   language?: string;
+  region?: string | null;
   peakCCV: number;
   avgCCV: number;
   totalViewedMinutes: number;
@@ -256,6 +257,7 @@ export interface LeaderboardStats {
   platform: string;
   tier: string;
   language?: string;
+  region?: string | null;
   peakCCV: number;
   avgCCV: number;
   viewedHours: number;
@@ -307,6 +309,34 @@ export interface TimeSeriesResponse {
   interval: number;
   groupBy: string;
   data: TimeSeriesBucket[] | GroupedTimeSeriesBucket[];
+}
+
+// ── Snapshot at timestamp (Explore page) ───────────────────────────────────
+
+export interface ChannelAtTimestamp {
+  channelId: string;
+  displayName: string;
+  channelIdentifier: string;
+  platform: string;
+  language: string | null;
+  tier: string;
+  ccv: number;
+}
+
+export interface SnapshotAtTimestampResponse {
+  seriesId: string;
+  timestamp: string;
+  withinSeconds: number;
+  channels: ChannelAtTimestamp[];
+}
+
+// ── Range leaderboard (Explore page drag-select) ──────────────────────────
+
+export interface RangeLeaderboardResponse {
+  seriesId: string;
+  from: string;
+  to: string;
+  channels: LeaderboardStats[];
 }
 
 // ── Polling / Orchestrator ─────────────────────────────────────────────────
@@ -514,4 +544,40 @@ export interface YouTubeQuotaResponse {
   limit: number;
   remaining: number;
   percentage: number;
+}
+
+// ── Web Push notifications ────────────────────────────────────────────────
+
+export type PushEventType =
+  | 'broadcast_started'
+  | 'broadcast_ending'
+  | 'polling_stalled'
+  | 'quota_exhausted'
+  | 'discovery_candidate';
+
+export type PushPreferences = Record<PushEventType, boolean>;
+
+export interface PushSubscriptionPayload {
+  endpoint: string;
+  expirationTime?: number | null;
+  keys: { p256dh: string; auth: string };
+}
+
+export interface PushSubscriptionPublic {
+  id: string;
+  endpoint: string;
+  user_agent: string | null;
+  preferences: PushPreferences;
+  last_notified_at: string | null;
+  created_at: string;
+}
+
+export interface VapidPublicKeyResponse {
+  publicKey: string;
+}
+
+export interface PushSendResult {
+  sent: number;
+  failed: number;
+  pruned: number;
 }

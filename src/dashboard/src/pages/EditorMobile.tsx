@@ -4,7 +4,7 @@
  * and wired to real data.
  */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Row,
@@ -17,13 +17,18 @@ import {
   IconBolt,
   IconCheck,
   IconDot,
+  IconExternal,
   IconList,
   IconMenu,
+  IconMore,
   IconPause,
   IconSettings,
   IconSparkle,
+  IconUsers,
   IconX,
 } from '@/components/design';
+import { fmtRelative } from '@/design/format';
+import { useAuth } from '@/hooks/useAuth';
 import { PLATFORMS } from '@/design/platforms';
 import { fmtCompact, fmtN, fmtDuration, fmtDateMD } from '@/design/format';
 import { useDashboardModel } from '@/design/useDashboardModel';
@@ -56,7 +61,11 @@ export interface EditorMobileProps {
   onTriggerPoll: () => void;
   onStartPolling: () => void;
   onStopPolling: () => void;
+  onTriggerDiscovery?: () => void;
+  onStartDiscovery?: () => void;
+  onStopDiscovery?: () => void;
   pollLoading?: boolean;
+  discoveryLoading?: boolean;
 }
 
 export function EditorMobile({
@@ -64,16 +73,43 @@ export function EditorMobile({
   seriesDetail,
   pollingData,
   pollingStatus,
+  discoveryStatus,
   onExtendBroadcast,
   onBroadcastDayStatusChange,
   onTriggerPoll,
   onStartPolling,
   onStopPolling,
+  onTriggerDiscovery,
+  onStartDiscovery,
+  onStopDiscovery,
   pollLoading,
+  discoveryLoading,
 }: EditorMobileProps) {
   const navigate = useNavigate();
+  const { isAdmin, logout } = useAuth();
   const [tab, setTab] = useState<MobileTab>('live');
   const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Close menu on outside click / Esc
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
 
   const model = useDashboardModel({
     seriesDetail,
@@ -126,7 +162,7 @@ export function EditorMobile({
       style={{
         display: 'flex',
         flexDirection: 'column',
-        height: '100vh',
+        minHeight: '100vh',
         background: 'var(--bg)',
       }}
     >
@@ -155,11 +191,27 @@ export function EditorMobile({
           >
             <IconMenu size={18} />
           </button>
-          <LogoMark size={16} withWordmark />
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            style={{
+              background: 'transparent',
+              border: 0,
+              padding: 0,
+              cursor: 'pointer',
+              color: 'inherit',
+              display: 'flex',
+              alignItems: 'center',
+            }}
+            title="Series list"
+            aria-label="Series list"
+          >
+            <LogoMark size={16} withWordmark />
+          </button>
           {pollingStatus?.state === 'running' && <Pill tone="live">● Live</Pill>}
         </Row>
         {seriesId && (
-          <Row gap={4}>
+          <Row gap={4} style={{ position: 'relative' }}>
             <button
               type="button"
               className="btn btn-ghost btn-xs"
@@ -170,16 +222,102 @@ export function EditorMobile({
             >
               <IconSettings size={16} />
             </button>
+            <div ref={menuRef} style={{ position: 'relative' }}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-xs"
+                style={{ padding: 6 }}
+                onClick={() => setMenuOpen((o) => !o)}
+                title="Account menu"
+                aria-label="Account menu"
+                aria-expanded={menuOpen}
+              >
+                <IconMore size={16} />
+              </button>
+              {menuOpen && (
+                <div
+                  role="menu"
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: 'calc(100% + 6px)',
+                    minWidth: 180,
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+                    padding: 4,
+                    zIndex: 20,
+                  }}
+                >
+                  <MenuItem
+                    onClick={() => {
+                      setMenuOpen(false);
+                      navigate('/');
+                    }}
+                  >
+                    Series list
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      setMenuOpen(false);
+                      navigate(`/explore/${seriesId}`);
+                    }}
+                  >
+                    Explore (post-event)
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      setMenuOpen(false);
+                      navigate('/settings/notifications');
+                    }}
+                  >
+                    Notifications
+                  </MenuItem>
+                  {isAdmin && (
+                    <>
+                      <MenuItem
+                        icon={<IconUsers size={13} />}
+                        onClick={() => {
+                          setMenuOpen(false);
+                          navigate('/users');
+                        }}
+                      >
+                        Users
+                      </MenuItem>
+                      <MenuItem
+                        onClick={() => {
+                          setMenuOpen(false);
+                          navigate('/settings/youtube-keys');
+                        }}
+                      >
+                        YouTube API keys
+                      </MenuItem>
+                    </>
+                  )}
+                  <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+                  <MenuItem
+                    onClick={() => {
+                      setMenuOpen(false);
+                      logout();
+                    }}
+                  >
+                    Sign out
+                  </MenuItem>
+                </div>
+              )}
+            </div>
           </Row>
         )}
       </header>
 
-      {/* Body */}
+      {/* Body — leaves room at the bottom for the fixed bottom nav (54px tab
+          area + iOS safe-area inset). */}
       <div
         style={{
           flex: 1,
-          overflowY: 'auto',
           padding: '14px',
+          paddingBottom: 'calc(64px + env(safe-area-inset-bottom))',
           display: 'flex',
           flexDirection: 'column',
           gap: 14,
@@ -302,8 +440,18 @@ export function EditorMobile({
                 <Row gap={6} wrap>
                   {seriesDetail.stages
                     .flatMap((s) => s.broadcast_days)
-                    .sort((a, b) => a.date.localeCompare(b.date))
-                    .slice(0, 6)
+                    .sort((a, b) => {
+                      // Live day first, then upcoming (asc), then completed (desc)
+                      const rank = (d: { status: string }) =>
+                        d.status === 'live' ? 0 : d.status === 'scheduled' ? 1 : 2;
+                      const ra = rank(a);
+                      const rb = rank(b);
+                      if (ra !== rb) return ra - rb;
+                      // Within scheduled: chronological asc; within completed: most recent first
+                      return ra === 2
+                        ? b.date.localeCompare(a.date)
+                        : a.date.localeCompare(b.date);
+                    })
                     .map((d) => {
                       const isActive = activeDay?.id === d.id;
                       return (
@@ -447,6 +595,9 @@ export function EditorMobile({
             blocklist={
               (seriesDetail?.metadata?.blocklist as string[] | undefined) ?? []
             }
+            discoveryStatus={discoveryStatus}
+            discoveryLoading={discoveryLoading}
+            onTriggerDiscovery={onTriggerDiscovery}
           />
         )}
 
@@ -542,6 +693,86 @@ export function EditorMobile({
               </Row>
             </Section>
 
+            {(() => {
+              const isDiscoveryActive = !!seriesId &&
+                !!discoveryStatus?.activeDiscoveries.includes(seriesId);
+              const lastResult = seriesId
+                ? discoveryStatus?.lastResults?.[seriesId] ?? null
+                : null;
+              return (
+                <Section
+                  eyebrow="Discovery"
+                  title={
+                    isDiscoveryActive
+                      ? `Running${
+                          lastResult
+                            ? ` · last ${fmtRelative(lastResult.timestamp)}`
+                            : ''
+                        }`
+                      : lastResult
+                        ? `Stopped · last ${fmtRelative(lastResult.timestamp)}`
+                        : 'Stopped'
+                  }
+                  compact
+                  right={
+                    <span className={isDiscoveryActive ? 'dot dot-live' : 'dot'} />
+                  }
+                >
+                  <Row gap={6}>
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{ flex: 1 }}
+                      onClick={onTriggerDiscovery}
+                      disabled={!onTriggerDiscovery || discoveryLoading}
+                    >
+                      <IconSparkle size={12} />{' '}
+                      {discoveryLoading ? 'Discovering…' : 'Discover now'}
+                    </button>
+                    {isDiscoveryActive ? (
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ flex: 1 }}
+                        onClick={onStopDiscovery}
+                        disabled={!onStopDiscovery}
+                      >
+                        <IconPause size={12} /> Pause
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        style={{ flex: 1 }}
+                        onClick={onStartDiscovery}
+                        disabled={!onStartDiscovery}
+                      >
+                        Start
+                      </button>
+                    )}
+                  </Row>
+                  {lastResult && (
+                    <div
+                      style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 8 }}
+                    >
+                      Last run: <strong>{lastResult.discovered}</strong> found ·{' '}
+                      <strong>{lastResult.added}</strong> added ·{' '}
+                      <strong>{lastResult.resurfaced}</strong> re-surfaced ·{' '}
+                      <strong>{lastResult.alreadyTracked}</strong> already tracked
+                      {lastResult.errors.length > 0 && (
+                        <>
+                          {' · '}
+                          <span style={{ color: 'var(--danger)' }}>
+                            {lastResult.errors.length} errors
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </Section>
+              );
+            })()}
+
             <Section eyebrow="Adapters" title={`${PLATFORMS.length} platforms`} compact>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
                 {PLATFORMS.map((p) => (
@@ -570,9 +801,15 @@ export function EditorMobile({
         )}
       </div>
 
-      {/* Bottom nav */}
+      {/* Bottom nav — fixed to viewport so it's always reachable, mirrors the
+          sticky header at the top. */}
       <nav
         style={{
+          position: 'fixed',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 5,
           borderTop: '1px solid var(--border)',
           background: 'var(--bg-raised)',
           display: 'grid',
@@ -616,33 +853,39 @@ export function EditorMobile({
 }
 
 // ── Discovery Mobile tab ──────────────────────────────────────────────────
-// Mirrors the filter + state machine from DiscoveryFeedSection so the
-// mobile view never shows Approve on already-approved streams.
-//
-//   Filter (source='auto_discovered' only):
-//     - Keep active channels (pending first approval)
-//     - Keep inactive channels when blocked / auto-paused / re-surfaced
-//
-//   Row state:
-//     - Pending (tier='community')         → [Approve] [Block]
-//     - Blocked (inactive + blocklisted)   → "BLOCKED" chip
-//     - Disabled (inactive + last_seen_at) → [Re-enable]
+// Mobile-native discovery feed: roomy cards designed for thumb-tap, with the
+// same data fidelity as DiscoveryFeedSection (external link, handle, language,
+// relative time, auto-pause reason, sort + source filter + count + clear-all).
+
+type DiscoverySortKey = 'recent' | 'viewers' | 'platform' | 'name' | 'lang';
 
 function DiscoveryMobileTab({
   seriesId,
   channels,
   defaultTier,
   blocklist,
+  discoveryStatus,
+  discoveryLoading,
+  onTriggerDiscovery,
 }: {
   seriesId: string;
   channels: Channel[];
   defaultTier: string;
   blocklist: string[];
+  discoveryStatus: DiscoveryStatus | null;
+  discoveryLoading?: boolean;
+  onTriggerDiscovery?: () => void;
 }) {
   const blocklistSet = useMemo(() => new Set(blocklist), [blocklist]);
   const [acted, setActed] = useState<Record<string, 'approved' | 'blocked'>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [rowError, setRowError] = useState<Record<string, string>>({});
+  const [sort, setSort] = useState<DiscoverySortKey>('recent');
+  const [sourceFilter, setSourceFilter] = useState<string>('all');
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
+  // Same filter as DiscoveryFeedSection
   const visible = useMemo(() => {
     return channels.filter((c) => {
       if (c.source !== 'auto_discovered') return false;
@@ -655,177 +898,596 @@ function DiscoveryMobileTab({
     });
   }, [channels, blocklistSet]);
 
-  const handleApprove = async (id: string, tier?: string) => {
-    setBusy((m) => ({ ...m, [id]: true }));
-    try {
-      await api.promoteChannel(id, tier ?? defaultTier);
-      setActed((m) => ({ ...m, [id]: 'approved' }));
-    } catch {
-      /* ignore */
-    } finally {
-      setBusy((m) => ({ ...m, [id]: false }));
-    }
-  };
+  // Build display rows with full metadata
+  const rows = useMemo(() => {
+    return visible.map((c) => {
+      const md = (c.metadata ?? {}) as {
+        stream_title?: string;
+        discovered_ccv?: number;
+        source?: string;
+        last_seen_at?: string;
+        auto_paused?: boolean;
+        auto_paused_reason?: string;
+        paused_at?: string;
+      };
+      const inBlocklist = blocklistSet.has(c.channel_identifier);
+      const autoPaused = !!md.auto_paused;
+      const actedState = acted[c.id];
+      const isPending = !actedState && c.tier === 'community';
+      const isBlocked = !actedState && !c.is_active && inBlocklist;
+      const isDisabled =
+        !actedState &&
+        !c.is_active &&
+        !inBlocklist &&
+        !!md.last_seen_at &&
+        (c.tier !== 'community' || autoPaused);
+      return {
+        id: c.id,
+        name: c.display_name,
+        handle: c.channel_identifier,
+        platform: c.platform,
+        viewers: Number(md.discovered_ccv ?? 0) || 0,
+        title: md.stream_title ?? '',
+        lang: (c.language ?? '').toUpperCase(),
+        source: md.source ?? 'keyword',
+        reason: md.auto_paused_reason ?? '',
+        pausedAt: md.paused_at ?? md.last_seen_at ?? c.added_at,
+        addedAt: c.added_at,
+        tier: c.tier,
+        autoPaused,
+        isPending,
+        isBlocked,
+        isDisabled,
+        actedState,
+      };
+    });
+  }, [visible, acted, blocklistSet]);
 
-  const handleBlock = async (id: string) => {
-    setBusy((m) => ({ ...m, [id]: true }));
+  const sourceOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.source))).sort(),
+    [rows],
+  );
+
+  const filtered = useMemo(() => {
+    if (sourceFilter === 'all') return rows;
+    return rows.filter((r) => r.source === sourceFilter);
+  }, [rows, sourceFilter]);
+
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    arr.sort((a, b) => {
+      switch (sort) {
+        case 'viewers':
+          return b.viewers - a.viewers;
+        case 'platform':
+          return (
+            (a.platform ?? '').localeCompare(b.platform ?? '') ||
+            a.name.localeCompare(b.name)
+          );
+        case 'name':
+          return a.name.localeCompare(b.name);
+        case 'lang':
+          return (
+            (a.lang || 'ZZZ').localeCompare(b.lang || 'ZZZ') || b.viewers - a.viewers
+          );
+        case 'recent':
+        default:
+          return (b.pausedAt || b.addedAt).localeCompare(a.pausedAt || a.addedAt) || 0;
+      }
+    });
+    return arr;
+  }, [filtered, sort]);
+
+  const setRowBusy = (id: string, v: boolean) =>
+    setBusy((m) => ({ ...m, [id]: v }));
+
+  const handleApprove = useCallback(
+    async (id: string, tier?: string) => {
+      setRowBusy(id, true);
+      setRowError((m) => ({ ...m, [id]: '' }));
+      try {
+        await api.promoteChannel(id, tier ?? defaultTier);
+        setActed((m) => ({ ...m, [id]: 'approved' }));
+      } catch (err) {
+        setRowError((m) => ({
+          ...m,
+          [id]: err instanceof Error ? err.message : 'Failed to approve',
+        }));
+      } finally {
+        setRowBusy(id, false);
+      }
+    },
+    [defaultTier],
+  );
+
+  const handleBlock = useCallback(
+    async (id: string) => {
+      setRowBusy(id, true);
+      setRowError((m) => ({ ...m, [id]: '' }));
+      try {
+        await api.blockChannel(seriesId, id);
+        setActed((m) => ({ ...m, [id]: 'blocked' }));
+      } catch (err) {
+        setRowError((m) => ({
+          ...m,
+          [id]: err instanceof Error ? err.message : 'Failed to block',
+        }));
+      } finally {
+        setRowBusy(id, false);
+      }
+    },
+    [seriesId],
+  );
+
+  const handleClearAll = useCallback(async () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      return;
+    }
+    setClearing(true);
     try {
-      await api.blockChannel(seriesId, id);
-      setActed((m) => ({ ...m, [id]: 'blocked' }));
+      await api.clearDiscoveryFeed(seriesId);
     } catch {
       /* ignore */
     } finally {
-      setBusy((m) => ({ ...m, [id]: false }));
+      setClearing(false);
+      setConfirmClear(false);
     }
-  };
+  }, [confirmClear, seriesId]);
+
+  const isDiscoveryRunning =
+    !!discoveryStatus?.activeDiscoveries.includes(seriesId);
+  const lastResult = discoveryStatus?.lastResults?.[seriesId] ?? null;
 
   return (
-    <>
-      <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
-        Tap Approve to promote, Re-enable to resume a paused channel, or
-        Block to hide.
+    <Col gap={12}>
+      {/* Header: status + count + run-now */}
+      <div className="card" style={{ padding: 14 }}>
+        <Row justify="space-between" style={{ alignItems: 'center' }}>
+          <Col gap={3} style={{ minWidth: 0 }}>
+            <span className="eyebrow" style={{ fontSize: 10 }}>
+              Discovery feed
+            </span>
+            <span style={{ fontSize: 16, fontWeight: 600 }}>
+              {sorted.length} candidate{sorted.length === 1 ? '' : 's'}
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+              {isDiscoveryRunning ? (
+                <>
+                  Auto-discovery <strong style={{ color: 'var(--live)' }}>running</strong>
+                  {lastResult
+                    ? ` · last ${fmtRelative(lastResult.timestamp)}`
+                    : ''}
+                </>
+              ) : lastResult ? (
+                <>Auto-discovery stopped · last {fmtRelative(lastResult.timestamp)}</>
+              ) : (
+                <>Auto-discovery stopped</>
+              )}
+            </span>
+          </Col>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={onTriggerDiscovery}
+            disabled={!onTriggerDiscovery || discoveryLoading}
+            style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}
+          >
+            <IconSparkle size={14} />{' '}
+            {discoveryLoading ? 'Running…' : 'Run now'}
+          </button>
+        </Row>
       </div>
-      <Col gap={10}>
-        {visible.map((c) => {
-          const md = (c.metadata ?? {}) as {
-            stream_title?: string;
-            discovered_ccv?: number;
-            source?: string;
-            last_seen_at?: string;
-            auto_paused?: boolean;
-          };
-          const inBlocklist = blocklistSet.has(c.channel_identifier);
-          const autoPaused = !!md.auto_paused;
-          const actedState = acted[c.id];
-          const isPending = !actedState && c.tier === 'community';
-          const isBlocked = !actedState && !c.is_active && inBlocklist;
-          const isDisabled =
-            !actedState &&
-            !c.is_active &&
-            !inBlocklist &&
-            !!md.last_seen_at &&
-            (c.tier !== 'community' || autoPaused);
-          const isBusy = !!busy[c.id];
 
+      {/* Sort chips — full-width scrollable */}
+      <Col gap={6}>
+        <span className="eyebrow" style={{ fontSize: 10 }}>
+          Sort
+        </span>
+        <Row gap={6} style={{ overflowX: 'auto', paddingBottom: 2 }}>
+          {(['recent', 'viewers', 'platform', 'name', 'lang'] as DiscoverySortKey[]).map(
+            (s) => (
+              <SortChipMobile
+                key={s}
+                active={sort === s}
+                onClick={() => setSort(s)}
+                label={s === 'lang' ? 'Language' : capitalise(s)}
+              />
+            ),
+          )}
+        </Row>
+      </Col>
+
+      {/* Source filter — full-width select */}
+      {sourceOptions.length > 1 && (
+        <Col gap={6}>
+          <span className="eyebrow" style={{ fontSize: 10 }}>
+            Source
+          </span>
+          <select
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              fontSize: 14,
+              background: 'var(--bg-card)',
+              color: 'var(--fg)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+            }}
+          >
+            <option value="all">All sources ({rows.length})</option>
+            {sourceOptions.map((s) => (
+              <option key={s} value={s}>
+                {s} ({rows.filter((r) => r.source === s).length})
+              </option>
+            ))}
+          </select>
+        </Col>
+      )}
+
+      {/* Rows */}
+      <Col gap={10}>
+        {sorted.map((r) => {
+          const isBusy = !!busy[r.id];
+          const error = rowError[r.id];
           return (
-            <div key={c.id} className="card" style={{ padding: 14 }}>
-              <Row justify="space-between">
-                <Row gap={8}>
-                  <PlatformPip id={c.platform} />
-                  <span style={{ fontSize: 14, fontWeight: 500 }}>
-                    {c.display_name}
-                  </span>
-                </Row>
-                <span className="mono" style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
-                  {md.source ?? 'keyword'}
-                </span>
-              </Row>
-              {md.stream_title && (
-                <div
+            <div key={r.id} className="card" style={{ padding: 14 }}>
+              {/* Row 1 — name + external link + chips */}
+              <Row gap={8} style={{ alignItems: 'center', minWidth: 0 }} wrap>
+                <PlatformPip id={r.platform} />
+                <span
                   style={{
-                    fontSize: 12,
-                    color: 'var(--fg-muted)',
-                    marginTop: 6,
+                    fontSize: 15,
+                    fontWeight: 600,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
+                    minWidth: 0,
+                    flex: '1 1 auto',
                   }}
                 >
-                  {md.stream_title}
-                </div>
-              )}
-              <Row gap={8} style={{ marginTop: 10, alignItems: 'center' }}>
-                <span className="tabular" style={{ fontSize: 16, fontWeight: 500 }}>
-                  {fmtCompact(Number(md.discovered_ccv ?? 0) || 0)}
+                  {r.name}
                 </span>
-                <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>viewers</span>
-                {autoPaused && (
+                <a
+                  href={channelUrlMobile(r.platform, r.handle)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    color: 'var(--fg-dim)',
+                    display: 'inline-flex',
+                    padding: 6,
+                    border: '1px solid var(--border)',
+                    borderRadius: 6,
+                  }}
+                  aria-label="Open channel in a new tab"
+                  title="Open channel"
+                >
+                  <IconExternal size={14} />
+                </a>
+              </Row>
+
+              {/* Row 2 — handle + language */}
+              <Row gap={6} style={{ marginTop: 6, alignItems: 'center' }} wrap>
+                {r.handle && (
                   <span
+                    className="mono"
                     style={{
-                      fontSize: 9,
-                      padding: '2px 6px',
-                      borderRadius: 3,
-                      background: 'color-mix(in oklab, var(--warn) 16%, transparent)',
-                      color: 'var(--warn)',
-                      fontFamily: 'var(--font-mono)',
-                      letterSpacing: '0.04em',
-                      textTransform: 'uppercase',
+                      fontSize: 11,
+                      color: 'var(--fg-muted)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      maxWidth: '60%',
                     }}
+                    title={r.handle}
                   >
-                    Auto-paused
+                    {r.handle}
                   </span>
                 )}
+                {r.lang && (
+                  <span
+                    className="mono"
+                    style={{
+                      fontSize: 10,
+                      color: 'var(--fg-muted)',
+                      padding: '3px 7px',
+                      borderRadius: 3,
+                      background: 'var(--bg-sunken)',
+                      letterSpacing: '0.08em',
+                    }}
+                  >
+                    {r.lang}
+                  </span>
+                )}
+              </Row>
+
+              {/* Row 3 — stream title (multi-line, clamped to 2) */}
+              {r.title ? (
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: 'var(--fg-muted)',
+                    marginTop: 8,
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                    lineHeight: 1.35,
+                  }}
+                  title={r.title}
+                >
+                  {r.title}
+                </div>
+              ) : (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: 'var(--fg-dim)',
+                    marginTop: 8,
+                    fontStyle: 'italic',
+                  }}
+                >
+                  no stream title
+                </div>
+              )}
+
+              {/* Row 4 — meta strip: source · time · pause reason */}
+              <Row
+                gap={8}
+                style={{ marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}
+              >
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    color: 'var(--fg-dim)',
+                    padding: '2px 6px',
+                    borderRadius: 3,
+                    background: 'var(--bg-sunken)',
+                    letterSpacing: '0.04em',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {r.source}
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+                  {fmtRelative(r.pausedAt)}
+                </span>
+                {r.reason && (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--warn)',
+                      fontStyle: 'italic',
+                    }}
+                    title={r.reason}
+                  >
+                    {r.reason}
+                  </span>
+                )}
+              </Row>
+
+              {/* Row 5 — viewers + status chips */}
+              <Row
+                gap={8}
+                style={{
+                  marginTop: 12,
+                  alignItems: 'baseline',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span
+                  className="tabular"
+                  style={{ fontSize: 22, fontWeight: 600, lineHeight: 1 }}
+                >
+                  {fmtCompact(r.viewers)}
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+                  viewers
+                </span>
                 <div style={{ flex: 1 }} />
-                {actedState === 'approved' && (
+                {r.actedState === 'approved' && (
                   <StatusChipMobile tone="live" label="Approved" />
                 )}
-                {actedState === 'blocked' && (
+                {r.actedState === 'blocked' && (
                   <StatusChipMobile tone="danger" label="Blocked" />
                 )}
-                {isBlocked && <StatusChipMobile tone="danger" label="Blocked" />}
+                {r.isPending && !r.actedState && (
+                  <StatusChipMobile tone="info" label="Pending" />
+                )}
+                {r.autoPaused && !r.actedState && (
+                  <StatusChipMobile tone="warn" label="Auto-paused" />
+                )}
+                {r.isBlocked && (
+                  <StatusChipMobile tone="danger" label="Blocked" />
+                )}
               </Row>
-              {isPending && !actedState && (
-                <Row gap={6} style={{ marginTop: 10 }}>
+
+              {/* Inline error after a failed action */}
+              {error && (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--danger)',
+                    marginTop: 8,
+                    padding: '6px 8px',
+                    background: 'color-mix(in oklab, var(--danger) 10%, transparent)',
+                    borderRadius: 4,
+                  }}
+                >
+                  {error}
+                </div>
+              )}
+
+              {/* Row 6 — actions */}
+              {r.isPending && !r.actedState && (
+                <Row gap={8} style={{ marginTop: 12 }}>
                   <button
                     type="button"
                     className="btn"
                     style={{
                       flex: 1,
                       justifyContent: 'center',
+                      padding: '12px 0',
+                      fontSize: 14,
                       color: 'var(--danger)',
+                      border: '1px solid var(--danger)',
                     }}
-                    onClick={() => handleBlock(c.id)}
+                    onClick={() => handleBlock(r.id)}
                     disabled={isBusy}
                   >
-                    <IconX size={14} /> Block
+                    <IconX size={15} /> {isBusy ? '…' : 'Block'}
                   </button>
                   <button
                     type="button"
                     className="btn btn-primary"
-                    style={{ flex: 1, justifyContent: 'center' }}
-                    onClick={() => handleApprove(c.id)}
+                    style={{
+                      flex: 1,
+                      justifyContent: 'center',
+                      padding: '12px 0',
+                      fontSize: 14,
+                    }}
+                    onClick={() => handleApprove(r.id)}
                     disabled={isBusy}
                   >
-                    <IconCheck size={14} /> {isBusy ? '…' : 'Approve'}
+                    <IconCheck size={15} /> {isBusy ? '…' : 'Approve'}
                   </button>
                 </Row>
               )}
-              {isDisabled && !actedState && (
+              {r.isDisabled && !r.actedState && (
                 <button
                   type="button"
                   className="btn btn-primary"
                   style={{
-                    marginTop: 10,
+                    marginTop: 12,
                     width: '100%',
                     justifyContent: 'center',
+                    padding: '12px 0',
+                    fontSize: 14,
                   }}
-                  onClick={() => handleApprove(c.id, c.tier)}
+                  onClick={() => handleApprove(r.id, r.tier)}
                   disabled={isBusy}
                 >
-                  <IconCheck size={14} /> {isBusy ? '…' : 'Re-enable'}
+                  <IconCheck size={15} /> {isBusy ? '…' : 'Re-enable'}
                 </button>
               )}
             </div>
           );
         })}
-        {visible.length === 0 && (
+        {sorted.length === 0 && (
           <div className="placeholder" style={{ height: 100 }}>
             No discovery candidates yet
           </div>
         )}
       </Col>
-    </>
+
+      {/* Clear all — bottom destructive action */}
+      {sorted.length > 0 && (
+        <button
+          type="button"
+          className="btn"
+          onClick={handleClearAll}
+          onBlur={() => setConfirmClear(false)}
+          disabled={clearing}
+          style={{
+            marginTop: 4,
+            padding: '12px 0',
+            fontSize: 13,
+            justifyContent: 'center',
+            color: confirmClear ? 'white' : 'var(--fg-muted)',
+            background: confirmClear ? 'var(--danger)' : 'transparent',
+            border: `1px solid ${confirmClear ? 'var(--danger)' : 'var(--border)'}`,
+          }}
+        >
+          <IconX size={13} />{' '}
+          {clearing ? 'Clearing…' : confirmClear ? 'Tap again to confirm' : 'Clear all candidates'}
+        </button>
+      )}
+    </Col>
   );
+}
+
+function SortChipMobile({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: '8px 14px',
+        borderRadius: 999,
+        fontSize: 12,
+        fontFamily: 'var(--font-mono)',
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        fontWeight: 600,
+        background: active ? 'var(--red)' : 'transparent',
+        border: `1px solid ${active ? 'var(--red)' : 'var(--border)'}`,
+        color: active ? 'white' : 'var(--fg-muted)',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+        flex: '0 0 auto',
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function capitalise(s: string): string {
+  if (!s) return '';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function channelUrlMobile(platform: string | null, id: string): string {
+  switch (platform) {
+    case 'twitch':
+      return `https://twitch.tv/${id}`;
+    case 'youtube':
+      if (id.startsWith('yt-video:')) return `https://www.youtube.com/watch?v=${id.slice(9)}`;
+      if (id.startsWith('@')) return `https://www.youtube.com/${id}`;
+      return `https://www.youtube.com/channel/${id}`;
+    case 'kick':
+      return `https://kick.com/${id}`;
+    case 'tiktok':
+      return `https://www.tiktok.com/${id.startsWith('@') ? id : '@' + id}/live`;
+    case 'steam':
+      return `https://steamcommunity.com/broadcast/watch/${id}`;
+    case 'soop':
+      return `https://www.sooplive.co.kr/${id}`;
+    case 'chzzk':
+      return `https://chzzk.naver.com/${id}`;
+    case 'trovo':
+      return `https://trovo.live/${id}`;
+    default:
+      return '#';
+  }
 }
 
 function StatusChipMobile({
   tone,
   label,
 }: {
-  tone: 'live' | 'danger';
+  tone: 'live' | 'danger' | 'info' | 'warn';
   label: string;
 }) {
-  const color = tone === 'live' ? 'var(--live)' : 'var(--danger)';
+  const color =
+    tone === 'live'
+      ? 'var(--live)'
+      : tone === 'danger'
+        ? 'var(--danger)'
+        : tone === 'warn'
+          ? 'var(--warn)'
+          : 'var(--info)';
   return (
     <span
       style={{
@@ -842,5 +1504,47 @@ function StatusChipMobile({
     >
       {label}
     </span>
+  );
+}
+
+// ── Account/admin menu item ───────────────────────────────────────────────
+function MenuItem({
+  children,
+  onClick,
+  icon,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  icon?: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        width: '100%',
+        padding: '8px 10px',
+        background: 'transparent',
+        border: 0,
+        textAlign: 'left',
+        fontSize: 13,
+        color: 'var(--fg)',
+        cursor: 'pointer',
+        borderRadius: 4,
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-sunken)';
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+      }}
+    >
+      {icon}
+      <span>{children}</span>
+    </button>
   );
 }

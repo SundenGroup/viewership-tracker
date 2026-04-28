@@ -31,6 +31,7 @@ export interface StartPageProps {
   onCreate: () => void;
   onOpenUsers?: () => void;
   onOpenYouTubeKeys?: () => void;
+  onOpenNotifications?: () => void;
 }
 
 type StatusFilter = 'all' | 'active' | 'draft' | 'completed';
@@ -42,8 +43,9 @@ export function StartPage({
   onCreate,
   onOpenUsers,
   onOpenYouTubeKeys,
+  onOpenNotifications,
 }: StartPageProps) {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, isEditor } = useAuth();
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [q, setQ] = useState('');
 
@@ -210,6 +212,25 @@ export function StartPage({
                 title="YouTube API keys"
               >
                 YT Keys
+              </button>
+            )}
+            {isEditor && onOpenNotifications && (
+              <button
+                type="button"
+                onClick={onOpenNotifications}
+                className="btn"
+                style={{
+                  fontSize: 12,
+                  padding: '5px 10px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  background: 'transparent',
+                  border: '1px solid var(--border)',
+                }}
+                title="Push notifications"
+              >
+                Notifications
               </button>
             )}
             <ThemeToggle />

@@ -31,6 +31,12 @@ export function InteractiveMainChart({
   initialShowTotal = true,
   timestamps,
   timezone,
+  dayBoundaries,
+  onTimestampClick,
+  onRangeSelect,
+  anchorTimestamp,
+  rangeFrom,
+  rangeTo,
 }: {
   series: DimensionSeries;
   totalData: number[];
@@ -43,6 +49,26 @@ export function InteractiveMainChart({
    *  beneath the plot. Formatted in `timezone` (falls back to local). */
   timestamps?: string[];
   timezone?: string;
+  /**
+   * Vertical dashed boundary markers at the start of each broadcast day,
+   * mirroring the legacy report's day-of-broadcast labelling. The `index`
+   * is the data-array index where the day starts. Labels render at the
+   * bottom of the chart.
+   */
+  dayBoundaries?: Array<{ index: number; label: string }>;
+  /** Fired when the user clicks (no drag) on a chart point. */
+  onTimestampClick?: (iso: string) => void;
+  /**
+   * Fired when the user drags across the chart to select a window
+   * (≥5 px drag distance). Both timestamps come from the timestamps array.
+   */
+  onRangeSelect?: (fromIso: string, toIso: string) => void;
+  /** ISO timestamp to render as a vertical dashed red line (single-pin marker). */
+  anchorTimestamp?: string | null;
+  /** ISO range start to render as a translucent rectangle. */
+  rangeFrom?: string | null;
+  /** ISO range end to render as a translucent rectangle. */
+  rangeTo?: string | null;
 }) {
   const [dimension, setDimension] = useState<ChartDimension>(initialDimension);
   const [mode, setMode] = useState<ChartMode>(initialMode);
@@ -147,6 +173,12 @@ export function InteractiveMainChart({
         dimension={dimension}
         mode={mode}
         showTotal={showTotal}
+        dayBoundaries={dayBoundaries}
+        onTimestampClick={onTimestampClick}
+        onRangeSelect={onRangeSelect}
+        anchorTimestamp={anchorTimestamp}
+        rangeFrom={rangeFrom}
+        rangeTo={rangeTo}
       >
         {dimension === 'total' ? (
           // Total dimension always renders a single filled area chart.
@@ -371,6 +403,12 @@ function ChartHoverOverlay({
   dimension,
   mode,
   showTotal,
+  dayBoundaries,
+  onTimestampClick,
+  onRangeSelect,
+  anchorTimestamp,
+  rangeFrom,
+  rangeTo,
   children,
 }: {
   height: number;
@@ -383,11 +421,22 @@ function ChartHoverOverlay({
   dimension: ChartDimension;
   mode: ChartMode;
   showTotal: boolean;
+  dayBoundaries?: Array<{ index: number; label: string }>;
+  onTimestampClick?: (iso: string) => void;
+  onRangeSelect?: (fromIso: string, toIso: string) => void;
+  anchorTimestamp?: string | null;
+  rangeFrom?: string | null;
+  rangeTo?: string | null;
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [hoverX, setHoverX] = useState<number | null>(null);
+  // Drag-to-select state. dragStartX is the container-local x where pointer
+  // went down; dragEndX is where it currently is. We wait until pointer-up to
+  // decide whether it was a click (small drag) or a range select.
+  const [dragStartX, setDragStartX] = useState<number | null>(null);
+  const [dragEndX, setDragEndX] = useState<number | null>(null);
 
   // Pick the authoritative sample count — prefer timestamps, then the
   // actual rendered series so the tracker locks onto the rightmost sample
@@ -405,6 +454,17 @@ function ChartHoverOverlay({
   const svgPad = dimension === 'total' ? 8 : 24;
   const padFracW = width > 0 ? svgPad / width : 0;
 
+  // Map a container-local x → data index (clamped to data bounds).
+  const xToIdx = (x: number, rectW: number): number => {
+    const dataLeft = padFracW * rectW;
+    const dataRight = (1 - padFracW) * rectW;
+    const frac = Math.max(
+      0,
+      Math.min(1, (x - dataLeft) / Math.max(1, dataRight - dataLeft)),
+    );
+    return Math.round(frac * (n - 1));
+  };
+
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (n < 2) return;
     const rect = ref.current?.getBoundingClientRect();
@@ -419,16 +479,85 @@ function ChartHoverOverlay({
         setHoverIdx(null);
         setHoverX(null);
       }
-      return;
+    } else {
+      const frac = (x - dataLeft) / Math.max(1, dataRight - dataLeft);
+      const idx = Math.round(frac * (n - 1));
+      setHoverIdx(idx);
+      setHoverX(x);
     }
-    const frac = (x - dataLeft) / Math.max(1, dataRight - dataLeft);
-    const idx = Math.round(frac * (n - 1));
-    setHoverIdx(idx);
-    setHoverX(x);
+    // While dragging, track the end x even outside the data zone (clamped
+    // to the data area for the visual rectangle).
+    if (dragStartX != null) {
+      const clamped = Math.max(dataLeft, Math.min(dataRight, x));
+      setDragEndX(clamped);
+    }
   };
   const onPointerLeave = () => {
     setHoverIdx(null);
     setHoverX(null);
+    // If user released outside the chart we also need to clear drag state
+    // here (pointer-up only fires inside the captured area).
+    if (dragStartX != null) {
+      setDragStartX(null);
+      setDragEndX(null);
+    }
+  };
+
+  // Drag-to-select / click distinction. Only enabled when the parent passed
+  // either an onTimestampClick or onRangeSelect — otherwise hover-only.
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!onTimestampClick && !onRangeSelect) return;
+    if (n < 2) return;
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = e.clientX - rect.left;
+    const dataLeft = padFracW * rect.width;
+    const dataRight = (1 - padFracW) * rect.width;
+    if (x < dataLeft || x > dataRight) return;
+    try {
+      (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    } catch {
+      /* harmless — capture isn't critical */
+    }
+    setDragStartX(x);
+    setDragEndX(x);
+  };
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragStartX == null) return;
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect) {
+      setDragStartX(null);
+      setDragEndX(null);
+      return;
+    }
+    const x = e.clientX - rect.left;
+    const dataLeft = padFracW * rect.width;
+    const dataRight = (1 - padFracW) * rect.width;
+    const clampedEnd = Math.max(dataLeft, Math.min(dataRight, x));
+    const dist = Math.abs(clampedEnd - dragStartX);
+    try {
+      (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    if (dist < 5) {
+      // Click → single anchor
+      if (onTimestampClick && timestamps && timestamps.length > 1) {
+        const idx = xToIdx(clampedEnd, rect.width);
+        if (timestamps[idx]) onTimestampClick(timestamps[idx]!);
+      }
+    } else {
+      // Drag → range select
+      if (onRangeSelect && timestamps && timestamps.length > 1) {
+        const idxA = xToIdx(Math.min(dragStartX, clampedEnd), rect.width);
+        const idxB = xToIdx(Math.max(dragStartX, clampedEnd), rect.width);
+        const a = timestamps[idxA];
+        const b = timestamps[idxB];
+        if (a && b && a !== b) onRangeSelect(a, b);
+      }
+    }
+    setDragStartX(null);
+    setDragEndX(null);
   };
 
   // Build tooltip rows based on the current dimension + mode.
@@ -503,19 +632,138 @@ function ChartHoverOverlay({
     }
   }
 
+  // Resolve anchor + range timestamps to data indices for visual overlays.
+  const anchorIdx = useMemo(() => {
+    if (!anchorTimestamp || !timestamps || timestamps.length === 0) return null;
+    return findClosestTsIdx(timestamps, anchorTimestamp);
+  }, [anchorTimestamp, timestamps]);
+  const rangeIdxA = useMemo(() => {
+    if (!rangeFrom || !timestamps || timestamps.length === 0) return null;
+    return findClosestTsIdx(timestamps, rangeFrom);
+  }, [rangeFrom, timestamps]);
+  const rangeIdxB = useMemo(() => {
+    if (!rangeTo || !timestamps || timestamps.length === 0) return null;
+    return findClosestTsIdx(timestamps, rangeTo);
+  }, [rangeTo, timestamps]);
+
+  const idxToLeftPct = (i: number): number => {
+    if (n < 2) return padFracW * 100;
+    return (padFracW + (i / (n - 1)) * (1 - 2 * padFracW)) * 100;
+  };
+
   return (
     <div
       ref={ref}
       onPointerMove={onPointerMove}
       onPointerLeave={onPointerLeave}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
       style={{
         height,
         width: '100%',
         position: 'relative',
-        cursor: hoverIdx != null ? 'crosshair' : 'default',
+        cursor: onTimestampClick || onRangeSelect ? 'crosshair' : 'default',
+        userSelect: 'none',
       }}
     >
       {children}
+
+      {/* Day-boundary markers — vertical dashed lines + labels at each
+          broadcast-day start. Mirrors the legacy report's chart annotations.
+          Rendered above {children} (which contains the SVG data lines) but
+          below the hover tracker so it doesn't fight the user's pointer. */}
+      {dayBoundaries && dayBoundaries.length > 0 && n > 1 &&
+        dayBoundaries.map((b) => {
+          if (b.index < 0 || b.index >= n) return null;
+          const leftPct = (padFracW + (b.index / (n - 1)) * (1 - 2 * padFracW)) * 100;
+          return (
+            <div
+              key={`${b.index}-${b.label}`}
+              style={{
+                position: 'absolute',
+                left: `${leftPct}%`,
+                top: 0,
+                bottom: 0,
+                pointerEvents: 'none',
+              }}
+            >
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  bottom: 16,
+                  borderLeft: '1px dashed var(--fg-dim)',
+                  opacity: 0.55,
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 4,
+                  bottom: 2,
+                  fontSize: 9.5,
+                  color: 'var(--fg-muted)',
+                  fontFamily: 'var(--font-mono)',
+                  letterSpacing: '0.04em',
+                  whiteSpace: 'nowrap',
+                  background:
+                    'color-mix(in oklab, var(--bg-card) 80%, transparent)',
+                  padding: '1px 4px',
+                  borderRadius: 2,
+                }}
+              >
+                {b.label}
+              </div>
+            </div>
+          );
+        })}
+
+      {/* Pinned range rectangle — translucent fill with dashed outline.
+          Wins over the in-progress drag rectangle when both are present. */}
+      {rangeIdxA != null && rangeIdxB != null && n > 1 && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${Math.min(idxToLeftPct(rangeIdxA), idxToLeftPct(rangeIdxB))}%`,
+            width: `${Math.abs(idxToLeftPct(rangeIdxB) - idxToLeftPct(rangeIdxA))}%`,
+            top: 0,
+            bottom: 16,
+            background: 'color-mix(in oklab, var(--red) 12%, transparent)',
+            border: '1px dashed color-mix(in oklab, var(--red) 50%, transparent)',
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+
+      {/* In-progress drag rectangle — fades while held down. */}
+      {dragStartX != null && dragEndX != null && Math.abs(dragEndX - dragStartX) >= 5 && ref.current && (
+        <div
+          style={{
+            position: 'absolute',
+            left: Math.min(dragStartX, dragEndX),
+            width: Math.abs(dragEndX - dragStartX),
+            top: 0,
+            bottom: 16,
+            background: 'color-mix(in oklab, var(--red) 18%, transparent)',
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+
+      {/* Anchor line — single pinned timestamp marker (red dashed vertical). */}
+      {anchorIdx != null && n > 1 && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${idxToLeftPct(anchorIdx)}%`,
+            top: 0,
+            bottom: 16,
+            borderLeft: '1px dashed var(--red)',
+            pointerEvents: 'none',
+          }}
+        />
+      )}
 
       {/* Vertical tracker line + dot */}
       {hoverIdx != null && trackerX != null && (
@@ -634,4 +882,19 @@ function ChartHoverOverlay({
       )}
     </div>
   );
+}
+
+/** Find the index in `timestamps` whose value is closest to `iso`. */
+function findClosestTsIdx(timestamps: string[], iso: string): number {
+  const target = new Date(iso).getTime();
+  let best = 0;
+  let bestDelta = Infinity;
+  for (let i = 0; i < timestamps.length; i++) {
+    const d = Math.abs(new Date(timestamps[i]!).getTime() - target);
+    if (d < bestDelta) {
+      bestDelta = d;
+      best = i;
+    }
+  }
+  return best;
 }

@@ -23,6 +23,13 @@ import type {
   ReportPayload,
   TournamentStatus,
   BroadcastStatus,
+  SnapshotAtTimestampResponse,
+  RangeLeaderboardResponse,
+  PushSubscriptionPayload,
+  PushSubscriptionPublic,
+  PushPreferences,
+  VapidPublicKeyResponse,
+  PushSendResult,
 } from '@/types/api';
 
 // ── Base ─────────────────────────────────────────────────────────────────
@@ -311,6 +318,33 @@ export function getTimeSeries(query: TimeSeriesQuery & { languages?: string[]; p
   if (query.groupBy) params.set('groupBy', query.groupBy);
   appendFilterParams(params, query.languages, query.platforms);
   return request<TimeSeriesResponse>(`/api/viewership/timeseries?${params}`);
+}
+
+// ── Explore page — snapshot-at-timestamp ──────────────────────────────────
+// Returns every channel's CCV at (or near) a specific moment within a series.
+export function getSnapshotAtTimestamp(
+  seriesId: string,
+  timestamp: string,
+  withinSeconds = 60,
+) {
+  const params = new URLSearchParams({
+    seriesId,
+    timestamp,
+    within: String(withinSeconds),
+  });
+  return request<SnapshotAtTimestampResponse>(
+    `/api/viewership/snapshot-at-timestamp?${params}`,
+  );
+}
+
+// ── Explore page — range-leaderboard ──────────────────────────────────────
+// Returns leaderboard stats (peak/avg/viewed-hours per channel) for an
+// arbitrary timestamp range within a series. Drives the drag-to-select panel.
+export function getRangeLeaderboard(seriesId: string, from: string, to: string) {
+  const params = new URLSearchParams({ seriesId, from, to });
+  return request<RangeLeaderboardResponse>(
+    `/api/viewership/range-leaderboard?${params}`,
+  );
 }
 
 // ── Polling / Orchestrator ─────────────────────────────────────────────────
@@ -649,4 +683,46 @@ export function getPublicLeaderboard(shortName: string, scope?: string, scopeEnt
   appendFilterParams(params, languages, platforms);
   const qs = params.toString();
   return publicRequest<LeaderboardResponse>(`/api/public/${shortName}/leaderboard${qs ? `?${qs}` : ''}`);
+}
+
+// ── Web Push notifications ────────────────────────────────────────────────
+
+export function getVapidPublicKey() {
+  return request<VapidPublicKeyResponse>('/api/push/vapid-public-key');
+}
+
+export function subscribeToPush(
+  subscription: PushSubscriptionPayload,
+  preferences?: Partial<PushPreferences>,
+) {
+  return request<PushSubscriptionPublic>('/api/push/subscribe', {
+    method: 'POST',
+    body: JSON.stringify({
+      subscription,
+      preferences,
+      userAgent: navigator.userAgent,
+    }),
+  });
+}
+
+export function unsubscribeFromPush(endpoint: string) {
+  return request<{ ok: boolean }>('/api/push/unsubscribe', {
+    method: 'POST',
+    body: JSON.stringify({ endpoint }),
+  });
+}
+
+export function listPushSubscriptions() {
+  return request<{ subscriptions: PushSubscriptionPublic[] }>('/api/push/subscriptions');
+}
+
+export function updatePushPreferences(endpoint: string, preferences: Partial<PushPreferences>) {
+  return request<PushSubscriptionPublic>('/api/push/preferences', {
+    method: 'PUT',
+    body: JSON.stringify({ endpoint, preferences }),
+  });
+}
+
+export function sendTestPush() {
+  return request<PushSendResult>('/api/push/test', { method: 'POST' });
 }

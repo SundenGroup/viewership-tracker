@@ -140,9 +140,9 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
   //   - /report/:variant/:scopeSlug path segment wins (YYYY-MM-DD → day,
   //     stage-<order> → stage, UUID → day or stage)
   //   - legacy ?stage=<id> / ?day=<id> query params still resolve
-  //   - otherwise auto-pick the latest stage where every broadcast day is
-  //     marked completed (so the preview always lands on real post-event data)
-  //   - else fall back to series-level scope
+  //   - otherwise the bare URL means "entire series" — the operator's
+  //     ExportDialog produces the slugless URL specifically for the
+  //     "Entire series" radio choice, so we must honor it as series scope.
   const resolvedScope: { level: ScopeLevel; id: string; label: string } | null = useMemo(() => {
     if (!seriesInfo) return null;
 
@@ -183,14 +183,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       const s = seriesInfo.stages.find((x) => x.id === stageIdFromUrl);
       if (s) return { level: 'stage', id: s.id, label: s.name };
     }
-    // Highest-order stage whose every broadcast day is completed.
-    const completedStages = [...seriesInfo.stages]
-      .filter(
-        (s) => s.broadcast_days.length > 0 && s.broadcast_days.every((d) => d.status === 'completed'),
-      )
-      .sort((a, b) => b.order - a.order);
-    const pick = completedStages[0];
-    if (pick) return { level: 'stage', id: pick.id, label: pick.name };
+    // No slug, no query params → entire series.
     return { level: 'series', id: seriesInfo.id, label: seriesInfo.name };
   }, [seriesInfo, scopeSlug, stageIdFromUrl, dayIdFromUrl]);
 
@@ -303,6 +296,40 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     refreshMs: 60_000,
   });
 
+  // Day-boundary markers — vertical dashed line + label at the start of each
+  // broadcast day inside the current scope. Mirrors the legacy report's chart
+  // annotations (e.g. "Finals 1 - Day 1") so multi-day stage / series reports
+  // are readable at a glance. For day-scope reports there's only one day, so
+  // we skip the markers (no need to label what the whole chart already is).
+  const dayBoundaries = useMemo<Array<{ index: number; label: string }>>(() => {
+    if (!seriesInfo || !resolvedScope || resolvedScope.level === 'day') return [];
+    if (timeline.timestamps.length === 0) return [];
+
+    // Filter days to the resolved scope.
+    let days = seriesInfo.stages.flatMap((s) => s.broadcast_days);
+    if (resolvedScope.level === 'stage') {
+      const st = seriesInfo.stages.find((s) => s.id === resolvedScope.id);
+      days = st?.broadcast_days ?? [];
+    }
+    if (days.length < 2) return []; // skip when there's nothing meaningful to label
+
+    const tsMs = timeline.timestamps.map((t) => new Date(t).getTime());
+    const out: Array<{ index: number; label: string }> = [];
+    for (const d of days) {
+      if (!d.broadcast_start) continue;
+      const startMs = new Date(d.broadcast_start).getTime();
+      const idx = tsMs.findIndex((ms) => ms >= startMs);
+      if (idx >= 0) out.push({ index: idx, label: d.label });
+    }
+    // De-dupe (a day might fall before the first sample on partial-data days)
+    const seen = new Set<number>();
+    return out.filter((b) => {
+      if (seen.has(b.index)) return false;
+      seen.add(b.index);
+      return true;
+    });
+  }, [seriesInfo, resolvedScope, timeline.timestamps]);
+
   // Compute the scope-appropriate date range — the report shouldn't claim
   // "6 Mar – 10 May" when it's only covering a stage inside that window.
   // MUST run before any early-return below to preserve the hook order
@@ -394,6 +421,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
         scopeStart={scopeStart}
         scopeEnd={scopeEnd}
         trend={trend}
+        dayBoundaries={dayBoundaries}
       />
     );
   }
@@ -408,6 +436,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       scopeStart={scopeStart}
       scopeEnd={scopeEnd}
       trend={trend}
+      dayBoundaries={dayBoundaries}
     />
   );
 }
@@ -431,6 +460,7 @@ function SimpleReport({
   scopeStart,
   scopeEnd,
   trend,
+  dayBoundaries,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
@@ -441,6 +471,7 @@ function SimpleReport({
   scopeStart: string | null;
   scopeEnd: string | null;
   trend: TrendDeltas | null;
+  dayBoundaries: Array<{ index: number; label: string }>;
 }) {
   const totalDayCount = useMemo(() => {
     if (scopeLevel === 'day') return 1;
@@ -548,6 +579,7 @@ function SimpleReport({
             totalData={timeline.total}
             timestamps={timeline.timestamps}
             timezone={seriesInfo.timezone}
+            dayBoundaries={dayBoundaries}
           />
         ) : (
           <div className="placeholder" style={{ height: 180 }}>
@@ -637,6 +669,7 @@ function DetailedReport({
   scopeStart,
   scopeEnd,
   trend,
+  dayBoundaries,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
@@ -647,6 +680,7 @@ function DetailedReport({
   scopeStart: string | null;
   scopeEnd: string | null;
   trend: TrendDeltas | null;
+  dayBoundaries: Array<{ index: number; label: string }>;
 }) {
   const totalDayCount = useMemo(() => {
     if (scopeLevel === 'day') return 1;
@@ -937,6 +971,7 @@ function DetailedReport({
             totalData={timeline.total}
             timestamps={timeline.timestamps}
             timezone={seriesInfo.timezone}
+            dayBoundaries={dayBoundaries}
           />
         ) : (
           <div className="placeholder" style={{ height: 280 }}>
