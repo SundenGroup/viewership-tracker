@@ -335,10 +335,12 @@ function AppContent() {
 
   // ── Render ─────────────────────────────────────────────────────────────
 
-  // Desktop v7 Series Form is a self-contained surface with its own chrome.
-  // On mobile, fall back to the legacy SeriesSetupPage / SeriesEditPage which
-  // already have mobile-friendly single-column flows inside MainLayout.
-  if (!isMobile && isNewPage) {
+  // SeriesFormPage is a self-contained surface with its own chrome — used
+  // for both /new and /:seriesId/edit on every viewport. The page collapses
+  // its multi-column grids and tightens padding when useViewportBelow(700)
+  // returns true, so the same form covers desktop and mobile without
+  // falling back to the legacy MainLayout shell.
+  if (isNewPage) {
     return (
       <SeriesFormPage
         mode="new"
@@ -351,7 +353,7 @@ function AppContent() {
     );
   }
 
-  if (!isMobile && isEditPage && selectedSeriesId && seriesDetail) {
+  if (isEditPage && selectedSeriesId && seriesDetail) {
     return (
       <SeriesFormPage
         mode="edit"

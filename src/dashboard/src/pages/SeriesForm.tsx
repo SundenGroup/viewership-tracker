@@ -12,6 +12,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useAuth } from '@/hooks/useAuth';
+import { useViewportBelow } from '@/hooks/useViewport';
 import * as api from '@/services/api';
 import type {
   SeriesWithStages,
@@ -343,6 +344,11 @@ export function SeriesFormPage({
 }: SeriesFormPageProps) {
   const isEdit = mode === 'edit';
   const { isAdmin } = useAuth();
+  // Phone-sized viewport — collapse multi-column grids to single column,
+  // drop chrome padding, reduce header sizes. 700 covers iPhone-class widths
+  // and tight tablet portrait, while leaving normal phones in landscape on
+  // the desktop layout.
+  const isMobile = useViewportBelow(700);
 
   const [form, setForm] = useState<SeriesFormState>(() =>
     isEdit && seriesDetail ? seriesDetailToForm(seriesDetail) : emptyForm(),
@@ -712,7 +718,7 @@ export function SeriesFormPage({
       {/* Thin top bar with wordmark + theme toggle */}
       <div
         style={{
-          padding: '14px 32px',
+          padding: isMobile ? '12px 16px' : '14px 32px',
           borderBottom: '1px solid var(--border)',
           background: 'var(--bg-raised)',
           display: 'flex',
@@ -726,12 +732,35 @@ export function SeriesFormPage({
         <ThemeToggle />
       </div>
 
-      <div style={{ padding: '32px 48px 64px', maxWidth: 1000, margin: '0 auto' }}>
-        {/* Page header */}
-        <Row justify="space-between" align="flex-start" style={{ marginBottom: 24 }}>
+      <div
+        style={{
+          padding: isMobile ? '20px 16px 96px' : '32px 48px 64px',
+          maxWidth: 1000,
+          margin: '0 auto',
+        }}
+      >
+        {/* Page header — stacks vertically on mobile so the action buttons
+            don't overflow next to the title. */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: isMobile ? 'column' : 'row',
+            justifyContent: 'space-between',
+            alignItems: isMobile ? 'stretch' : 'flex-start',
+            gap: isMobile ? 14 : 12,
+            marginBottom: 24,
+          }}
+        >
           <Col gap={4} style={{ flex: 1, minWidth: 0 }}>
             <div className="eyebrow">{isEdit ? 'Edit series' : 'New series'}</div>
-            <h1 style={{ margin: 0, fontSize: 28, letterSpacing: '-0.02em', fontWeight: 500 }}>
+            <h1
+              style={{
+                margin: 0,
+                fontSize: isMobile ? 22 : 28,
+                letterSpacing: '-0.02em',
+                fontWeight: 500,
+              }}
+            >
               {isEdit ? `Edit: ${seriesDetail?.name ?? '—'}` : 'New series'}
             </h1>
             <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginTop: 4 }}>
@@ -740,13 +769,13 @@ export function SeriesFormPage({
                 : 'Define a tournament series from scratch'}
             </div>
           </Col>
-          <Row gap={8}>
+          <Row gap={8} style={{ flexShrink: 0 }}>
             <button
               type="button"
               className="btn"
               onClick={onCancel}
               disabled={submitting}
-              style={{ whiteSpace: 'nowrap' }}
+              style={{ whiteSpace: 'nowrap', flex: isMobile ? 1 : undefined }}
             >
               Cancel
             </button>
@@ -755,12 +784,12 @@ export function SeriesFormPage({
               className="btn btn-primary"
               onClick={handleSubmit}
               disabled={submitting}
-              style={{ whiteSpace: 'nowrap' }}
+              style={{ whiteSpace: 'nowrap', flex: isMobile ? 1 : undefined }}
             >
               {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create series'}
             </button>
           </Row>
-        </Row>
+        </div>
 
         {/* Inline progress + error */}
         {(progress || error) && (
@@ -783,7 +812,7 @@ export function SeriesFormPage({
           {/* ── Basics ───────────────────────────────────────────── */}
           <Card>
             <div className="eyebrow">Basics</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
               <Field label="Series Name" required>
                 <input
                   value={form.name}
@@ -933,7 +962,7 @@ export function SeriesFormPage({
           {/* ── Discovery ────────────────────────────────────────── */}
           <Card>
             <div className="eyebrow">Discovery</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
               <Field
                 label="Discovery Keywords"
                 hint="comma-separated. Used to match new streams on Twitch/YouTube/Kick search"
@@ -998,7 +1027,7 @@ export function SeriesFormPage({
                 {lookupMsg}
               </div>
             )}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 14 }}>
               <Field label="Twitch Game ID">
                 <input
                   value={form.discovery_game_ids_twitch}
@@ -1181,7 +1210,7 @@ export function SeriesFormPage({
                     <div
                       style={{
                         display: 'grid',
-                        gridTemplateColumns: '2fr 1fr 1fr',
+                        gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr',
                         gap: 14,
                       }}
                     >
@@ -1243,7 +1272,11 @@ export function SeriesFormPage({
                                 border: '1px solid var(--border-faint)',
                                 borderRadius: 5,
                                 display: 'grid',
-                                gridTemplateColumns: '1.4fr 1fr 1fr 1fr 24px',
+                                // Phone: Label/Date/Start/End stacked; Remove at the end.
+                                // Desktop: single horizontal row.
+                                gridTemplateColumns: isMobile
+                                  ? '1fr 1fr'
+                                  : '1.4fr 1fr 1fr 1fr 24px',
                                 gap: 10,
                                 alignItems: 'flex-end',
                               }}
@@ -1333,7 +1366,9 @@ export function SeriesFormPage({
                     key={g.tempId}
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: '1fr 1.2fr 1.2fr 36px',
+                      gridTemplateColumns: isMobile
+                        ? '1fr'
+                        : '1fr 1.2fr 1.2fr 36px',
                       gap: 10,
                       alignItems: 'flex-end',
                     }}
