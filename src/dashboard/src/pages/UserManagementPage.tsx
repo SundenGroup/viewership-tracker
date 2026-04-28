@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { Card, Button, Modal, FormField, Select, TextInput } from '@/components/common';
+import { Button, Modal, FormField, Select, TextInput } from '@/components/common';
+import { SettingsShell } from '@/components/design';
 import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/hooks/useAuth';
 import * as api from '@/services/api';
@@ -146,90 +147,141 @@ export function UserManagementPage() {
   // ── Render ────────────────────────────────────────────────────────────
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
-      <Card
-        title="User Management"
-        subtitle="Manage user accounts and roles"
-        action={
-          <Button variant="primary" size="sm" onClick={openCreate}>
-            + Add User
-          </Button>
-        }
-      >
+    <SettingsShell breadcrumb="Settings · Users" title="User management">
+    <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 18,
+        gap: 16,
+      }}>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0, color: 'var(--fg)' }}>
+            User management
+          </h1>
+          <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 6, maxWidth: 720 }}>
+            Manage operator accounts. Editors can run polling and approve discoveries; admins can
+            additionally manage users, YouTube API keys, and series setup.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={openCreate}
+        >
+          + Add user
+        </button>
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         {loading && !users ? (
-          <p className="py-8 text-center text-sm text-gray-500">Loading users...</p>
+          <p style={{ padding: 32, textAlign: 'center', fontSize: 13, color: 'var(--fg-muted)' }}>
+            Loading users…
+          </p>
         ) : error ? (
-          <p className="py-8 text-center text-sm text-accent-red">{error}</p>
+          <p style={{ padding: 32, textAlign: 'center', fontSize: 13, color: 'var(--red)' }}>
+            {error}
+          </p>
         ) : !users || users.length === 0 ? (
-          <p className="py-8 text-center text-sm text-gray-500">No users found.</p>
+          <p style={{ padding: 32, textAlign: 'center', fontSize: 13, color: 'var(--fg-muted)' }}>
+            No users found.
+          </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
-                <tr className="border-b border-navy-700/50 text-xs text-gray-500">
-                  <th className="pb-2 text-left font-medium">User</th>
-                  <th className="pb-2 text-left font-medium">Email</th>
-                  <th className="pb-2 text-left font-medium">Role</th>
-                  <th className="pb-2 text-left font-medium">Status</th>
-                  <th className="pb-2 text-left font-medium">Last Login</th>
-                  <th className="pb-2 text-right font-medium">Actions</th>
+                <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-sunken)' }}>
+                  <Th>User</Th>
+                  <Th>Email</Th>
+                  <Th>Role</Th>
+                  <Th>Status</Th>
+                  <Th>Last login</Th>
+                  <Th align="right">Actions</Th>
                 </tr>
               </thead>
               <tbody>
                 {users.map((u) => (
                   <tr
                     key={u.id}
-                    className="border-b border-navy-700/30 last:border-0 hover:bg-navy-800/30"
+                    style={{ borderBottom: '1px solid var(--border-faint)' }}
                   >
-                    <td className="py-2.5">
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-navy-700 text-xs font-bold text-gray-300">
+                    <td style={{ padding: '10px 14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            width: 28,
+                            height: 28,
+                            borderRadius: '50%',
+                            background: 'var(--bg-hover)',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: 'var(--fg-muted)',
+                          }}
+                        >
                           {u.display_name.charAt(0).toUpperCase()}
                         </div>
-                        <span className="text-gray-200">{u.display_name}</span>
+                        <span style={{ color: 'var(--fg)' }}>{u.display_name}</span>
                         {u.id === currentUser?.id && (
-                          <span className="rounded bg-navy-700 px-1.5 py-0.5 text-[9px] font-medium text-gray-500 uppercase">
+                          <span
+                            style={{
+                              padding: '2px 6px',
+                              borderRadius: 3,
+                              background: 'var(--bg-hover)',
+                              fontSize: 9,
+                              fontWeight: 500,
+                              color: 'var(--fg-dim)',
+                              textTransform: 'uppercase',
+                              letterSpacing: 0.4,
+                            }}
+                          >
                             you
                           </span>
                         )}
                       </div>
                     </td>
-                    <td className="py-2.5 text-gray-400">{u.email}</td>
-                    <td className="py-2.5">
-                      <span
-                        className={`rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                          ROLE_COLORS[u.role] ?? 'bg-gray-500/20 text-gray-400'
-                        }`}
-                      >
-                        {u.role}
-                      </span>
+                    <td style={{ padding: '10px 14px', color: 'var(--fg-muted)' }}>{u.email}</td>
+                    <td style={{ padding: '10px 14px' }}>
+                      <RoleBadge role={u.role} />
                     </td>
-                    <td className="py-2.5">
+                    <td style={{ padding: '10px 14px' }}>
                       {u.is_active ? (
-                        <span className="text-xs text-accent-green">Active</span>
+                        <span style={{ fontSize: 12, color: 'var(--live)' }}>Active</span>
                       ) : (
-                        <span className="text-xs text-gray-600">Inactive</span>
+                        <span style={{ fontSize: 12, color: 'var(--fg-dim)' }}>Inactive</span>
                       )}
                     </td>
-                    <td className="py-2.5 text-xs text-gray-500">
+                    <td style={{ padding: '10px 14px', fontSize: 12, color: 'var(--fg-dim)' }}>
                       {u.last_login_at ? formatTimeAgo(u.last_login_at) : 'Never'}
                     </td>
-                    <td className="py-2.5 text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(u)}>
+                    <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-xs"
+                          onClick={() => openEdit(u)}
+                        >
                           Edit
-                        </Button>
+                        </button>
                         {u.id !== currentUser?.id && (
-                          <Button
-                            variant="danger"
-                            size="sm"
+                          <button
+                            type="button"
+                            className="btn btn-xs"
+                            style={{
+                              color: 'var(--red)',
+                              borderColor: 'color-mix(in oklab, var(--red) 35%, transparent)',
+                              background: 'color-mix(in oklab, var(--red) 8%, transparent)',
+                            }}
                             onClick={() => {
                               setDeleteUser(u);
                               setDeleteError(null);
                             }}
                           >
                             Delete
-                          </Button>
+                          </button>
                         )}
                       </div>
                     </td>
@@ -239,7 +291,7 @@ export function UserManagementPage() {
             </table>
           </div>
         )}
-      </Card>
+      </div>
 
       {/* ── Create User Modal ─────────────────────────────────────────── */}
       <Modal
@@ -416,5 +468,68 @@ export function UserManagementPage() {
         </div>
       </Modal>
     </div>
+    </SettingsShell>
+  );
+}
+
+// ── Subcomponents ────────────────────────────────────────────────────────
+
+function Th({ children, align = 'left' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+  return (
+    <th
+      style={{
+        padding: '10px 14px',
+        textAlign: align,
+        fontSize: 10,
+        textTransform: 'uppercase',
+        letterSpacing: 0.6,
+        color: 'var(--fg-dim)',
+        fontWeight: 600,
+        fontFamily: 'var(--font-mono)',
+      }}
+    >
+      {children}
+    </th>
+  );
+}
+
+function RoleBadge({ role }: { role: UserRole | string }) {
+  const colors: Record<string, { bg: string; fg: string; bd: string }> = {
+    admin: {
+      bg: 'color-mix(in oklab, var(--red) 14%, transparent)',
+      fg: 'var(--red)',
+      bd: 'color-mix(in oklab, var(--red) 35%, transparent)',
+    },
+    editor: {
+      bg: 'color-mix(in oklab, var(--warn) 14%, transparent)',
+      fg: 'var(--warn)',
+      bd: 'color-mix(in oklab, var(--warn) 35%, transparent)',
+    },
+    viewer: {
+      bg: 'color-mix(in oklab, var(--info) 14%, transparent)',
+      fg: 'var(--info)',
+      bd: 'color-mix(in oklab, var(--info) 35%, transparent)',
+    },
+  };
+  const c = colors[role] ?? { bg: 'var(--bg-hover)', fg: 'var(--fg-muted)', bd: 'var(--border)' };
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: '2px 8px',
+        borderRadius: 999,
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: 0.4,
+        textTransform: 'uppercase',
+        fontFamily: 'var(--font-mono)',
+        background: c.bg,
+        color: c.fg,
+        border: `1px solid ${c.bd}`,
+      }}
+    >
+      {role}
+    </span>
   );
 }
