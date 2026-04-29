@@ -795,15 +795,16 @@ export class PollingOrchestrator {
       for (const snap of channelSnapshots) {
         const viewers = snap.concurrentViewers ?? 0;
 
-        // Cliff anomaly check — drop a sample where CCV crashed >90% from
-        // the previous accepted value on the same (channel, stream) within
-        // the last 90 seconds. After two rejections in a row, the third is
-        // accepted (real drop). See ccv-anomaly-detector.ts for full
-        // explanation. Currently only applied to YouTube where the artefact
-        // is a known scraper failure mode; other adapters report stable
-        // platform-side CCVs.
+        // Anomaly check — drop a sample where CCV crashed >90 % (cliff)
+        // or surged >5× (spike) from the previous accepted value on the
+        // same (channel, stream) within the last 90 seconds. After two
+        // rejections in a row, the third is accepted (real raid / host /
+        // broadcast end). See ccv-anomaly-detector.ts for full reasoning.
+        // Applied to YouTube and Twitch where both artefacts have been
+        // observed in the wild; Steam / Kick / Soop / Chzzk / Trovo /
+        // TikTok report stable platform-side CCVs and are skipped.
         if (
-          channel.platform === 'youtube' &&
+          (channel.platform === 'youtube' || channel.platform === 'twitch') &&
           ccvAnomalyDetector.shouldReject(channel.id, snap.streamId ?? null, viewers)
         ) {
           continue;

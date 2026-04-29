@@ -1,44 +1,49 @@
 /**
- * CCV anomaly detector — drops suspicious "cliff" samples from being
- * persisted to viewership_snapshots.
+ * CCV anomaly detector — drops both suspicious "cliff" (sudden drop) and
+ * "spike" (sudden surge) samples from being persisted to
+ * viewership_snapshots.
  *
- * Background: YouTube's scraping path can occasionally return a value ~95%
- * below a stream's recent CCV for one or two poll cycles before recovering.
- * Two known causes:
- *   1. YouTube briefly returns a tiny CCV for a still-live videoId (data
- *      anomaly upstream).
- *   2. The scraper falls back to a different live videoId on the same
- *      channel (a side-cam or rebroadcast with much lower audience) and
- *      records that videoId's CCV instead of the main broadcast's.
+ * Background:
+ *   • YouTube's scraping path can return a value ~95 % below a stream's
+ *     recent CCV for one or two poll cycles before recovering. Two known
+ *     causes: YouTube returns a tiny CCV for a still-live videoId, OR the
+ *     scraper falls back to a different live videoId on the same channel
+ *     (side-cam / rebroadcast) and records its tiny CCV instead.
+ *   • Twitch's scraping path can occasionally report a single-poll value
+ *     5×+ the surrounding curve (likely Twitch CDN burst-cache or mirror-
+ *     player attribution glitch). Saw this on PUBG_BR 2026-04-18: 1730
+ *     and 2033 reported between samples in the 350-380 range.
  *
- * Both produce the same artefact in the dashboard: a 1-10 minute "cliff"
- * dropping CCV from ~1500 to ~30, then recovering. This detector catches
- * those at write time so they never enter the historical record.
+ * Both artefacts show up in the dashboard as 1-10 minute fake cliffs or
+ * spikes. This detector catches them at write time so they never enter
+ * the historical record.
  *
  * Logic per (channel, stream) pair:
  *   • Keep the last accepted CCV + timestamp + reject count.
- *   • A new sample is "suspicious" if:
- *     - the previous CCV was ≥ MIN_PREV_CCV_FLOOR (100), AND
- *     - the new CCV is < SUSPICIOUS_DROP_RATIO (10%) of the previous, AND
- *     - the previous sample is within RECENT_WINDOW_MS (90 s) — i.e. the
- *       same active polling session, not a stale stat from yesterday.
+ *   • A new sample is "suspicious" if EITHER:
+ *     - downward cliff:  prev ≥ MIN_PREV_CCV_FLOOR (100) AND
+ *                        new < prev × SUSPICIOUS_DROP_RATIO (0.10), OR
+ *     - upward spike:    prev ≥ MIN_PREV_CCV_FLOOR (100) AND
+ *                        new > prev × SUSPICIOUS_SPIKE_RATIO (5.0)
+ *     AND the previous sample is within RECENT_WINDOW_MS (90 s).
  *   • A suspicious sample is rejected (skipped from insert) up to
  *     MAX_CONSECUTIVE_REJECTS (2) times. The third suspicious sample in
- *     a row is accepted — the drop is treated as real (raid left,
- *     broadcast ended mid-cycle, etc.) and we resume normal recording.
+ *     a row is accepted — the move is treated as real (raid joined/left,
+ *     broadcast ended, host received) and we resume normal recording.
  *
  * State lives in-memory (singleton). After RESET_AFTER_MS (10 min) of
  * silence on a key, the entry is GC'd and the next sample starts fresh.
  *
- * Trade-off: a genuine audience cliff has a 60-90 second persistence
- * delay before showing up in the dashboard. Acceptable, given the
- * alternative is dirty data that has needed manual SQL patching twice
- * already (Day 1 and Day 2 PEC Finals 1).
+ * Trade-off: a genuine audience cliff or surge has a 60-90 second
+ * persistence delay before showing up in the dashboard. Acceptable,
+ * given the alternative is dirty data needing manual SQL patches —
+ * we've now patched cliffs across 7 broadcast days and one spike.
  */
 
 import logger from '../utils/logger';
 
-const SUSPICIOUS_DROP_RATIO = 0.10;
+const SUSPICIOUS_DROP_RATIO = 0.10;   // new < prev × this → likely cliff
+const SUSPICIOUS_SPIKE_RATIO = 5.0;   // new > prev × this → likely spike
 const MIN_PREV_CCV_FLOOR = 100;
 const RECENT_WINDOW_MS = 90_000;
 const MAX_CONSECUTIVE_REJECTS = 2;
@@ -64,9 +69,11 @@ export class CcvAnomalyDetector {
    * baseline).
    */
   shouldReject(channelId: string, streamId: string | null | undefined, ccv: number): boolean {
-    // No streamId → no per-stream baseline, can't decide. Accept.
-    if (!streamId) return false;
-    const key = `${channelId}:${streamId}`;
+    // Key by (channel, stream) when we have a streamId — that's the right
+    // baseline for YouTube where the scraper can flip videoIds. For Twitch
+    // and other platforms we key on channel only, since the artefact is a
+    // bogus value on the same stream rather than a stream change.
+    const key = streamId ? `${channelId}:${streamId}` : channelId;
     const last = this.state.get(key);
     const now = Date.now();
 
@@ -76,14 +83,17 @@ export class CcvAnomalyDetector {
       return false;
     }
 
-    const isAnomaly = last.ccv >= MIN_PREV_CCV_FLOOR && ccv < last.ccv * SUSPICIOUS_DROP_RATIO;
+    const meetsFloor = last.ccv >= MIN_PREV_CCV_FLOOR;
+    const isCliff = meetsFloor && ccv < last.ccv * SUSPICIOUS_DROP_RATIO;
+    const isSpike = meetsFloor && ccv > last.ccv * SUSPICIOUS_SPIKE_RATIO;
+    const isAnomaly = isCliff || isSpike;
 
     if (isAnomaly && last.rejectCount < MAX_CONSECUTIVE_REJECTS) {
       // Drop this sample. Keep the last accepted CCV as the baseline so
       // the next sample is judged against the previous *real* value.
       this.state.set(key, { ccv: last.ccv, ts: now, rejectCount: last.rejectCount + 1 });
       this.rejectionsTotal++;
-      logger.debug('[CCV] Rejected suspicious cliff sample', {
+      logger.debug(`[CCV] Rejected suspicious ${isCliff ? 'cliff' : 'spike'} sample`, {
         channelId,
         streamId,
         proposedCcv: ccv,
@@ -93,11 +103,12 @@ export class CcvAnomalyDetector {
       return true;
     }
 
-    // Accept. If we got here on the 3rd consecutive low value, log it —
-    // we're treating this as a real sustained drop now.
+    // Accept. If we got here on the 3rd consecutive anomalous value, log
+    // it — we're treating this as a real sustained move now (raid /
+    // broadcast end / sudden host received).
     if (isAnomaly && last.rejectCount >= MAX_CONSECUTIVE_REJECTS) {
       this.acceptanceAfterRetriesTotal++;
-      logger.info('[CCV] Accepting sustained low CCV after retry budget exhausted', {
+      logger.info(`[CCV] Accepting sustained ${isCliff ? 'low' : 'high'} CCV after retry budget exhausted`, {
         channelId,
         streamId,
         ccv,
