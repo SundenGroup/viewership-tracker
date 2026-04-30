@@ -47,6 +47,12 @@ const INTERVAL_MS = 60_000; // 60 seconds
 const CDP_PORT = 9224;
 const CDP_FILE = path.join(__dirname, '.twitch-browser-cdp');
 
+// Optional client-side channel cap. The server returns up to 20 (officials +
+// top CCV); on weaker hardware (e.g. 2019 Intel MBP) running 20 simultaneous
+// Twitch tabs is too much for the GPU/CPU even with video paused. Set
+// MAX_CHANNELS=8 in .env to take only the top 8 from the server's list.
+const MAX_CHANNELS = parseInt(process.env.MAX_CHANNELS || '0', 10) || Infinity;
+
 // Channel list is fetched from the server API (officials + top CCV, max 20).
 // Refreshes every 5 minutes. No local config needed — just add channels in the tool.
 let CHANNELS: string[] = [];
@@ -62,9 +68,14 @@ async function refreshChannelList(): Promise<void> {
     });
     if (!res.ok) throw new Error(`${res.status}`);
     const data = (await res.json()) as { channels: string[] };
-    CHANNELS = data.channels.filter(c => c.toLowerCase() !== 'pubg_battlegrounds');
+    let channels = data.channels.filter(c => c.toLowerCase() !== 'pubg_battlegrounds');
+    if (Number.isFinite(MAX_CHANNELS) && channels.length > MAX_CHANNELS) {
+      log(`Capping channel list at MAX_CHANNELS=${MAX_CHANNELS} (server returned ${channels.length})`);
+      channels = channels.slice(0, MAX_CHANNELS);
+    }
+    CHANNELS = channels;
     lastChannelFetch = Date.now();
-    log(`Channel list refreshed: ${CHANNELS.length} channels (officials + top CCV, max 20)`);
+    log(`Channel list refreshed: ${CHANNELS.length} channels (officials + top CCV, max 20${Number.isFinite(MAX_CHANNELS) ? `, cap ${MAX_CHANNELS}` : ''})`);
   } catch (err) {
     log(`Could not fetch channel list: ${(err as Error).message}`);
     // Keep existing list if refresh fails
@@ -343,6 +354,35 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
     `);
 
     const viewers = typeof result === 'number' ? result : 0;
+
+    // Tame the tab — pause any <video>, force the lowest quality preset,
+    // mute. Done on every read so it survives Twitch's React re-renders.
+    // The viewer-count DOM is updated by Twitch's GraphQL polling
+    // independent of video playback, so pausing doesn't affect accuracy.
+    // Critical on older Macs (e.g. 2019 Intel MBP) where 10-20 simultaneous
+    // streaming tabs would otherwise saturate the GPU and thermal-throttle.
+    await session.evaluate(`
+      (function() {
+        try {
+          // Force Twitch to pick the lowest quality on next stream load.
+          // Twitch reads this localStorage key on player init.
+          const cur = JSON.parse(localStorage.getItem('video-quality') || '{}');
+          cur.default = '160p30';
+          localStorage.setItem('video-quality', JSON.stringify(cur));
+        } catch (_e) {}
+
+        // Pause any current <video> element + mute. Twitch may recreate
+        // the player on tab focus, which is why we re-run every cycle.
+        for (const v of document.querySelectorAll('video')) {
+          try {
+            v.muted = true;
+            v.pause();
+            v.preload = 'none';
+          } catch (_e) {}
+        }
+      })()
+    `);
+
     session.close();
     return { channel: tab.channel, viewers, isLive: true };
   } catch (err) {

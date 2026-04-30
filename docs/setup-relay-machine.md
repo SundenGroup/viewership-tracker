@@ -2,7 +2,7 @@
 
 Setup guide for the dedicated machine that runs the residential-IP
 relay scrapers (TikTok + Twitch). Picks up where the existing TikTok
-HTTP relay is already running and adds the other trackers to it.
+HTTP relay is already running and adds the others to it.
 
 ## Current state on your relay machine
 
@@ -16,9 +16,8 @@ You're adding:
 
 | Tracker | Script | Why |
 |---|---|---|
-| Twitch browser scraper | `twitch-browser-server.ts` + `twitch-browser-scraper.ts --loop` | Reads the Twitch DOM viewer count every 60 s. More granular than the stepped 3–5 min Helix API cache, and the only Twitch path we currently rely on. |
-| TikTok browser tracker (optional) | `tiktok-browser-server.ts` + `tiktok-browser-tracker.ts --loop` | Second TikTok signal that opens pages in real Chrome and sniffs the WS. Kicks in if `tiktok-live-connector` gets rate-limited. |
-| TikTok WS tracker (optional) | `tiktok-ws-tracker.ts --loop` | Pure-Node direct WebSocket connection per channel. Real-time push events on top of the 60 s poll. |
+| **TikTok WS tracker** | `tiktok-ws-tracker.ts --loop` | Direct WebSocket connection per channel — adds real-time push events on top of the 60 s HTTP poll. Uses **Euler signing** when `EULER_API_KEY` is set in `.env` (it already is on your machine). |
+| **Twitch browser scraper** | `twitch-browser-server.ts` + `twitch-browser-scraper.ts --loop` | Reads the Twitch DOM viewer count every 60 s. More granular than the stepped 3–5 min Helix API cache, and the only Twitch path we currently rely on. |
 
 The server keeps `MAX(value)` per channel per minute across every
 relay source, so adding more is purely additive.
@@ -28,6 +27,50 @@ relay source, so adding more is purely additive.
 > browser scraper on port 9224 below is the only Twitch path now.
 > The file is still in the repo as a reference, but don't wire it into
 > launchd.
+
+## Hardware sizing — IMPORTANT for 2019 MacBook Pro
+
+Each Twitch tab the scraper opens triggers Twitch's web player, which
+defaults to high-quality video. With 20 simultaneous tabs that's a real
+GPU/CPU load — enough to thermal-throttle or hard-lock a 2019 Intel
+MBP. The scripts now include several mitigations baked in:
+
+- Chrome launches with `--mute-audio` + `--autoplay-policy=user-gesture-required`
+- After every viewer-count read, the scraper pauses any `<video>` element,
+  mutes it, sets `preload='none'`, and forces Twitch's saved
+  quality preference to `160p30` — the viewer-count DOM keeps updating
+  via Twitch's separate GraphQL polling, so this doesn't lose accuracy
+- The browser-server window is 800×600 (smaller default = smaller
+  variant on first paint)
+- Many feature flags (MediaRouter, Translate, sync, component-update,
+  background-networking) are disabled
+
+**On the 2019 MBP also do these manually:**
+
+1. **Cap the channel list.** Add to `.env`:
+   ```bash
+   echo 'MAX_CHANNELS=8' >> ~/clutch-viewership-tracker/.env
+   ```
+   The scraper will take the top 8 from the server's "officials + top
+   CCV" ordering. 8 is what's been load-tested as "comfortable" on a
+   16 GB 2019 MBP under continuous polling. Bump to 12 if monitoring
+   shows headroom; drop to 4 if you see kernel_task pegging cores.
+2. **Plug in the laptop and prevent display sleep.** Battery-powered
+   Chrome with paused video is still ~10–20 % CPU per tab; without
+   AC the laptop will throttle aggressively.
+   ```bash
+   sudo pmset -c displaysleep 0 sleep 0 disksleep 0
+   ```
+3. **Clamshell mode is fine** — keep the lid closed with an external
+   monitor, keyboard, and power. macOS will run normally with the lid
+   shut as long as power is plugged in.
+4. **Watch the temperature for the first hour.** `iStat Menus` /
+   `stats` (Homebrew: `brew install --cask stats`) shows core temp +
+   per-core CPU. If you see sustained > 95°C, drop `MAX_CHANNELS`.
+
+Memory rule of thumb: ~250 MB per Chrome tab when idle (video
+paused), so 8 tabs ≈ 2 GB plus ~1 GB for Chrome itself ≈ 3 GB
+sustained — well within 16 GB headroom.
 
 ## 0. Sanity-check the existing TikTok relay
 
@@ -202,15 +245,18 @@ tail -f /tmp/twitch-browser-scraper.log
 If the scraper log shows `ECONNREFUSED 127.0.0.1:9224` for more than a
 minute, the browser-server didn't come up — `tail /tmp/twitch-browser-server.err`.
 
-## 4. (Optional) TikTok browser tracker
+## 5. (Skip for now — TikTok browser tracker)
 
-A second TikTok signal: opens TikTok pages in a real Chrome and
-intercepts the WebSocket. Useful when `tiktok-live-connector` (the
-HTTP relay you're already running) gets rate-limited on a specific
-channel — the browser path uses real session cookies and rarely hits
-the same wall.
+A second Chrome-based TikTok signal that opens pages in a real Chrome
+and intercepts the WebSocket. Useful only when `tiktok-live-connector`
+(the HTTP relay you're already running) starts getting rate-limited on
+specific channels. **Skip this section** unless that becomes a problem
+— it adds another persistent Chrome instance and the TikTok WS tracker
+in §4 covers most of the same ground without the browser overhead.
 
-### 4a. One-time TikTok login
+If you do want it later, the steps are:
+
+### 5a. One-time TikTok login
 
 ```bash
 cd ~/clutch-viewership-tracker
@@ -223,7 +269,7 @@ solve any CAPTCHA, then `Ctrl+C`.
 The TikTok browser-server uses CDP port **9222** (different from
 Twitch's 9224, so they coexist).
 
-### 4b. launchd plists
+### 5b. launchd plists
 
 ```bash
 USER_HOME=$HOME
@@ -303,10 +349,33 @@ launchctl load -w ~/Library/LaunchAgents/com.clutch.tiktok-browser-server.plist
 launchctl load -w ~/Library/LaunchAgents/com.clutch.tiktok-browser-tracker.plist
 ```
 
-## 5. (Optional) TikTok WebSocket tracker
+## 4. TikTok WS tracker (Euler signing)
 
-Pure Node WebSocket connection per channel, no Chrome involved. Adds
+Pure-Node WebSocket connection per channel, no Chrome involved. Adds
 real-time push events on top of the 60 s HTTP poll.
+
+> **Signing**: this script needs valid TikTok WebSocket-signing
+> credentials to connect. Two paths:
+> - **Euler API** — used automatically when `EULER_API_KEY` is set in
+>   `.env` (it is on your machine, so this is the default path).
+> - **Browser-based signer** — used when you pass `--browser` to the
+>   script. Requires `tiktok-browser-server.ts` running on port 9222
+>   (i.e. you'd also need §5 below). Free, no third-party dependency.
+>
+> The plist below uses the Euler path (no `--browser`). To switch
+> later, add `--browser` to `ProgramArguments` and bring up the TikTok
+> browser-server from §5.
+
+### 4a. Verify Euler key is set
+
+```bash
+grep ^EULER_API_KEY= ~/clutch-viewership-tracker/.env >/dev/null && echo OK || echo "MISSING"
+```
+
+If `MISSING`, copy `EULER_API_KEY` from your primary machine's `.env`
+or grab a fresh one from the EulerStream dashboard.
+
+### 4b. launchd plist
 
 ```bash
 USER_HOME=$HOME
@@ -347,6 +416,20 @@ cat > ~/Library/LaunchAgents/com.clutch.tiktok-ws-tracker.plist <<EOF
 EOF
 
 launchctl load -w ~/Library/LaunchAgents/com.clutch.tiktok-ws-tracker.plist
+```
+
+### 4c. Verify
+
+```bash
+launchctl list | grep clutch.tiktok-ws-tracker
+# Non-zero PID + 0 exit status.
+
+tail -f /tmp/tiktok-ws-tracker.log
+# Expect:
+#   "Using Euler API for TikTok signatures"   ← confirms Euler path
+#   "Connected to @pubg.esports.official (1234 viewers)"
+# If you see "Browser signer unavailable and no EULER_API_KEY set", the
+# .env value didn't load — check ~/clutch-viewership-tracker/.env.
 ```
 
 ## 6. End-to-end verification

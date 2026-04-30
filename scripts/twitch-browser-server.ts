@@ -52,9 +52,23 @@ async function main() {
     '--disable-blink-features=AutomationControlled',
     '--no-first-run',
     '--no-default-browser-check',
-    '--window-size=1280,900',
-    // Don't autoplay video/audio — saves resources
-    '--autoplay-policy=no-user-gesture-required',
+    // Smaller window → Twitch picks a smaller stream variant by default,
+    // less video work for the CPU/GPU. We hide playback entirely from JS
+    // (see scraper's tameTab) but the smaller default helps on first paint.
+    '--window-size=800,600',
+    // Resource hardening — important on older Intel Macs (e.g. 2019 MBP)
+    // where 10-20 simultaneous Twitch tabs would otherwise melt the
+    // chassis. Audio is muted at the Chrome level so OS audio decode
+    // never runs even if a tab tries to play. Background-tab CPU
+    // throttling stays ON (default) — the scraper foreground-activates
+    // each tab only briefly when reading.
+    '--mute-audio',
+    '--autoplay-policy=user-gesture-required',
+    '--disable-features=MediaRouter,DialMediaRouteProvider,InterestFeedContentSuggestions,Translate,OptimizationHints',
+    '--disable-background-networking',
+    '--disable-sync',
+    '--disable-component-update',
+    '--disable-default-apps',
     'about:blank',
   ];
 
