@@ -3,6 +3,8 @@ import db from '../../utils/db';
 
 const router = Router();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 function scopeColumn(scope: string): string | null {
@@ -14,12 +16,32 @@ function scopeColumn(scope: string): string | null {
   }
 }
 
-async function fetchSnapshotsWithChannels(scope: string, id: string) {
-  const col = scopeColumn(scope);
-  if (!col) return null;
+type ExportTarget =
+  | { kind: 'single'; scope: 'day' | 'stage' | 'series'; id: string }
+  | { kind: 'multi_stage'; ids: string[] };
 
-  return db('viewership_snapshots')
-    .where(`viewership_snapshots.${col}`, id)
+function parseTarget(query: Record<string, unknown>): ExportTarget | { error: string } {
+  const scope = query.scope as string | undefined;
+  if (!scope) return { error: 'scope is required (day|stage|series|multi_stage)' };
+
+  if (scope === 'multi_stage') {
+    const idsRaw = (query.ids as string | undefined) ?? '';
+    const ids = idsRaw.split(',').map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 0) return { error: 'ids is required for scope=multi_stage (comma-separated UUIDs)' };
+    if (!ids.every((s) => UUID_RE.test(s))) return { error: 'ids must be valid UUIDs' };
+    return { kind: 'multi_stage', ids };
+  }
+
+  if (!['day', 'stage', 'series'].includes(scope)) {
+    return { error: 'scope must be one of: day, stage, series, multi_stage' };
+  }
+  const id = query.id as string | undefined;
+  if (!id) return { error: 'id is required for this scope' };
+  return { kind: 'single', scope: scope as 'day' | 'stage' | 'series', id };
+}
+
+async function fetchSnapshotsWithChannels(target: ExportTarget) {
+  const baseQuery = db('viewership_snapshots')
     .join('channels', 'channels.id', 'viewership_snapshots.channel_id')
     .select(
       'viewership_snapshots.id',
@@ -39,24 +61,34 @@ async function fetchSnapshotsWithChannels(scope: string, id: string) {
       'channels.tier',
     )
     .orderBy('viewership_snapshots.timestamp', 'asc');
+
+  if (target.kind === 'multi_stage') {
+    return baseQuery.whereIn('viewership_snapshots.stage_id', target.ids);
+  }
+  const col = scopeColumn(target.scope)!;
+  return baseQuery.where(`viewership_snapshots.${col}`, target.id);
+}
+
+function downloadFilename(target: ExportTarget, ext: 'csv' | 'json'): string {
+  if (target.kind === 'multi_stage') {
+    return `viewership-multi_stage-${target.ids.length}stages.${ext}`;
+  }
+  return `viewership-${target.scope}-${target.id}.${ext}`;
 }
 
 // ── CSV Export ───────────────────────────────────────────────────────────
 
 // GET /api/export/csv?scope=day|stage|series&id=uuid
+// GET /api/export/csv?scope=multi_stage&ids=uuid1,uuid2,...
 router.get('/csv', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { scope, id } = req.query;
-    if (!scope || !id) {
-      res.status(400).json({ error: 'scope (day|stage|series) and id are required' });
+    const target = parseTarget(req.query as Record<string, unknown>);
+    if ('error' in target) {
+      res.status(400).json({ error: target.error });
       return;
     }
 
-    const rows = await fetchSnapshotsWithChannels(scope as string, id as string);
-    if (rows === null) {
-      res.status(400).json({ error: 'scope must be one of: day, stage, series' });
-      return;
-    }
+    const rows = await fetchSnapshotsWithChannels(target);
 
     // Build CSV
     const headers = [
@@ -90,7 +122,7 @@ router.get('/csv', async (req: Request, res: Response, next: NextFunction) => {
     const csv = csvLines.join('\n');
 
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="viewership-${scope}-${id}.csv"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadFilename(target, 'csv')}"`);
     res.send(csv);
   } catch (err) {
     next(err);
@@ -100,26 +132,23 @@ router.get('/csv', async (req: Request, res: Response, next: NextFunction) => {
 // ── JSON Export ──────────────────────────────────────────────────────────
 
 // GET /api/export/json?scope=day|stage|series&id=uuid
+// GET /api/export/json?scope=multi_stage&ids=uuid1,uuid2,...
 router.get('/json', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { scope, id } = req.query;
-    if (!scope || !id) {
-      res.status(400).json({ error: 'scope (day|stage|series) and id are required' });
+    const target = parseTarget(req.query as Record<string, unknown>);
+    if ('error' in target) {
+      res.status(400).json({ error: target.error });
       return;
     }
 
-    const rows = await fetchSnapshotsWithChannels(scope as string, id as string);
-    if (rows === null) {
-      res.status(400).json({ error: 'scope must be one of: day, stage, series' });
-      return;
-    }
+    const rows = await fetchSnapshotsWithChannels(target);
 
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', `attachment; filename="viewership-${scope}-${id}.json"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadFilename(target, 'json')}"`);
     res.json({
       exportedAt: new Date().toISOString(),
-      scope,
-      id,
+      scope: target.kind === 'multi_stage' ? 'multi_stage' : target.scope,
+      ...(target.kind === 'multi_stage' ? { ids: target.ids } : { id: target.id }),
       snapshotCount: rows.length,
       snapshots: rows.map((row) => ({
         id: row.id,

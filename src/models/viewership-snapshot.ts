@@ -30,10 +30,9 @@ export interface CreateViewershipSnapshot {
   stream_title?: string | null;
 }
 
-export interface Scope {
-  level: 'day' | 'stage' | 'series';
-  id: string;
-}
+export type Scope =
+  | { level: 'day' | 'stage' | 'series'; id: string }
+  | { level: 'multi_stage'; ids: string[] };
 
 /** Optional filter for language and/or platform (used by View Groups). */
 export interface ViewFilter {
@@ -100,7 +99,7 @@ export interface TimeSeriesBucket {
 
 const TABLE = 'viewership_snapshots';
 
-function scopeColumn(scope: Scope): string {
+function scopeColumn(scope: Scope & { level: 'day' | 'stage' | 'series' }): string {
   switch (scope.level) {
     case 'day': return 'viewership_snapshots.broadcast_day_id';
     case 'stage': return 'viewership_snapshots.stage_id';
@@ -109,7 +108,7 @@ function scopeColumn(scope: Scope): string {
 }
 
 /** Bare column name for use in raw SQL (no table prefix). */
-function scopeColumnBare(scope: Scope): string {
+function scopeColumnBare(scope: Scope & { level: 'day' | 'stage' | 'series' }): string {
   switch (scope.level) {
     case 'day': return 'broadcast_day_id';
     case 'stage': return 'stage_id';
@@ -117,7 +116,38 @@ function scopeColumnBare(scope: Scope): string {
   }
 }
 
+/**
+ * Build a SQL WHERE fragment that resolves any Scope (single-target or
+ * multi_stage) to a column predicate plus the bindings it needs.
+ *
+ * Single-target: `"<col>" = :scopeId`
+ * Multi-stage:   `"stage_id" = ANY(:scopeIds::uuid[])`
+ *
+ * Pass `tablePrefix` (e.g. "vs") when the surrounding query joins another
+ * table and the column needs to be qualified.
+ */
+function scopeWhereClause(
+  scope: Scope,
+  tablePrefix?: string,
+): { sql: string; bindings: Record<string, unknown> } {
+  const prefix = tablePrefix ? `${tablePrefix}.` : '';
+  if (scope.level === 'multi_stage') {
+    return {
+      sql: `${prefix}"stage_id" = ANY(:scopeIds::uuid[])`,
+      bindings: { scopeIds: scope.ids },
+    };
+  }
+  const col = scopeColumnBare(scope);
+  return {
+    sql: `${prefix}"${col}" = :scopeId`,
+    bindings: { scopeId: scope.id },
+  };
+}
+
 function applyScope(query: Knex.QueryBuilder, scope: Scope): Knex.QueryBuilder {
+  if (scope.level === 'multi_stage') {
+    return query.whereIn('viewership_snapshots.stage_id', scope.ids);
+  }
   return query.where(scopeColumn(scope), scope.id);
 }
 
@@ -177,8 +207,22 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
   //
   // The scope (broadcast_day / stage) IS included because different days
   // genuinely have different poll windows.
-  const col = scope && scope.level !== 'series' ? scopeColumnBare(scope) : 'series_id';
-  const scopeId = scope && scope.level !== 'series' ? scope.id : seriesId;
+  // Resolve the scope WHERE fragment. For series-level scope we don't add a
+  // narrowing predicate (series_id is already implied by the AND below); for
+  // multi_stage we use stage_id IN (…); for day/stage we use the matching
+  // bare column.
+  let scopeSql: string;
+  let scopeBindings: Record<string, unknown>;
+  if (!scope || scope.level === 'series') {
+    scopeSql = '"series_id" = :scopeId';
+    scopeBindings = { scopeId: seriesId };
+  } else if (scope.level === 'multi_stage') {
+    scopeSql = '"stage_id" = ANY(:scopeIds::uuid[])';
+    scopeBindings = { scopeIds: scope.ids };
+  } else {
+    scopeSql = `"${scopeColumnBare(scope)}" = :scopeId`;
+    scopeBindings = { scopeId: scope.id };
+  }
 
   // Find the latest BULK poll timestamp — the most recent timestamp that has
   // more than 1 row. TikTok's headless scraper writes a single row ~30s after
@@ -187,14 +231,14 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
   const latestTs = await db.raw(
     `SELECT "timestamp" AS ts
      FROM viewership_snapshots
-     WHERE "${col}" = :scopeId
+     WHERE ${scopeSql}
        AND series_id = :seriesId
        AND "timestamp" > NOW() - INTERVAL '5 minutes'
      GROUP BY "timestamp"
      HAVING COUNT(*) > 1
      ORDER BY "timestamp" DESC
      LIMIT 1`,
-    { scopeId, seriesId },
+    { ...scopeBindings, seriesId },
   ).then((r: { rows: Array<{ ts: Date | null }> }) => r.rows[0]?.ts ?? null);
 
   if (!latestTs) return [];
@@ -221,7 +265,11 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
     );
 
   if (scope && scope.level !== 'series') {
-    query.where(scopeColumn(scope), scope.id);
+    if (scope.level === 'multi_stage') {
+      query.whereIn('viewership_snapshots.stage_id', scope.ids);
+    } else {
+      query.where(scopeColumn(scope), scope.id);
+    }
   }
 
   // Apply view-group filters (language / platform) ONLY on the result rows
@@ -260,7 +308,7 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
 }
 
 export async function getPeakCCV(scope: Scope, filter?: ViewFilter): Promise<PeakCCVResult | null> {
-  const col = scopeColumnBare(scope);
+  const sw = scopeWhereClause(scope);
   const f = buildFilterClauses(filter);
   // Bucket by minute, pick MAX CCV per poll cycle per channel, then SUM across channels.
   const result = await db.raw(
@@ -272,7 +320,7 @@ export async function getPeakCCV(scope: Scope, filter?: ViewFilter): Promise<Pea
                 "timestamp" AS poll_ts, channel_id,
                 SUM(concurrent_viewers) AS cycle_ccv
          FROM viewership_snapshots
-         WHERE "${col}" = :id ${f.sql}
+         WHERE ${sw.sql} ${f.sql}
          GROUP BY minute_bucket, poll_ts, channel_id
        ) per_cycle
        GROUP BY minute_bucket, channel_id
@@ -280,13 +328,13 @@ export async function getPeakCCV(scope: Scope, filter?: ViewFilter): Promise<Pea
      GROUP BY minute_bucket
      ORDER BY SUM(channel_ccv) DESC
      LIMIT 1`,
-    { id: scope.id, ...f.bindings },
+    { ...sw.bindings, ...f.bindings },
   ).then((r: { rows: PeakCCVResult[] }) => r.rows[0] ?? null);
   return result;
 }
 
 export async function getAverageCCV(scope: Scope, filter?: ViewFilter): Promise<string> {
-  const col = scopeColumnBare(scope);
+  const sw = scopeWhereClause(scope);
   const f = buildFilterClauses(filter);
   // Bucket by minute, MAX CCV per channel per minute, then AVG of per-minute totals.
   const result = await db.raw(
@@ -300,20 +348,20 @@ export async function getAverageCCV(scope: Scope, filter?: ViewFilter): Promise<
                   "timestamp" AS poll_ts, channel_id,
                   SUM(concurrent_viewers) AS cycle_ccv
            FROM viewership_snapshots
-           WHERE "${col}" = :id ${f.sql}
+           WHERE ${sw.sql} ${f.sql}
            GROUP BY minute_bucket, poll_ts, channel_id
          ) per_cycle
          GROUP BY minute_bucket, channel_id
        ) per_channel
        GROUP BY minute_bucket
      ) per_ts`,
-    { id: scope.id, ...f.bindings },
+    { ...sw.bindings, ...f.bindings },
   ).then((r: { rows: Array<{ avg_ccv: string | null }> }) => r.rows[0]);
   return result?.avg_ccv ?? '0';
 }
 
 export async function getTotalViewedHours(scope: Scope, filter?: ViewFilter): Promise<string> {
-  const col = scopeColumnBare(scope);
+  const sw = scopeWhereClause(scope);
   const f = buildFilterClauses(filter);
   // Bucket by minute, MAX CCV per channel per minute, then SUM all for total viewer-minutes.
   const result = await db.raw(
@@ -325,12 +373,12 @@ export async function getTotalViewedHours(scope: Scope, filter?: ViewFilter): Pr
                 "timestamp" AS poll_ts, channel_id,
                 SUM(concurrent_viewers) AS cycle_ccv
          FROM viewership_snapshots
-         WHERE "${col}" = :id ${f.sql}
+         WHERE ${sw.sql} ${f.sql}
          GROUP BY minute_bucket, poll_ts, channel_id
        ) per_cycle
        GROUP BY minute_bucket, channel_id
      ) per_channel`,
-    { id: scope.id, ...f.bindings },
+    { ...sw.bindings, ...f.bindings },
   ).then((r: { rows: Array<{ total_viewer_minutes: string | null }> }) => r.rows[0]);
   const minutes = parseFloat(result?.total_viewer_minutes ?? '0');
   return (minutes / 60).toFixed(2);
@@ -342,7 +390,7 @@ export async function getTotalViewedHours(scope: Scope, filter?: ViewFilter): Pr
  * Works correctly with both 1x and 2x-per-minute polling.
  */
 async function getBreakdown(scope: Scope, dimension: string, filter?: ViewFilter): Promise<BreakdownResult[]> {
-  const col = scopeColumnBare(scope);
+  const sw = scopeWhereClause(scope);
   const f = buildFilterClauses(filter);
   return db.raw(
     `SELECT group_key AS key,
@@ -360,7 +408,7 @@ async function getBreakdown(scope: Scope, dimension: string, filter?: ViewFilter
                   "${dimension}" AS group_key,
                   SUM(concurrent_viewers) AS cycle_ccv
            FROM viewership_snapshots
-           WHERE "${col}" = :id ${f.sql}
+           WHERE ${sw.sql} ${f.sql}
            GROUP BY minute_bucket, poll_ts, channel_id, "${dimension}"
          ) per_cycle
          GROUP BY minute_bucket, channel_id, group_key
@@ -369,7 +417,7 @@ async function getBreakdown(scope: Scope, dimension: string, filter?: ViewFilter
      ) per_ts
      GROUP BY group_key
      ORDER BY SUM(ts_total) DESC`,
-    { id: scope.id, ...f.bindings },
+    { ...sw.bindings, ...f.bindings },
   ).then((r: { rows: BreakdownResult[] }) => r.rows);
 }
 
@@ -390,7 +438,7 @@ export async function getRegionBreakdown(scope: Scope, filter?: ViewFilter): Pro
  * MAX CCV per channel per minute, then per-minute tier totals → AVG/MAX per tier.
  */
 export async function getTierBreakdown(scope: Scope, filter?: ViewFilter): Promise<BreakdownResult[]> {
-  const col = scopeColumnBare(scope);
+  const sw = scopeWhereClause(scope, 'vs');
   const f = buildFilterClauses(filter);
   const fSql = f.sql.replace(/\blanguage\b/g, 'vs.language').replace(/\bplatform\b/g, 'vs.platform');
   return db.raw(
@@ -410,7 +458,7 @@ export async function getTierBreakdown(scope: Scope, filter?: ViewFilter): Promi
                   SUM(vs.concurrent_viewers) AS cycle_ccv
            FROM viewership_snapshots vs
            JOIN channels c ON c.id = vs.channel_id
-           WHERE vs."${col}" = :id ${fSql}
+           WHERE ${sw.sql} ${fSql}
            GROUP BY minute_bucket, poll_ts, vs.channel_id, c.tier
          ) per_cycle
          GROUP BY minute_bucket, channel_id, group_key
@@ -419,14 +467,14 @@ export async function getTierBreakdown(scope: Scope, filter?: ViewFilter): Promi
      ) per_ts
      GROUP BY group_key
      ORDER BY SUM(ts_total) DESC`,
-    { id: scope.id, ...f.bindings },
+    { ...sw.bindings, ...f.bindings },
   ).then((r: { rows: BreakdownResult[] }) => r.rows);
 }
 
 export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: ViewFilter): Promise<LeaderboardEntry[]> {
   // Bucket by minute, MAX CCV per channel per minute, then aggregate per channel.
   // Works correctly with both 1x and 2x-per-minute polling.
-  const col = scopeColumnBare(scope);
+  const sw = scopeWhereClause(scope);
   const f = buildFilterClauses(filter);
   return db.raw(
     `SELECT
@@ -448,7 +496,7 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
                 "timestamp" AS poll_ts, channel_id, platform,
                 SUM(concurrent_viewers) AS cycle_ccv
          FROM viewership_snapshots
-         WHERE "${col}" = :id ${f.sql}
+         WHERE ${sw.sql} ${f.sql}
          GROUP BY minute_bucket, poll_ts, channel_id, platform
        ) per_cycle
        GROUP BY minute_bucket, channel_id, platform
@@ -462,12 +510,12 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
      GROUP BY pc.channel_id, c.display_name, c.channel_identifier, c.tier, c.language, c.region, pc.platform
      ORDER BY SUM(pc.channel_ccv) DESC
      LIMIT :limit`,
-    { id: scope.id, limit, ...f.bindings },
+    { ...sw.bindings, limit, ...f.bindings },
   ).then((r: { rows: LeaderboardEntry[] }) => r.rows);
 }
 
 export async function getTimeSeriesData(scope: Scope, intervalSeconds = 60, filter?: ViewFilter): Promise<TimeSeriesBucket[]> {
-  const col = scopeColumnBare(scope);
+  const sw = scopeWhereClause(scope);
   const f = buildFilterClauses(filter);
   // Three-level dedup: SUM multi-stream per poll cycle, MAX across poll cycles
   // per bucket per channel (picks highest CCV), then SUM across channels.
@@ -488,14 +536,14 @@ export async function getTimeSeriesData(scope: Scope, intervalSeconds = 60, filt
            channel_id,
            SUM(concurrent_viewers) AS cycle_ccv
          FROM viewership_snapshots
-         WHERE "${col}" = :id ${f.sql}
+         WHERE ${sw.sql} ${f.sql}
          GROUP BY bucket, poll_ts, channel_id
        ) per_cycle
        GROUP BY bucket, channel_id
      ) per_channel
      GROUP BY bucket
      ORDER BY bucket ASC`,
-    { interval: intervalSeconds, id: scope.id, ...f.bindings },
+    { interval: intervalSeconds, ...sw.bindings, ...f.bindings },
   ).then((r: { rows: TimeSeriesBucket[] }) => r.rows);
 }
 
@@ -516,12 +564,12 @@ export async function getGroupedTimeSeriesData(
   intervalSeconds = 60,
   filter?: ViewFilter,
 ): Promise<GroupedTimeSeriesBucket[]> {
-  const col = scopeColumnBare(scope);
   const f = buildFilterClauses(filter);
 
   // For 'tier', join with channels table; for others, use viewership_snapshots columns directly.
   // All branches: SUM multi-stream per poll cycle, MAX across poll cycles per bucket per channel.
   if (groupBy === 'tier') {
+    const sw = scopeWhereClause(scope, 'vs');
     const fSql = f.sql.replace(/\blanguage\b/g, 'vs.language').replace(/\bplatform\b/g, 'vs.platform');
     return db.raw(
       `SELECT bucket, group_key,
@@ -541,18 +589,19 @@ export async function getGroupedTimeSeriesData(
              SUM(vs.concurrent_viewers) AS cycle_ccv
            FROM viewership_snapshots vs
            JOIN channels c ON c.id = vs.channel_id
-           WHERE vs."${col}" = :id ${fSql}
+           WHERE ${sw.sql} ${fSql}
            GROUP BY bucket, poll_ts, vs.channel_id, c.tier
          ) per_cycle
          GROUP BY bucket, channel_id, group_key
        ) per_channel
        GROUP BY bucket, group_key
        ORDER BY bucket ASC, total_ccv DESC`,
-      { interval: intervalSeconds, id: scope.id, ...f.bindings },
+      { interval: intervalSeconds, ...sw.bindings, ...f.bindings },
     ).then((r: { rows: GroupedTimeSeriesBucket[] }) => r.rows);
   }
 
   // Non-tier grouped time series (platform/language): same three-level approach.
+  const sw = scopeWhereClause(scope);
   return db.raw(
     `SELECT bucket, group_key,
        SUM(channel_ccv)::text AS total_ccv,
@@ -570,13 +619,13 @@ export async function getGroupedTimeSeriesData(
            "${groupBy}" AS group_key,
            SUM(concurrent_viewers) AS cycle_ccv
          FROM viewership_snapshots
-         WHERE "${col}" = :id ${f.sql}
+         WHERE ${sw.sql} ${f.sql}
          GROUP BY bucket, poll_ts, channel_id, "${groupBy}"
        ) per_cycle
        GROUP BY bucket, channel_id, group_key
      ) per_channel
      GROUP BY bucket, group_key
      ORDER BY bucket ASC, total_ccv DESC`,
-    { interval: intervalSeconds, id: scope.id, ...f.bindings },
+    { interval: intervalSeconds, ...sw.bindings, ...f.bindings },
   ).then((r: { rows: GroupedTimeSeriesBucket[] }) => r.rows);
 }
