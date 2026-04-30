@@ -33,8 +33,18 @@ function parseScope(
 ): ViewershipSnapshotModel.Scope | null {
   const scope = query.scope as string | undefined;
   const id = query.id as string | undefined;
+  const idsParam = query.ids as string | undefined;
 
   if (!scope || scope === 'series') return { level: 'series', id: seriesId };
+
+  if (scope === 'multi_stage') {
+    if (!idsParam) return null;
+    const ids = idsParam.split(',').map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 0) return null;
+    if (!ids.every(isValidUUID)) return null;
+    return { level: 'multi_stage', ids };
+  }
+
   if (!id || !isValidUUID(id)) return null;
   if (!['day', 'stage'].includes(scope)) return null;
   return { level: scope as 'day' | 'stage', id };
@@ -254,18 +264,29 @@ router.get('/:shortName/timeseries', async (req: Request, res: Response, next: N
     }
 
     // Grouped time series
-    const scopeColumn =
-      scopeObj.level === 'day'
-        ? 'broadcast_day_id'
-        : scopeObj.level === 'stage'
-          ? 'stage_id'
-          : 'series_id';
-
     const needsJoin = groupBy === 'tier';
     const groupColumn = groupBy === 'channel' ? 'channel_id' : groupBy;
     const groupExpr = needsJoin ? 'c.tier' : `"${groupColumn}"`;
     const joinClause = needsJoin ? 'JOIN channels c ON c.id = vs.channel_id' : '';
     const vsPrefix = needsJoin ? 'vs.' : '';
+
+    // Resolve scope WHERE fragment (single-target column = id, or multi_stage IN list).
+    let scopeSql: string;
+    let scopeBindings: Record<string, unknown>;
+    const colPrefix = needsJoin ? 'vs.' : '';
+    if (scopeObj.level === 'multi_stage') {
+      scopeSql = `${colPrefix}"stage_id" = ANY(:scopeIds::uuid[])`;
+      scopeBindings = { scopeIds: scopeObj.ids };
+    } else {
+      const scopeColumn =
+        scopeObj.level === 'day'
+          ? 'broadcast_day_id'
+          : scopeObj.level === 'stage'
+            ? 'stage_id'
+            : 'series_id';
+      scopeSql = `${colPrefix}"${scopeColumn}" = :scopeId`;
+      scopeBindings = { scopeId: scopeObj.id };
+    }
 
     const fClauses = filter ? ViewershipSnapshotModel.buildFilterClauses(filter) : { sql: '', bindings: {} };
     const fSql = needsJoin ? fClauses.sql.replace(/\b(language|platform|region)\b/g, 'vs.$1') : fClauses.sql;
@@ -289,12 +310,12 @@ router.get('/:shortName/timeseries', async (req: Request, res: Response, next: N
              MAX(${vsPrefix}concurrent_viewers) AS max_viewers
            FROM viewership_snapshots ${needsJoin ? 'vs' : ''}
            ${joinClause}
-           WHERE ${vsPrefix}"${scopeColumn}" = :id ${fSql}
+           WHERE ${scopeSql} ${fSql}
            GROUP BY bucket, ${vsPrefix}channel_id, group_key
          ) per_channel
          GROUP BY bucket, group_key
          ORDER BY bucket ASC, total_ccv DESC`,
-        { interval, id: scopeObj.id, ...fClauses.bindings },
+        { interval, ...scopeBindings, ...fClauses.bindings },
       )
       .then(
         (r: {
@@ -332,11 +353,19 @@ router.get('/:shortName/leaderboard', async (req: Request, res: Response, next: 
     const scopeParam = (req.query.scope as string) || 'day';
     const dayId = req.query.dayId as string | undefined;
     const stageId = req.query.stageId as string | undefined;
+    const idsParam = req.query.ids as string | undefined;
 
     let scopeObj: ViewershipSnapshotModel.Scope;
 
     if (scopeParam === 'series') {
       scopeObj = { level: 'series', id: seriesId };
+    } else if (scopeParam === 'multi_stage') {
+      const ids = (idsParam ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+      if (ids.length > 0 && ids.every(isValidUUID)) {
+        scopeObj = { level: 'multi_stage', ids };
+      } else {
+        scopeObj = { level: 'series', id: seriesId };
+      }
     } else if (scopeParam === 'stage') {
       if (stageId && isValidUUID(stageId)) {
         scopeObj = { level: 'stage', id: stageId };

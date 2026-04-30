@@ -46,7 +46,11 @@ const FORMAT_TILES: Array<{
   { id: 'html', label: 'HTML', sub: 'Static report — trigger render job' },
 ];
 
-type ScopeChoice = 'current' | 'series' | 'stage' | 'day';
+type ScopeChoice = 'current' | 'series' | 'stage' | 'multi_stage' | 'day';
+
+type ResolvedTarget =
+  | { kind: 'single'; scopeLevel: ScopeLevel; id: string }
+  | { kind: 'multi_stage'; ids: string[] };
 
 export function ExportDialog({
   open,
@@ -59,6 +63,7 @@ export function ExportDialog({
 }: ExportDialogProps) {
   const [format, setFormat] = useState<ExportFormat>('csv');
   const [scope, setScope] = useState<ScopeChoice>('current');
+  const [selectedStageIds, setSelectedStageIds] = useState<string[]>([]);
   const [reRender, setReRender] = useState(false);
   const [detail, setDetail] = useState<'simple' | 'detailed'>('simple');
   const [busy, setBusy] = useState(false);
@@ -80,6 +85,7 @@ export function ExportDialog({
       setPublicLink(null);
       setBusy(false);
       setScope('current');
+      setSelectedStageIds([]);
       setReRender(false);
     }
   }, [open]);
@@ -141,10 +147,12 @@ export function ExportDialog({
 
   const viewGroupLabel = activeViewGroupName ?? 'All channels';
 
-  // Resolve the scope+id for the backend export endpoints
-  const resolveTarget = (): { scopeLevel: ScopeLevel; id: string } => {
+  // Resolve the scope target for the backend export endpoints. Returns
+  // either a single (scope, id) pair or a multi_stage list of stage ids.
+  const resolveTarget = (): ResolvedTarget => {
     if (scope === 'current') {
       return {
+        kind: 'single',
         scopeLevel: activeScope.level,
         id:
           activeScope.level === 'day' && activeScope.dayId
@@ -154,23 +162,45 @@ export function ExportDialog({
               : seriesId,
       };
     }
-    if (scope === 'series') return { scopeLevel: 'series', id: seriesId };
+    if (scope === 'series') return { kind: 'single', scopeLevel: 'series', id: seriesId };
     if (scope === 'stage' && currentStage)
-      return { scopeLevel: 'stage', id: currentStage.id };
+      return { kind: 'single', scopeLevel: 'stage', id: currentStage.id };
+    if (scope === 'multi_stage' && selectedStageIds.length >= 2)
+      return { kind: 'multi_stage', ids: selectedStageIds };
     if (scope === 'day' && currentDay)
-      return { scopeLevel: 'day', id: currentDay.id };
+      return { kind: 'single', scopeLevel: 'day', id: currentDay.id };
     // Fallbacks when nothing resolvable
-    return { scopeLevel: 'series', id: seriesId };
+    return { kind: 'single', scopeLevel: 'series', id: seriesId };
+  };
+
+  // Stages selected for multi-stage export, ordered by stage.order so the
+  // displayed and exported order is stable.
+  const orderedSelectedStages = useMemo(() => {
+    if (!seriesDetail) return [];
+    return seriesDetail.stages
+      .filter((s) => selectedStageIds.includes(s.id))
+      .sort((a, b) => a.order - b.order);
+  }, [seriesDetail, selectedStageIds]);
+
+  const toggleStageId = (id: string) => {
+    setSelectedStageIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
   };
 
   // File name / target preview (mono caption in footer).
   // For HTML "new design" mode this is a URL; otherwise a filename.
   const fileName = useMemo(() => {
-    const { scopeLevel, id } = resolveTarget();
+    const target = resolveTarget();
     if (format === 'html' && !reRender) {
       const shortName = seriesDetail?.short_name?.trim();
       if (!shortName) return 'needs short_name';
       const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+      if (target.kind === 'multi_stage') {
+        const orders = orderedSelectedStages.map((s) => s.order).join(',');
+        return `${base}/public/${shortName}/report/${detail}?stages=${orders}`;
+      }
+      const { scopeLevel, id } = target;
       let slug = '';
       if (scopeLevel === 'day') {
         const day = seriesDetail?.stages
@@ -190,6 +220,11 @@ export function ExportDialog({
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '');
+    if (target.kind === 'multi_stage') {
+      const orders = orderedSelectedStages.map((s) => s.order).join('-');
+      return `${slug}_stages-${orders || target.ids.length + 'stages'}.${format}`;
+    }
+    const { scopeLevel, id } = target;
     const suffix =
       scopeLevel === 'series'
         ? 'full-series'
@@ -208,6 +243,8 @@ export function ExportDialog({
     seriesId,
     detail,
     reRender,
+    orderedSelectedStages,
+    selectedStageIds,
   ]);
 
   const resolvedViewGroup = useMemo(() => {
@@ -220,15 +257,22 @@ export function ExportDialog({
   // template involved, always fresh against the DB.
   //
   // URL format:
-  //   Series: /public/<short>/report/<variant>
-  //   Stage:  /public/<short>/report/<variant>/stage-<order>
-  //   Day:    /public/<short>/report/<variant>/<YYYY-MM-DD>
+  //   Series:        /public/<short>/report/<variant>
+  //   Stage:         /public/<short>/report/<variant>/stage-<order>
+  //   Day:           /public/<short>/report/<variant>/<YYYY-MM-DD>
+  //   Multi-stage:   /public/<short>/report/<variant>?stages=<order1>,<order2>
   // Falls back to the raw UUID slug if we can't resolve the friendlier form.
   const buildSpaReportUrl = (): string | null => {
     const shortName = seriesDetail?.short_name?.trim();
     if (!shortName) return null;
-    const { scopeLevel, id } = resolveTarget();
+    const target = resolveTarget();
     const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+    if (target.kind === 'multi_stage') {
+      const orders = orderedSelectedStages.map((s) => s.order).join(',');
+      const path = `${base}/public/${shortName}/report/${detail}?stages=${orders}`;
+      return `${window.location.origin}${path}`;
+    }
+    const { scopeLevel, id } = target;
     let slug = '';
     if (scopeLevel === 'day') {
       const day = seriesDetail?.stages
@@ -248,14 +292,18 @@ export function ExportDialog({
     if (busy) return;
     setError(null);
     setPublicLink(null);
-    const { scopeLevel, id } = resolveTarget();
+    const target = resolveTarget();
 
     try {
       if (format === 'csv' || format === 'json') {
         const url =
-          format === 'csv'
-            ? api.getExportCsvUrl(scopeLevel, id)
-            : api.getExportJsonUrl(scopeLevel, id);
+          target.kind === 'multi_stage'
+            ? format === 'csv'
+              ? api.getExportCsvUrlMulti(target.ids)
+              : api.getExportJsonUrlMulti(target.ids)
+            : format === 'csv'
+              ? api.getExportCsvUrl(target.scopeLevel, target.id)
+              : api.getExportJsonUrl(target.scopeLevel, target.id);
         window.open(url, '_blank', 'noopener,noreferrer');
         onClose();
         return;
@@ -266,8 +314,9 @@ export function ExportDialog({
         // Legacy server-generated static HTML (old design, archival).
         setBusy(true);
         const result = await api.generateReport({
-          scope: scopeLevel,
-          id,
+          ...(target.kind === 'multi_stage'
+            ? { scope: 'multi_stage' as const, ids: target.ids }
+            : { scope: target.scopeLevel, id: target.id }),
           format: 'html',
           skipNarratives: false,
           detail,
@@ -344,6 +393,15 @@ export function ExportDialog({
       disabled: !currentStage,
     },
     {
+      id: 'multi_stage',
+      label:
+        selectedStageIds.length === 0
+          ? 'Multiple stages — pick from list'
+          : `Multiple stages — ${selectedStageIds.length} selected`,
+      sub: 'Combine 2+ stages into one export (flattened aggregation)',
+      disabled: !seriesDetail || seriesDetail.stages.length < 2,
+    },
+    {
       id: 'day',
       label: currentDay
         ? `Day only — ${currentDay.label}`
@@ -352,6 +410,10 @@ export function ExportDialog({
       disabled: !currentDay,
     },
   ];
+
+  // For the action button: multi_stage requires at least 2 stages.
+  const actionDisabled =
+    busy || (scope === 'multi_stage' && selectedStageIds.length < 2);
 
   const publicDashUrl =
     seriesDetail?.is_public && seriesDetail?.short_name?.trim()
@@ -546,6 +608,92 @@ export function ExportDialog({
                   );
                 })}
               </div>
+
+              {/* Stage checkbox list — visible only when Multiple stages is picked */}
+              {scope === 'multi_stage' && seriesDetail && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: '10px 12px',
+                    background: 'var(--bg-sunken)',
+                    border: '1px solid var(--border-faint)',
+                    borderRadius: 5,
+                  }}
+                >
+                  <div
+                    className="eyebrow"
+                    style={{
+                      fontSize: 9.5,
+                      letterSpacing: 0.5,
+                      marginBottom: 6,
+                      color: 'var(--fg-muted)',
+                    }}
+                  >
+                    Stages to include
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                      maxHeight: 220,
+                      overflowY: 'auto',
+                    }}
+                  >
+                    {[...seriesDetail.stages]
+                      .sort((a, b) => a.order - b.order)
+                      .map((s) => {
+                        const checked = selectedStageIds.includes(s.id);
+                        return (
+                          <label
+                            key={s.id}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              padding: '5px 6px',
+                              borderRadius: 4,
+                              cursor: 'pointer',
+                              background: checked
+                                ? 'color-mix(in oklab, var(--red) 7%, transparent)'
+                                : 'transparent',
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleStageId(s.id)}
+                              style={{ accentColor: 'var(--red)' }}
+                            />
+                            <span style={{ fontSize: 12 }}>{s.name}</span>
+                            <span
+                              className="mono"
+                              style={{
+                                fontSize: 10,
+                                color: 'var(--fg-dim)',
+                                marginLeft: 'auto',
+                              }}
+                            >
+                              stage-{s.order}
+                            </span>
+                          </label>
+                        );
+                      })}
+                  </div>
+                  {selectedStageIds.length < 2 && (
+                    <div
+                      style={{
+                        fontSize: 10.5,
+                        color: 'var(--fg-dim)',
+                        marginTop: 6,
+                        paddingLeft: 2,
+                      }}
+                    >
+                      Select at least 2 stages.
+                    </div>
+                  )}
+                </div>
+              )}
             </Field>
 
             {/* HTML-specific: detail + re-render */}
@@ -900,7 +1048,7 @@ export function ExportDialog({
             type="button"
             className="btn btn-primary"
             onClick={handleDownload}
-            disabled={busy}
+            disabled={actionDisabled}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
             <IconDownload size={12} />

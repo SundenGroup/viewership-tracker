@@ -469,11 +469,22 @@ export function getExportJsonUrl(scope: ScopeLevel, id: string) {
   return `${BASE_URL}/api/export/json?scope=${scope}&id=${id}`;
 }
 
+export function getExportCsvUrlMulti(stageIds: string[]) {
+  return `${BASE_URL}/api/export/csv?scope=multi_stage&ids=${stageIds.join(',')}`;
+}
+
+export function getExportJsonUrlMulti(stageIds: string[]) {
+  return `${BASE_URL}/api/export/json?scope=multi_stage&ids=${stageIds.join(',')}`;
+}
+
 // ── Report Generation ─────────────────────────────────────────────────────
 
 export interface GenerateReportParams {
-  scope: ScopeLevel;
-  id: string;
+  scope: ScopeLevel | 'multi_stage';
+  /** Required when scope is day | stage | series. */
+  id?: string;
+  /** Required when scope is multi_stage. Array of stage UUIDs. */
+  ids?: string[];
   format: 'pdf' | 'docx' | 'html';
   template?: string;
   skipNarratives?: boolean;
@@ -645,41 +656,95 @@ export function getPublicSeries(shortName: string) {
   return publicRequest<PublicSeriesInfo>(`/api/public/${shortName}`);
 }
 
-export function getPublicLiveCCV(shortName: string, scope?: string, scopeId?: string, languages?: string[], platforms?: string[]) {
-  const params = new URLSearchParams();
-  if (scope && scopeId) {
-    params.set('scope', scope);
+/**
+ * Sets the right scope+id query param on `params`, given a scope level and
+ * either a single id (string) or a list of ids (string[] for multi_stage).
+ * Pulled out here so all four scope-aware public helpers stay consistent.
+ */
+function appendScopeParams(
+  params: URLSearchParams,
+  scope: string | undefined,
+  scopeId: string | string[] | undefined,
+): void {
+  if (!scope) return;
+  params.set('scope', scope);
+  if (Array.isArray(scopeId)) {
+    if (scope === 'multi_stage' && scopeId.length > 0) {
+      params.set('ids', scopeId.join(','));
+    }
+  } else if (scopeId) {
     params.set('id', scopeId);
   }
+}
+
+export function getPublicLiveCCV(
+  shortName: string,
+  scope?: string,
+  scopeId?: string | string[],
+  languages?: string[],
+  platforms?: string[],
+) {
+  const params = new URLSearchParams();
+  appendScopeParams(params, scope, scopeId);
   appendFilterParams(params, languages, platforms);
   const qs = params.toString();
   return publicRequest<LiveCCVResponse>(`/api/public/${shortName}/live-ccv${qs ? `?${qs}` : ''}`);
 }
 
-export function getPublicMetrics(shortName: string, scope?: ScopeLevel, id?: string, languages?: string[], platforms?: string[]) {
+export function getPublicMetrics(
+  shortName: string,
+  scope?: ScopeLevel | 'multi_stage',
+  id?: string | string[],
+  languages?: string[],
+  platforms?: string[],
+) {
   const params = new URLSearchParams();
-  if (scope) params.set('scope', scope);
-  if (id) params.set('id', id);
+  appendScopeParams(params, scope, id);
   appendFilterParams(params, languages, platforms);
   const qs = params.toString() ? `?${params}` : '';
   return publicRequest<MetricsResponse>(`/api/public/${shortName}/metrics${qs}`);
 }
 
-export function getPublicTimeSeries(shortName: string, query: Omit<TimeSeriesQuery, 'scope' | 'id'> & { scope?: ScopeLevel; id?: string; languages?: string[]; platforms?: string[] }) {
+export function getPublicTimeSeries(
+  shortName: string,
+  query: Omit<TimeSeriesQuery, 'scope' | 'id'> & {
+    scope?: ScopeLevel | 'multi_stage';
+    id?: string;
+    /** Required when scope === 'multi_stage'. Array of stage UUIDs. */
+    ids?: string[];
+    languages?: string[];
+    platforms?: string[];
+  },
+) {
   const params = new URLSearchParams();
-  if (query.scope) params.set('scope', query.scope);
-  if (query.id) params.set('id', query.id);
+  if (query.scope === 'multi_stage' && query.ids?.length) {
+    appendScopeParams(params, query.scope, query.ids);
+  } else {
+    appendScopeParams(params, query.scope, query.id);
+  }
   if (query.interval) params.set('interval', String(query.interval));
   if (query.groupBy) params.set('groupBy', query.groupBy);
   appendFilterParams(params, query.languages, query.platforms);
   return publicRequest<TimeSeriesResponse>(`/api/public/${shortName}/timeseries?${params}`);
 }
 
-export function getPublicLeaderboard(shortName: string, scope?: string, scopeEntityId?: string, languages?: string[], platforms?: string[]) {
+export function getPublicLeaderboard(
+  shortName: string,
+  scope?: string,
+  scopeEntityId?: string | string[],
+  languages?: string[],
+  platforms?: string[],
+) {
   const params = new URLSearchParams();
   if (scope) params.set('scope', scope);
-  if (scope === 'day' && scopeEntityId) params.set('dayId', scopeEntityId);
-  if (scope === 'stage' && scopeEntityId) params.set('stageId', scopeEntityId);
+  if (Array.isArray(scopeEntityId)) {
+    if (scope === 'multi_stage' && scopeEntityId.length > 0) {
+      params.set('ids', scopeEntityId.join(','));
+    }
+  } else {
+    if (scope === 'day' && scopeEntityId) params.set('dayId', scopeEntityId);
+    if (scope === 'stage' && scopeEntityId) params.set('stageId', scopeEntityId);
+  }
   appendFilterParams(params, languages, platforms);
   const qs = params.toString();
   return publicRequest<LeaderboardResponse>(`/api/public/${shortName}/leaderboard${qs ? `?${qs}` : ''}`);

@@ -6,7 +6,9 @@ const router = Router();
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-function parseScope(query: Record<string, unknown>): ViewershipSnapshotModel.Scope | null {
+function parseScope(
+  query: Record<string, unknown>,
+): { level: 'day' | 'stage' | 'series'; id: string } | null {
   const { scope, id } = query;
   if (!scope || !id) return null;
   if (!['day', 'stage', 'series'].includes(scope as string)) return null;

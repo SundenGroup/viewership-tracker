@@ -18,6 +18,10 @@ import type { SeriesData } from '@/components/design';
  * Pass `publicShortName` to route through the `/api/public/...` endpoints
  * for unauthenticated public pages.
  */
+export type TimelineScope =
+  | { level: ScopeLevel; id: string }
+  | { level: 'multi_stage'; ids: string[] };
+
 export function useTimelineSeries({
   scope,
   interval = 60,
@@ -26,7 +30,7 @@ export function useTimelineSeries({
   platforms,
   publicShortName,
 }: {
-  scope: { level: ScopeLevel; id: string } | null;
+  scope: TimelineScope | null;
   interval?: 60 | 300 | 600;
   refreshMs?: number;
   languages?: string[];
@@ -40,12 +44,32 @@ export function useTimelineSeries({
   timestamps: string[];
   loading: boolean;
 } {
-  const enabled = !!scope;
+  // Multi-stage timeseries is only meaningful via the public endpoints; the
+  // authenticated /api/viewership/timeseries deliberately doesn't accept it.
+  const enabled =
+    !!scope && (scope.level !== 'multi_stage' || !!publicShortName);
 
-  const qs = scope ? `${scope.level}:${scope.id}:${interval}` : '';
+  const qs = scope
+    ? scope.level === 'multi_stage'
+      ? `multi_stage:${scope.ids.join(',')}:${interval}`
+      : `${scope.level}:${scope.id}:${interval}`
+    : '';
 
   const fetchFor = (groupBy: TimeSeriesGroupBy): Promise<TimeSeriesResponse> => {
     if (!scope) return Promise.resolve(null as unknown as TimeSeriesResponse);
+    if (scope.level === 'multi_stage') {
+      if (!publicShortName) {
+        return Promise.resolve(null as unknown as TimeSeriesResponse);
+      }
+      return api.getPublicTimeSeries(publicShortName, {
+        scope: 'multi_stage',
+        ids: scope.ids,
+        interval,
+        groupBy,
+        languages,
+        platforms,
+      });
+    }
     if (publicShortName) {
       return api.getPublicTimeSeries(publicShortName, {
         scope: scope.level,

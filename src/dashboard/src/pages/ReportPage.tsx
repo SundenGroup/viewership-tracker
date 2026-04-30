@@ -64,6 +64,8 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
   // scopeSlug is YYYY-MM-DD (day), stage-<order> (stage), or a raw UUID.
   const stageIdFromUrl = searchParams.get('stage') ?? undefined;
   const dayIdFromUrl = searchParams.get('day') ?? undefined;
+  // Multi-stage exports: ?stages=<order>,<order>,... (or comma-separated UUIDs)
+  const stagesFromUrl = searchParams.get('stages') ?? undefined;
 
   const [seriesInfo, setSeriesInfo] = useState<PublicSeriesInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -137,19 +139,49 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
   }, [seriesInfo]);
 
   // Pick the report's scope:
+  //   - ?stages=<order>,<order>,... query param → multi_stage (combined report)
   //   - /report/:variant/:scopeSlug path segment wins (YYYY-MM-DD → day,
   //     stage-<order> → stage, UUID → day or stage)
   //   - legacy ?stage=<id> / ?day=<id> query params still resolve
   //   - otherwise the bare URL means "entire series" — the operator's
   //     ExportDialog produces the slugless URL specifically for the
   //     "Entire series" radio choice, so we must honor it as series scope.
-  const resolvedScope: { level: ScopeLevel; id: string; label: string } | null = useMemo(() => {
+  const resolvedScope:
+    | { level: ScopeLevel; id: string; label: string }
+    | { level: 'multi_stage'; ids: string[]; label: string }
+    | null = useMemo(() => {
     if (!seriesInfo) return null;
 
     const allDays = seriesInfo.stages.flatMap((s) => s.broadcast_days);
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
     const STAGE_RE = /^stage-(\d+)$/i;
+
+    // Multi-stage: ?stages=<order1>,<order2>,... (numbers) or UUID list
+    if (stagesFromUrl) {
+      const tokens = stagesFromUrl.split(',').map((s) => s.trim()).filter(Boolean);
+      const matched = tokens
+        .map((t) => {
+          if (UUID_RE.test(t)) return seriesInfo.stages.find((x) => x.id === t) ?? null;
+          if (/^\d+$/.test(t)) {
+            const n = parseInt(t, 10);
+            return seriesInfo.stages.find((x) => x.order === n) ?? null;
+          }
+          return null;
+        })
+        .filter((s): s is NonNullable<typeof s> => s !== null);
+      // Sort by stage order so the title and downstream queries are stable.
+      matched.sort((a, b) => a.order - b.order);
+      if (matched.length >= 2) {
+        return {
+          level: 'multi_stage',
+          ids: matched.map((s) => s.id),
+          label: matched.map((s) => s.name).join(' + '),
+        };
+      }
+      // Single hit (or none) — fall through to normal scope resolution rather
+      // than crashing on a malformed multi-stage URL.
+    }
 
     if (scopeSlug) {
       if (DATE_RE.test(scopeSlug)) {
@@ -185,28 +217,38 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     }
     // No slug, no query params → entire series.
     return { level: 'series', id: seriesInfo.id, label: seriesInfo.name };
-  }, [seriesInfo, scopeSlug, stageIdFromUrl, dayIdFromUrl]);
+  }, [seriesInfo, scopeSlug, stageIdFromUrl, dayIdFromUrl, stagesFromUrl]);
 
   // Scoped metrics — override pollingData.metrics when we have a sub-scope.
   const needsScopedFetch = !!resolvedScope && resolvedScope.level !== 'series';
-  const scopeCacheKey = resolvedScope
-    ? `${resolvedScope.level}:${resolvedScope.id}`
-    : '';
+  const scopeCacheKey = !resolvedScope
+    ? ''
+    : resolvedScope.level === 'multi_stage'
+      ? `multi_stage:${resolvedScope.ids.join(',')}`
+      : `${resolvedScope.level}:${resolvedScope.id}`;
 
   const { data: scopedMetrics } = usePollingApi<MetricsResponse>(
-    () =>
-      needsScopedFetch && shortName && resolvedScope
-        ? api.getPublicMetrics(shortName, resolvedScope.level, resolvedScope.id)
-        : Promise.resolve(null as unknown as MetricsResponse),
+    () => {
+      if (!needsScopedFetch || !shortName || !resolvedScope) {
+        return Promise.resolve(null as unknown as MetricsResponse);
+      }
+      return resolvedScope.level === 'multi_stage'
+        ? api.getPublicMetrics(shortName, 'multi_stage', resolvedScope.ids)
+        : api.getPublicMetrics(shortName, resolvedScope.level, resolvedScope.id);
+    },
     [shortName, scopeCacheKey],
     { intervalMs: 60_000, enabled: needsScopedFetch && !!shortName },
   );
 
   const { data: scopedLiveCCV } = usePollingApi<LiveCCVResponse>(
-    () =>
-      needsScopedFetch && shortName && resolvedScope
-        ? api.getPublicLiveCCV(shortName, resolvedScope.level, resolvedScope.id)
-        : Promise.resolve(null as unknown as LiveCCVResponse),
+    () => {
+      if (!needsScopedFetch || !shortName || !resolvedScope) {
+        return Promise.resolve(null as unknown as LiveCCVResponse);
+      }
+      return resolvedScope.level === 'multi_stage'
+        ? api.getPublicLiveCCV(shortName, 'multi_stage', resolvedScope.ids)
+        : api.getPublicLiveCCV(shortName, resolvedScope.level, resolvedScope.id);
+    },
     [shortName, scopeCacheKey],
     { intervalMs: 60_000, enabled: needsScopedFetch && !!shortName },
   );
@@ -217,6 +259,9 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     { level: 'day' | 'stage'; id: string; label: string } | null
   >(() => {
     if (!seriesInfo || !resolvedScope) return null;
+    // Multi-stage reports flatten across stages — there's no single
+    // "previous" scope to compare against, so skip the trend chips.
+    if (resolvedScope.level === 'multi_stage') return null;
     if (resolvedScope.level === 'day') {
       // Match the legacy report (computeDayTrend): only compare with the
       // previous broadcast day in the SAME stage. No cross-stage fallback —
@@ -286,9 +331,11 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     };
   }, [prevMetrics, previousScope, model.peakTotal, model.avgTotal, model.viewedHours]);
 
-  const scope = resolvedScope
-    ? { level: resolvedScope.level, id: resolvedScope.id }
-    : null;
+  const scope = !resolvedScope
+    ? null
+    : resolvedScope.level === 'multi_stage'
+      ? { level: 'multi_stage' as const, ids: resolvedScope.ids }
+      : { level: resolvedScope.level, id: resolvedScope.id };
   const timeline = useTimelineSeries({
     scope,
     interval: 300,
@@ -365,6 +412,23 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
           scopeEnd: s.end_date ?? dayDates[dayDates.length - 1] ?? null,
         };
       }
+    }
+    if (resolvedScope.level === 'multi_stage') {
+      // Span the union of selected stages — earliest start to latest end.
+      const stages = seriesInfo.stages.filter((x) => resolvedScope.ids.includes(x.id));
+      const allDates = stages.flatMap((s) => {
+        const dayDates = s.broadcast_days
+          .map((d) => d.date)
+          .filter((x): x is string => !!x);
+        return [s.start_date, s.end_date, ...dayDates].filter(
+          (x): x is string => !!x,
+        );
+      });
+      allDates.sort();
+      return {
+        scopeStart: allDates[0] ?? null,
+        scopeEnd: allDates[allDates.length - 1] ?? null,
+      };
     }
     return {
       scopeStart: seriesInfo.startDate ?? null,
@@ -467,7 +531,7 @@ function SimpleReport({
   timeline: ReturnType<typeof useTimelineSeries>;
   shortName: string;
   scopeLabel: string;
-  scopeLevel: ScopeLevel;
+  scopeLevel: ScopeLevel | 'multi_stage';
   scopeStart: string | null;
   scopeEnd: string | null;
   trend: TrendDeltas | null;
@@ -478,6 +542,13 @@ function SimpleReport({
     if (scopeLevel === 'stage') {
       const stage = seriesInfo.stages.find((s) => s.name === scopeLabel);
       return stage?.broadcast_days.length ?? 0;
+    }
+    if (scopeLevel === 'multi_stage') {
+      // scopeLabel is the joined stage names ("A + B"); count days across them.
+      const names = scopeLabel.split(' + ').map((n) => n.trim());
+      return seriesInfo.stages
+        .filter((s) => names.includes(s.name))
+        .reduce((acc, s) => acc + s.broadcast_days.length, 0);
     }
     return seriesInfo.stages.reduce((acc, s) => acc + s.broadcast_days.length, 0);
   }, [seriesInfo, scopeLabel, scopeLevel]);
@@ -497,7 +568,13 @@ function SimpleReport({
   }, [model.tierRows, timeline.region]);
 
   const eyebrow =
-    scopeLevel === 'stage' ? 'Stage report' : scopeLevel === 'day' ? 'Broadcast day report' : 'Series report';
+    scopeLevel === 'stage'
+      ? 'Stage report'
+      : scopeLevel === 'multi_stage'
+        ? 'Combined stages report'
+        : scopeLevel === 'day'
+          ? 'Broadcast day report'
+          : 'Series report';
   const headline =
     scopeLevel === 'series'
       ? seriesInfo.name
@@ -676,7 +753,7 @@ function DetailedReport({
   timeline: ReturnType<typeof useTimelineSeries>;
   shortName: string;
   scopeLabel: string;
-  scopeLevel: ScopeLevel;
+  scopeLevel: ScopeLevel | 'multi_stage';
   scopeStart: string | null;
   scopeEnd: string | null;
   trend: TrendDeltas | null;
@@ -688,11 +765,23 @@ function DetailedReport({
       const stage = seriesInfo.stages.find((s) => s.name === scopeLabel);
       return stage?.broadcast_days.length ?? 0;
     }
+    if (scopeLevel === 'multi_stage') {
+      const names = scopeLabel.split(' + ').map((n) => n.trim());
+      return seriesInfo.stages
+        .filter((s) => names.includes(s.name))
+        .reduce((acc, s) => acc + s.broadcast_days.length, 0);
+    }
     return seriesInfo.stages.reduce((acc, s) => acc + s.broadcast_days.length, 0);
   }, [seriesInfo, scopeLabel, scopeLevel]);
 
   const eyebrow =
-    scopeLevel === 'stage' ? `Stage report · ${scopeLabel}` : scopeLevel === 'day' ? `Broadcast day · ${scopeLabel}` : 'Executive summary';
+    scopeLevel === 'stage'
+      ? `Stage report · ${scopeLabel}`
+      : scopeLevel === 'multi_stage'
+        ? `Combined stages · ${scopeLabel}`
+        : scopeLevel === 'day'
+          ? `Broadcast day · ${scopeLabel}`
+          : 'Executive summary';
   const headline =
     scopeLevel === 'series' ? seriesInfo.name : `${seriesInfo.name} — ${scopeLabel}`;
 
