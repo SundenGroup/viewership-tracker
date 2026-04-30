@@ -357,6 +357,14 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     if (resolvedScope.level === 'stage') {
       const st = seriesInfo.stages.find((s) => s.id === resolvedScope.id);
       days = st?.broadcast_days ?? [];
+    } else if (resolvedScope.level === 'multi_stage') {
+      // Only annotate boundaries for days in the SELECTED stages — otherwise
+      // earlier stages' days map to index 0 (their start is before the chart
+      // window) and steal the slot from the report's actual first day.
+      const ids = new Set(resolvedScope.ids);
+      days = seriesInfo.stages
+        .filter((s) => ids.has(s.id))
+        .flatMap((s) => s.broadcast_days);
     }
     if (days.length < 2) return []; // skip when there's nothing meaningful to label
 
