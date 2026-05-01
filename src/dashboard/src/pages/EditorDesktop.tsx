@@ -356,8 +356,12 @@ export function EditorDesktop({
   const lb = useSortable(leaderboardEnriched, 'live', 'desc');
 
   // ── YouTube quota (for adapter-health warnings) ───────────────────────
+  // The Discovery panel sits next to a "Discovered N / Added N" strip, so the
+  // relevant counter is the discovery key pool (sum of all per-partner keys),
+  // NOT the back-compat top-level `used` which only reports the polling-key
+  // usage. Use the detailed endpoint and read `discoveryPool` directly.
 
-  const { data: ytQuota } = useApi(() => api.getYouTubeQuota(), []);
+  const { data: ytQuota } = useApi(() => api.getYouTubeQuotaDetailed(), []);
 
   // ── Series name fallback ──────────────────────────────────────────────
 
@@ -1723,18 +1727,18 @@ export function EditorDesktop({
                     </Row>
                   </Col>
                 )}
-                {ytQuota && (
+                {ytQuota?.discoveryPool && (
                   <Col gap={4} style={{ fontSize: 11 }}>
                     <Row justify="space-between">
                       <span style={{ color: 'var(--fg-dim)' }}>YouTube quota</span>
                       <span
                         className="mono tabular"
                         style={{
-                          color: ytQuota.percentage > 75 ? 'var(--warn)' : 'var(--fg-muted)',
+                          color: ytQuota.discoveryPool.percentage > 75 ? 'var(--warn)' : 'var(--fg-muted)',
                         }}
                       >
-                        {fmtCompact(ytQuota.used)} / {fmtCompact(ytQuota.limit)} ·{' '}
-                        {ytQuota.percentage.toFixed(0)}%
+                        {fmtCompact(ytQuota.discoveryPool.used)} / {fmtCompact(ytQuota.discoveryPool.limit)} ·{' '}
+                        {ytQuota.discoveryPool.percentage.toFixed(0)}%
                       </span>
                     </Row>
                     <div
@@ -1747,10 +1751,10 @@ export function EditorDesktop({
                     >
                       <div
                         style={{
-                          width: Math.min(100, ytQuota.percentage) + '%',
+                          width: Math.min(100, ytQuota.discoveryPool.percentage) + '%',
                           height: '100%',
                           background:
-                            ytQuota.percentage > 75 ? 'var(--warn)' : 'var(--live)',
+                            ytQuota.discoveryPool.percentage > 75 ? 'var(--warn)' : 'var(--live)',
                         }}
                       />
                     </div>

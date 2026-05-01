@@ -286,7 +286,7 @@ export function YouTubeKeysPage() {
                     const used = usageByKey.get(k.id) ?? 0;
                     const pct = k.daily_quota > 0 ? (used / k.daily_quota) * 100 : 0;
                     return (
-                      <tr key={k.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                      <tr key={k.id} style={{ borderBottom: '1px solid var(--border-faint)' }}>
                         <Td>
                           <div style={{ fontWeight: 500 }}>{k.label}</div>
                         </Td>
@@ -303,7 +303,7 @@ export function YouTubeKeysPage() {
                             style={{
                               height: 3,
                               width: '100%',
-                              background: 'rgba(255,255,255,0.08)',
+                              background: 'var(--bg-sunken)',
                               borderRadius: 2,
                               overflow: 'hidden',
                               marginTop: 4,
@@ -335,7 +335,7 @@ export function YouTubeKeysPage() {
                               fontWeight: 600,
                               padding: '2px 8px',
                               borderRadius: 4,
-                              background: k.is_active ? 'rgba(38,189,248,0.18)' : 'rgba(255,255,255,0.08)',
+                              background: k.is_active ? 'rgba(38,189,248,0.18)' : 'var(--bg-sunken)',
                               color: k.is_active ? 'var(--accent-cyan, #38bdf8)' : 'var(--fg-muted, #9ca3af)',
                               textTransform: 'uppercase',
                               letterSpacing: '0.06em',
@@ -534,7 +534,7 @@ function QuotaCell({
         style={{
           height: 5,
           width: '100%',
-          background: 'rgba(255,255,255,0.08)',
+          background: 'var(--bg-sunken)',
           borderRadius: 3,
           overflow: 'hidden',
           marginTop: 8,
