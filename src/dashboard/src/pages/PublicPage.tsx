@@ -1361,7 +1361,7 @@ function SortableChannelTable({
                   platform={c.platform}
                   channelIdentifier={c.channelIdentifier}
                 />
-                {c.title && (
+                {c.title && c.platform !== 'youtube' && (
                   <div
                     style={{
                       fontSize: 11,

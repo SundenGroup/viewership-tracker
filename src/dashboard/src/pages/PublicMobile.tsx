@@ -400,7 +400,7 @@ function ChannelAccordion({
                         </span>
                       )}
                     </Row>
-                    {c.title && (
+                    {c.title && c.platform !== 'youtube' && (
                       <div
                         style={{
                           fontSize: 10.5,
