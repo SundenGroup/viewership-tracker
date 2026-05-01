@@ -71,11 +71,19 @@ export function ChannelsSection({
   const [filter, setFilter] = useState<Filter>('active');
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Show every channel attached to the series (active + inactive). The
-  // legacy main-branch ChannelListPanel did the same — operators expect
-  // to see auto-paused / never-approved discovery candidates here too,
-  // not only in the Discovery feed section.
-  const curated = channels;
+  // The Channels tab is for the curated, operator-managed channel set.
+  // Auto-discovered candidates that have NEVER been approved (still
+  // is_active=false AND source='auto_discovered') belong in the
+  // Discovery Feed, not here — listing them mixed in with real channels
+  // pollutes the view (random unrelated channels matched on a single
+  // keyword, religious "PASTOR" channels matching "PAS", etc.). Once an
+  // operator activates one (is_active=true), it appears here as a real
+  // channel; a manual channel that's been deactivated also stays
+  // visible since the operator deliberately added it.
+  const curated = useMemo(
+    () => channels.filter((c) => c.is_active || c.source !== 'auto_discovered'),
+    [channels],
+  );
 
   const counts = useMemo(
     () => ({
