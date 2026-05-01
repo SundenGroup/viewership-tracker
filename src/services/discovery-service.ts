@@ -414,6 +414,24 @@ export class DiscoveryService {
                 (c) => c.channel_identifier.toLowerCase() === snap.channelIdentifier.toLowerCase(),
               );
               if (ch) {
+                // Defense-in-depth: if the scraper returned a snapshot
+                // with a different displayName than what we have stored,
+                // it almost certainly attributed a foreign channel's
+                // data to ours (the scrape's channel-mismatch guard
+                // failed). Drop the snapshot rather than poisoning the
+                // record. This caught the MortaL ↔ 8bit Binks69
+                // mis-attribution on PEC discovery 2026-05-01.
+                const storedName = (ch.display_name ?? '').trim().toLowerCase();
+                const scrapedName = (snap.displayName ?? '').trim().toLowerCase();
+                if (storedName && scrapedName && storedName !== scrapedName) {
+                  logger.warn(
+                    `[Discovery] Skipping snapshot for ${ch.channel_identifier} [${platform}] — ` +
+                    `scraped displayName "${snap.displayName}" does not match stored "${ch.display_name}". ` +
+                    `Likely cross-channel attribution (foreign /live redirect).`,
+                  );
+                  continue;
+                }
+
                 // Skip if stream title doesn't match keywords
                 // (streamer may have switched to a non-relevant game/topic)
                 const relevant = matchesKeywords(snap.title, snap.displayName ?? undefined);
