@@ -228,7 +228,7 @@ export class DiscoveryService {
         this.where('source', 'auto_discovered')
           .orWhereRaw("metadata->'auto_paused' = 'true'::jsonb");
       })
-      .select('id', 'platform', 'channel_identifier');
+      .select('id', 'platform', 'channel_identifier', 'display_name');
 
     const disabledMap = new Map<string, string>();
     for (const ch of disabledChannels) {
