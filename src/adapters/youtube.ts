@@ -599,11 +599,40 @@ export class YouTubeAdapter implements PlatformAdapter {
       if (!videoId) return null; // Channel is not live
 
       // ── Step 1b: Verify the video actually belongs to this channel ────
-      // YouTube's /live page can redirect to recommended streams from OTHER channels.
-      // Check channelId in videoDetails to avoid tracking the wrong stream.
-      const videoChannelMatch = html.match(/"videoDetails":\{[^}]*"channelId":"(UC[a-zA-Z0-9_-]+)"/);
-      if (videoChannelMatch && videoChannelMatch[1] !== channelId) {
-        logger.debug(`YouTube scrape: ${channelId} /live page shows video from different channel ${videoChannelMatch[1]}, treating as offline`);
+      // YouTube's /live page can redirect to recommended streams from OTHER
+      // channels (happens when our channel is briefly offline). We MUST
+      // discard those scrapes — otherwise we attribute foreign streams'
+      // titles and CCVs to our own channel record.
+      //
+      // Previous regex used `[^}]*` which stopped at the first `}` inside
+      // videoDetails (e.g. a nested `thumbnail:{…}`), so on real pages it
+      // often failed to find channelId at all — and the old guard was
+      // fail-open (`if (match && ...)`). Now: lazy `[\s\S]{0,4000}?` to
+      // skip over nested objects, AND fail-closed — if we can't extract
+      // the owner channelId, treat as offline. Belt-and-braces: parse
+      // ytInitialPlayerResponse below as a second source.
+      let videoOwner: string | null = null;
+      const m = html.match(/"videoDetails":\{[\s\S]{0,4000}?"channelId":"(UC[a-zA-Z0-9_-]+)"/);
+      if (m) videoOwner = m[1];
+      if (!videoOwner) {
+        // Fall back to parsing the ytInitialPlayerResponse JSON — more
+        // robust, handles arbitrarily-nested videoDetails objects.
+        const prMatch = html.match(/var ytInitialPlayerResponse\s*=\s*(\{.+?\});\s*(?:var|<\/script)/s);
+        if (prMatch) {
+          try {
+            const pr = JSON.parse(prMatch[1]) as { videoDetails?: { channelId?: string } };
+            if (pr.videoDetails?.channelId) videoOwner = pr.videoDetails.channelId;
+          } catch {
+            // JSON parse failed — leave videoOwner null
+          }
+        }
+      }
+      if (!videoOwner) {
+        logger.debug(`YouTube scrape: ${channelId} /live page — could not determine video owner, treating as offline (fail-closed)`);
+        return null;
+      }
+      if (videoOwner !== channelId) {
+        logger.debug(`YouTube scrape: ${channelId} /live page shows video from different channel ${videoOwner}, treating as offline`);
         return null;
       }
 
