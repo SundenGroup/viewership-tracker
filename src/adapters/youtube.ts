@@ -627,13 +627,19 @@ export class YouTubeAdapter implements PlatformAdapter {
           }
         }
       }
-      if (!videoOwner) {
-        logger.debug(`YouTube scrape: ${channelId} /live page — could not determine video owner, treating as offline (fail-closed)`);
-        return null;
-      }
-      if (videoOwner !== channelId) {
+      // Only fail-closed when we POSITIVELY identified a foreign owner.
+      // If videoOwner couldn't be determined at all (page format we don't
+      // recognize, missing videoDetails, etc.), fall through and let the
+      // discovery-side defense-in-depth (display_name comparison) be the
+      // backstop. Original fail-closed-on-missing-owner caused a global
+      // 100 % offline reading on 2026-05-01 19:11Z when many channels'
+      // /live pages didn't expose videoDetails in our expected shape.
+      if (videoOwner && videoOwner !== channelId) {
         logger.debug(`YouTube scrape: ${channelId} /live page shows video from different channel ${videoOwner}, treating as offline`);
         return null;
+      }
+      if (!videoOwner) {
+        logger.debug(`YouTube scrape: ${channelId} — could not extract videoDetails.channelId; proceeding (relying on display_name check downstream)`);
       }
 
       // Cache the video ID
