@@ -14,6 +14,7 @@ import {
   PlatformPip,
   AreaChart,
   Section,
+  ChannelNameWithLink,
   IconBolt,
   IconCheck,
   IconDot,
@@ -43,6 +44,8 @@ import type {
   DiscoveryStatus,
   Channel,
   BroadcastStatus,
+  MetricsResponse,
+  LiveCCVResponse,
 } from '@/types/api';
 import type { PollingDataState } from '@/hooks/usePollingData';
 
@@ -111,12 +114,20 @@ export function EditorMobile({
     };
   }, [menuOpen]);
 
-  const model = useDashboardModel({
-    seriesDetail,
-    metrics: pollingData.metrics,
-    liveCCV: pollingData.liveCCV,
-  });
-  const liveDay = model.liveDay;
+  // Live day — derive directly from seriesDetail so we can compute
+  // scope (and trigger scoped metric fetches) BEFORE constructing the
+  // dashboard model. If we read liveDay off the model first, the model
+  // would always be built from series-level pollingData and the
+  // peak/avg/leaderboard would never narrow to the selected day.
+  const liveDay = useMemo(() => {
+    if (!seriesDetail) return null;
+    for (const s of seriesDetail.stages) {
+      for (const d of s.broadcast_days) {
+        if (d.status === 'live') return d;
+      }
+    }
+    return null;
+  }, [seriesDetail]);
 
   // Active day — user's tap in the Schedule wins, else the live day, else
   // the most recently completed day, else the latest in the list.
@@ -136,6 +147,35 @@ export function EditorMobile({
     : seriesId
       ? { level: 'series' as const, id: seriesId }
       : null;
+
+  // Scoped metrics + liveCCV (mirrors the desktop EditorDesktop and
+  // PublicMobile behaviour). Without this the mobile dashboard's hero
+  // peak/avg and the channels-tab leaderboard always render at series
+  // level even when a specific day is selected.
+  const needsScopedFetch = scope?.level === 'day';
+  const scopeCacheKey = scope ? `${scope.level}:${scope.id}` : '';
+  const { data: scopedMetrics } = usePollingApi<MetricsResponse>(
+    () =>
+      needsScopedFetch && scope
+        ? api.getMetrics(scope.level, scope.id)
+        : Promise.resolve(null as unknown as MetricsResponse),
+    [scopeCacheKey],
+    { intervalMs: 30_000, enabled: needsScopedFetch },
+  );
+  const { data: scopedLiveCCV } = usePollingApi<LiveCCVResponse>(
+    () =>
+      needsScopedFetch && scope && seriesId
+        ? api.getLiveCCV(seriesId, scope.level, scope.id)
+        : Promise.resolve(null as unknown as LiveCCVResponse),
+    [scopeCacheKey, seriesId],
+    { intervalMs: 30_000, enabled: needsScopedFetch && !!seriesId },
+  );
+
+  const model = useDashboardModel({
+    seriesDetail,
+    metrics: needsScopedFetch ? scopedMetrics : pollingData.metrics,
+    liveCCV: needsScopedFetch ? scopedLiveCCV : pollingData.liveCCV,
+  });
 
   const timeline = useTimelineSeries({ scope, interval: 60 });
   const heroAreaData = timeline.total.slice(-48);
@@ -535,7 +575,16 @@ export function EditorMobile({
               ))}
             </Row>
             <Col gap={6}>
-              {model.leaderboard.slice(0, 40).map((c) => (
+              {/* Sort by current viewers desc — live CCV when broadcast
+                  is on, peak otherwise (matches the desktop ordering). */}
+              {[...model.leaderboard]
+                .sort((a, b) => {
+                  const av = a.live > 0 ? a.live : a.peak;
+                  const bv = b.live > 0 ? b.live : b.peak;
+                  return bv - av;
+                })
+                .slice(0, 40)
+                .map((c) => (
                 <div
                   key={c.id}
                   className="card"
@@ -548,23 +597,32 @@ export function EditorMobile({
                 >
                   <PlatformPip id={c.platform} size={12} />
                   <Col gap={1} style={{ flex: 1, minWidth: 0 }}>
-                    <Row gap={6}>
-                      <span style={{ fontSize: 13, fontWeight: 500 }}>{c.name}</span>
+                    <Row gap={6} style={{ minWidth: 0 }}>
+                      <ChannelNameWithLink
+                        name={c.name}
+                        platform={c.platform}
+                        channelIdentifier={c.channelIdentifier}
+                      />
                       <span className="mono" style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
                         {(c.language ?? '').toUpperCase()}
                       </span>
                     </Row>
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: 'var(--fg-dim)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {c.title || '—'}
-                    </div>
+                    {/* Hide stream-title sub-line for YouTube — the
+                        titles are long and often misleading. Other
+                        platforms keep theirs. */}
+                    {c.platform !== 'youtube' && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--fg-dim)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {c.title || '—'}
+                      </div>
+                    )}
                   </Col>
                   <Col gap={1} style={{ textAlign: 'right' }}>
                     <span
@@ -575,10 +633,10 @@ export function EditorMobile({
                         color: c.live ? 'var(--fg)' : 'var(--fg-dim)',
                       }}
                     >
-                      {c.live ? fmtCompact(c.live) : '—'}
+                      {c.live ? fmtCompact(c.live) : fmtCompact(c.peak)}
                     </span>
                     <span style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
-                      Live CCV
+                      {c.live ? 'Live CCV' : 'Peak'}
                     </span>
                   </Col>
                 </div>

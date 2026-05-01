@@ -72,16 +72,28 @@ export function ChannelsSection({
   const [editingId, setEditingId] = useState<string | null>(null);
 
   // The Channels tab is for the curated, operator-managed channel set.
-  // Auto-discovered candidates that have NEVER been approved (still
-  // is_active=false AND source='auto_discovered') belong in the
-  // Discovery Feed, not here — listing them mixed in with real channels
-  // pollutes the view (random unrelated channels matched on a single
-  // keyword, religious "PASTOR" channels matching "PAS", etc.). Once an
-  // operator activates one (is_active=true), it appears here as a real
-  // channel; a manual channel that's been deactivated also stays
-  // visible since the operator deliberately added it.
+  // Show:
+  //   • any active channel (regardless of source)
+  //   • any manual channel even if deactivated (operator deliberately
+  //     added it)
+  //   • any auto-discovered channel that was once approved and is now
+  //     auto_paused — e.g. tracked during a day, paused after day end.
+  //     These appear here with a "Re-enable" affordance so operators
+  //     can resurface them for the next broadcast day.
+  // Hide:
+  //   • auto-discovered channels that have NEVER been approved (no
+  //     auto_paused flag), since those are raw discovery candidates
+  //     and belong in the Discovery Feed. Otherwise the tab fills up
+  //     with junk matched on a single keyword (PASTOR matched "PAS",
+  //     "ne pas", etc.).
   const curated = useMemo(
-    () => channels.filter((c) => c.is_active || c.source !== 'auto_discovered'),
+    () =>
+      channels.filter((c) => {
+        if (c.is_active) return true;
+        if (c.source !== 'auto_discovered') return true;
+        const meta = (c.metadata ?? {}) as Record<string, unknown>;
+        return meta.auto_paused === true;
+      }),
     [channels],
   );
 
