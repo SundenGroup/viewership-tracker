@@ -46,7 +46,12 @@ const SUSPICIOUS_DROP_RATIO = 0.10;   // new < prev × this → likely cliff
 const SUSPICIOUS_SPIKE_RATIO = 5.0;   // new > prev × this → likely spike
 const MIN_PREV_CCV_FLOOR = 100;
 const RECENT_WINDOW_MS = 90_000;
-const MAX_CONSECUTIVE_REJECTS = 2;
+// Bumped 2 → 10 after a real PEC Playoffs 2 Day 1 cliff that lasted 6 min
+// (12 polls at 30 s cadence) slipped through and required a manual SQL
+// backfill. 10 rejects ≈ 5 min of grace; longer cliffs would still slip,
+// but those are extremely rare and a 5-min real-audience drop without an
+// accompanying broadcast-end signal is even rarer.
+const MAX_CONSECUTIVE_REJECTS = 10;
 const RESET_AFTER_MS = 10 * 60_000;
 
 interface SampleState {
