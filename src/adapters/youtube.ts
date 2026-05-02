@@ -385,25 +385,68 @@ export class YouTubeAdapter implements PlatformAdapter {
         }
       }
 
-      // Filter out videos that belong to OTHER channels (YouTube recommendations).
-      // Use the Videos API to verify ownership if we have quota, otherwise keep all.
+      // Filter out videos that belong to OTHER channels.
+      //
+      // The /streams page mixes recommendations and sidebar tiles
+      // alongside the channel's own broadcasts. The previous heuristic —
+      // "look for any channelId in a 3500-char window around the videoId"
+      // — is too lenient: the page's header / breadcrumb / common JSON
+      // chunks contain the *expected* channelId, so foreign videoIds
+      // pass the check and end up in sticky cache for 10 minutes,
+      // poisoning that channel's CCV with another channel's data.
+      //
+      // Use the Videos API as the truth-source: videos.list returns the
+      // authoritative snippet.channelId for each id. Drop anything whose
+      // owner doesn't match. Cost: 1 quota unit per multi-stream poll
+      // cycle (videos.list is 1 unit regardless of batch size, up to 50
+      // ids), so well under daily budget.
+      //
+      // Fail-open on API errors / quota exhaustion (rare): we'd rather
+      // accept a transient false positive than blank the channel out
+      // for the rest of the broadcast — the channel-ownership step in
+      // /watch?v= scrapeVideoLiveData is the second line of defence.
       let verifiedIds = liveVideoIds;
       if (liveVideoIds.length > 0) {
-        // Quick check: look for channelId in nearby context for each video in the HTML
-        const ownedIds: string[] = [];
-        for (const vid of liveVideoIds) {
-          const vidPos = html.indexOf(`"videoId":"${vid}"`);
-          if (vidPos === -1) { ownedIds.push(vid); continue; } // Can't check, keep it
-          // Look for channelId in the 3000 chars around this videoId reference
-          const context = html.substring(Math.max(0, vidPos - 500), vidPos + 3000);
-          const chIdMatch = context.match(/"channelId":"(UC[a-zA-Z0-9_-]+)"/);
-          if (!chIdMatch || chIdMatch[1] === channelId) {
-            ownedIds.push(vid); // Belongs to this channel (or can't determine)
-          } else {
-            logger.debug(`YouTube: multi-stream scrape for ${channelId} — skipping video ${vid} (belongs to ${chIdMatch[1]})`);
+        try {
+          const details = await this.getVideoDetails(liveVideoIds);
+          const ownerByVideoId = new Map<string, string>();
+          for (const v of details) {
+            if (v.snippet?.channelId) ownerByVideoId.set(v.id, v.snippet.channelId);
           }
+          if (ownerByVideoId.size > 0) {
+            const owned: string[] = [];
+            const dropped: Array<{ vid: string; owner: string }> = [];
+            for (const vid of liveVideoIds) {
+              const owner = ownerByVideoId.get(vid);
+              if (!owner) {
+                // videos.list didn't return this id (deleted, private,
+                // or geo-blocked). Be conservative: drop it. A real
+                // live stream would always come back from videos.list.
+                dropped.push({ vid, owner: '<not-returned>' });
+                continue;
+              }
+              if (owner === channelId) {
+                owned.push(vid);
+              } else {
+                dropped.push({ vid, owner });
+              }
+            }
+            if (dropped.length > 0) {
+              logger.info(
+                `YouTube: multi-stream scrape for ${channelId} — videos.list rejected ${dropped.length} foreign id(s): ` +
+                  dropped.map((d) => `${d.vid}→${d.owner}`).join(', '),
+              );
+            }
+            verifiedIds = owned;
+          }
+          // Else: API returned nothing (quota exhausted / outage) — keep
+          // candidates as-is and let downstream defences handle it.
+        } catch (err) {
+          logger.warn(
+            `YouTube: multi-stream ownership check failed for ${channelId}, falling back to scrape-only`,
+            { error: (err as Error).message },
+          );
         }
-        verifiedIds = ownedIds;
       }
 
       // Merge with sticky history so a single noisy scrape that misses the
