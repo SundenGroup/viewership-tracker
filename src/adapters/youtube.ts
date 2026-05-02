@@ -343,10 +343,14 @@ export class YouTubeAdapter implements PlatformAdapter {
       const liveVideoIds: string[] = [];
       const seenIds = new Set<string>();
 
-      // Strategy 1: Look for videoRenderer items with LIVE overlay badges
-      // YouTube marks live streams with thumbnailOverlays containing "LIVE" style
-      // Pattern: "videoId":"XXX"...followed by..."style":"LIVE" within the same renderer block
-      const videoRendererRegex = /"videoRenderer":\{"videoId":"([a-zA-Z0-9_-]{11})"[^}]*?"thumbnailOverlays":\[.*?"style":"LIVE"/g;
+      // Strategy 1: Look for videoRenderer items with LIVE overlay badges.
+      // YouTube marks live streams with thumbnailOverlays containing "LIVE" style.
+      // The previous regex used `[^}]*?` between videoId and thumbnailOverlays,
+      // which stopped at the first `}` inside the nested `thumbnail.thumbnails[]`
+      // array — so on real pages it matched zero. Use a lazy character-class
+      // window large enough to cross the thumbnails array (~6 KB observed on
+      // PUBGEsports /streams page 2026-05-02).
+      const videoRendererRegex = /"videoRenderer":\{"videoId":"([a-zA-Z0-9_-]{11})"[\s\S]{0,10000}?"thumbnailOverlays":\[[\s\S]{0,2000}?"style":"LIVE"/g;
       let match;
       while ((match = videoRendererRegex.exec(html)) !== null) {
         if (!seenIds.has(match[1])) {
@@ -366,14 +370,15 @@ export class YouTubeAdapter implements PlatformAdapter {
         }
       }
 
-      // Strategy 3: Broader pattern — look for richItemRenderer with live indicators
+      // Strategy 3: Broader pattern — look for any videoId with a LIVE
+      // indicator within a generous window after it. Window bumped from
+      // 2 KB → 10 KB after observing 6.3 KB distance from videoId to
+      // "style":"LIVE" on the redesigned /streams page.
       if (liveVideoIds.length === 0) {
-        // Find all videoIds on the page, then check if they have live indicators nearby
         const allVideoIds = [...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)];
         for (const vidMatch of allVideoIds) {
           const pos = vidMatch.index!;
-          // Check 2000 chars after the videoId for LIVE indicators
-          const context = html.substring(pos, pos + 2000);
+          const context = html.substring(pos, pos + 10000);
           const hasLiveIndicator =
             context.includes('"style":"LIVE"') ||
             context.includes('BADGE_STYLE_TYPE_LIVE_NOW') ||
