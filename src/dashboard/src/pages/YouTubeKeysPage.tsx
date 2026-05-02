@@ -239,7 +239,7 @@ export function YouTubeKeysPage() {
         <Card>
           <p style={{ padding: 24, color: 'var(--fg-muted)', fontSize: 13 }}>
             No keys yet. Click <strong>+ Add key</strong> to add the first one. The legacy
-            <code style={{ background: 'var(--bg-card, #141820)', padding: '1px 6px', borderRadius: 4 }}>
+            <code style={{ background: 'var(--bg-sunken)', padding: '1px 6px', borderRadius: 4 }}>
               YOUTUBE_API_KEY
             </code> env var (if set) is auto-imported on first boot.
           </p>

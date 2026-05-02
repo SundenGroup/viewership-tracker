@@ -38,21 +38,29 @@ export function Card({
 
   return (
     <div
-      className={`rounded-xl border border-navy-700/50 bg-navy-850 shadow-lg ${className}`}
+      // Use the design-token `.card` class so background/border flip
+      // with the theme (the previous `bg-navy-850 border-navy-700/50`
+      // Tailwind classes were hardcoded dark; light mode showed up as
+      // dark cards on a light page — most visible on /settings/youtube-keys).
+      className={`card shadow-lg ${className}`}
     >
       {hasHeader && (
         <div
           className={`flex items-center justify-between px-5 py-3 ${
-            collapsed ? '' : 'border-b border-navy-700/50'
-          } ${collapsible ? 'cursor-pointer select-none' : ''}`}
+            collapsible ? 'cursor-pointer select-none' : ''
+          }`}
+          style={{
+            borderBottom: collapsed ? 'none' : '1px solid var(--border)',
+          }}
           onClick={collapsible ? () => setCollapsed(!collapsed) : undefined}
         >
           <div className="flex items-center gap-2">
             {collapsible && (
               <svg
-                className={`h-3 w-3 text-gray-600 transition-transform duration-200 ${
+                className={`h-3 w-3 transition-transform duration-200 ${
                   collapsed ? '-rotate-90' : ''
                 }`}
+                style={{ color: 'var(--fg-dim)' }}
                 viewBox="0 0 20 20"
                 fill="currentColor"
               >
@@ -65,12 +73,25 @@ export function Card({
             )}
             {title && (
               <>
-                <span className="inline-block h-4 w-[2px] rounded-full bg-clutch-red" />
-                <h3 className="text-sm font-semibold text-gray-200">{title}</h3>
+                <span
+                  className="inline-block h-4 w-[2px] rounded-full"
+                  style={{ background: 'var(--red)' }}
+                />
+                <h3
+                  className="text-sm font-semibold"
+                  style={{ color: 'var(--fg)' }}
+                >
+                  {title}
+                </h3>
               </>
             )}
             {subtitle && (
-              <p className="mt-0.5 text-xs text-gray-500">{subtitle}</p>
+              <p
+                className="mt-0.5 text-xs"
+                style={{ color: 'var(--fg-muted)' }}
+              >
+                {subtitle}
+              </p>
             )}
           </div>
           {action && (
