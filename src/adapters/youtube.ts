@@ -370,38 +370,32 @@ export class YouTubeAdapter implements PlatformAdapter {
         }
       }
 
-      // Strategy 3: Broader pattern — look for any videoId with a LIVE
-      // indicator within a generous window after it. Window bumped from
-      // 2 KB → 10 KB after observing 6.3 KB distance on the legacy
-      // videoRenderer variant.
+      // Strategy 3: Anchor on LIVE markers, then walk back to the
+      // nearest videoId. More reliable than the previous "videoId →
+      // look forward N bytes" approach because each renderer block is
+      // ~25 KB on the new lockupViewModel variant — the videoId is at
+      // the start, the LIVE badge near the end, so a forward window
+      // misses streams whose marker sits beyond the cutoff. LIVE
+      // markers are rare on /streams pages (one per live stream), so
+      // anchoring there is faster and more accurate.
       //
-      // Multiple page variants are served by YouTube depending on
-      // region / A-B test:
-      //   • legacy:   `videoRenderer` + `"style":"LIVE"` / `BADGE_STYLE_TYPE_LIVE_NOW` /
-      //               `"iconType":"LIVE"`
-      //   • new:      `richItemRenderer` + `lockupViewModel` +
-      //               `THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE` (badgeStyle field) +
-      //               `"imageName":"LIVE"` (clientResource icon)
-      // Match either set so the scrape works on both variants. The
-      // server in Frankfurt was getting only the new variant on
-      // 2026-05-02, which broke multi-stream detection for PUBGEsports
-      // mid-broadcast.
+      // Multiple page variants exist (legacy videoRenderer + the
+      // newer richItemRenderer/lockupViewModel). Search for marker
+      // tokens from either variant.
       if (liveVideoIds.length === 0) {
-        const allVideoIds = [...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)];
-        for (const vidMatch of allVideoIds) {
-          const pos = vidMatch.index!;
-          const context = html.substring(pos, pos + 10000);
-          const hasLiveIndicator =
-            // Legacy variant tokens
-            context.includes('"style":"LIVE"') ||
-            context.includes('BADGE_STYLE_TYPE_LIVE_NOW') ||
-            context.includes('"iconType":"LIVE"') ||
-            // New (lockupViewModel) variant tokens
-            context.includes('THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE') ||
-            context.includes('"imageName":"LIVE"');
-          if (hasLiveIndicator && !seenIds.has(vidMatch[1])) {
-            seenIds.add(vidMatch[1]);
-            liveVideoIds.push(vidMatch[1]);
+        const liveMarkerRegex = /(?:"style":"LIVE"|BADGE_STYLE_TYPE_LIVE_NOW|"iconType":"LIVE"|THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE|"imageName":"LIVE")/g;
+        const videoIdRegex = /"videoId":"([a-zA-Z0-9_-]{11})"/g;
+        for (const markerMatch of html.matchAll(liveMarkerRegex)) {
+          // Scan backwards up to 30 KB for the most recent videoId before this marker.
+          const start = Math.max(0, markerMatch.index! - 30000);
+          const window = html.substring(start, markerMatch.index!);
+          let lastVid: string | null = null;
+          for (const vm of window.matchAll(videoIdRegex)) {
+            lastVid = vm[1];
+          }
+          if (lastVid && !seenIds.has(lastVid)) {
+            seenIds.add(lastVid);
+            liveVideoIds.push(lastVid);
           }
         }
       }
