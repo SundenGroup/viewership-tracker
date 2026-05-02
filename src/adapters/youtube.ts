@@ -1504,7 +1504,15 @@ function sleep(ms: number): Promise<void> {
 }
 
 function todayDateString(): string {
-  return new Date().toISOString().slice(0, 10);
+  // YouTube Data API quotas reset at midnight Pacific Time
+  // (https://developers.google.com/youtube/v3/getting-started#quota), NOT
+  // midnight UTC. Using ISO/UTC here meant our counter rolled at 00:00 UTC
+  // = 17:00 PT — about 7 hours before Google's reset — so for 7 hours each
+  // day our "Used today" double-counted calls already charged to Google's
+  // previous day. Result: dashboard reading 14K while Google's quotas tab
+  // showed 0 right after the PT reset. Lock the day boundary to PT so our
+  // counter aligns with Google's billing window.
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
 }
 
 /**
