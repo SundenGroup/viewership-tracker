@@ -590,6 +590,13 @@ export class PollingOrchestrator {
         .filter((ch) => ch.platform === 'youtube' && (ch.metadata as Record<string, unknown>)?.multi_stream === true)
         .map((ch) => ch.channel_identifier);
       ytAdapter.setMultiStreamChannels(multiStreamIds);
+      // Channels opted into the API-based multi-stream path. Independent
+      // flag — a channel can have multi_stream=true without via_api, in
+      // which case it stays on the scrape path. This is the rollout knob.
+      const multiStreamApiIds = channelList
+        .filter((ch) => ch.platform === 'youtube' && (ch.metadata as Record<string, unknown>)?.multi_stream_via_api === true)
+        .map((ch) => ch.channel_identifier);
+      ytAdapter.setMultiStreamApiChannels(multiStreamApiIds);
     } catch {
       // YouTube adapter not available — no multi-stream detection
     }

@@ -31,6 +31,11 @@ const QUOTA_COST = {
   videosList: 1,
 } as const;
 
+// Multi-stream API path: how long to trust a search.list result before refreshing.
+// 5 min picks up newly added simultaneous streams within one broadcast quarter
+// while keeping search.list cost bounded (~100 units / 5 min / channel).
+const API_MULTISTREAM_SEARCH_TTL_MS = 5 * 60_000;
+
 // ── YouTube API response types ──────────────────────────────────────────
 
 interface YouTubeSearchItem {
@@ -102,6 +107,14 @@ export class YouTubeAdapter implements PlatformAdapter {
   private readonly liveVideoCache = new Map<string, CachedLiveVideo>();
   private readonly multiStreamCache = new Map<string, CachedMultiStreamVideoIds>();
   private multiStreamChannels = new Set<string>();
+  /**
+   * Channels (by lowercased identifier — both UC… and any handle alias) that
+   * use the API-based multi-stream path. Set by the orchestrator once per
+   * poll cycle from `metadata.multi_stream_via_api === true`. Empty set ⇒
+   * no channel uses the API path; everyone stays on the scrape path.
+   */
+  private multiStreamApiChannels = new Set<string>();
+  private readonly apiMultiStreamCache = new Map<string, CachedMultiStreamVideoIds>();
   /**
    * Per-channel "last seen" map for multi-stream videoIds. When a fresh
    * scrape misses a videoId we recently saw on this channel, we keep it
@@ -287,6 +300,42 @@ export class YouTubeAdapter implements PlatformAdapter {
   }
 
   /**
+   * Pick a key from the discovery pool that has enough remaining quota,
+   * charge it, and return a one-shot axios client bound to that key. If
+   * no pool key has room, returns null — caller decides what to do
+   * (discovery skips the cycle; the API multi-stream path falls back to
+   * the existing scrape on null).
+   *
+   * `partner` filters which keys are eligible: pass `null` for the shared
+   * pool, or a partner string to restrict to keys tagged with that
+   * partner. The choice mirrors what `pickBestKey` accepts.
+   */
+  private async acquirePoolClient(
+    cost: number,
+    partner: string | null,
+    context: string,
+  ): Promise<{ client: AxiosInstance; keyId: string; keyLabel: string } | null> {
+    const picked = await YouTubeApiKeyModel.pickBestKey(partner, cost, this.perKeyUsed);
+    if (!picked) {
+      logger.error(
+        `YouTube discovery pool exhausted (partner=${partner ?? 'shared'}, ` +
+        `need ${cost} for ${context}). Add a key in Settings or wait for daily reset.`,
+      );
+      return null;
+    }
+    if (!this.chargePoolKey(picked.id, picked.daily_quota, cost)) {
+      logger.warn(`YouTube pool key ${picked.label} couldn't accept ${cost} units`);
+      return null;
+    }
+    YouTubeApiKeyModel.touchLastUsed(picked.id).catch(() => {});
+    const client = axios.create({
+      baseURL: API_BASE,
+      params: { key: picked.secret },
+    });
+    return { client, keyId: picked.id, keyLabel: picked.label };
+  }
+
+  /**
    * Reserve `cost` units against a specific pool key. Returns true if charged,
    * false if the key has insufficient remaining quota.
    */
@@ -310,6 +359,20 @@ export class YouTubeAdapter implements PlatformAdapter {
     this.multiStreamChannels = new Set(channelIds.map((id) => id.toLowerCase()));
     if (channelIds.length > 0) {
       logger.debug(`YouTube: multi-stream detection enabled for ${channelIds.length} channel(s)`);
+    }
+  }
+
+  /**
+   * Channels listed here use the API-based multi-stream path (search.list +
+   * videos.list) instead of the page-scraping path. Caller is the polling
+   * orchestrator, which filters channels with `metadata.multi_stream_via_api`.
+   * The flag is independent of `multi_stream` — a channel can be in either,
+   * both, or neither set. When in both, the API path takes precedence.
+   */
+  setMultiStreamApiChannels(channelIds: string[]): void {
+    this.multiStreamApiChannels = new Set(channelIds.map((id) => id.toLowerCase()));
+    if (channelIds.length > 0) {
+      logger.debug(`YouTube: API multi-stream mode enabled for ${channelIds.length} channel(s)`);
     }
   }
 
@@ -526,6 +589,140 @@ export class YouTubeAdapter implements PlatformAdapter {
     const freshSet = new Set(freshIds);
     const stickyOnly = [...history.keys()].filter((v) => !freshSet.has(v));
     return [...freshIds, ...stickyOnly];
+  }
+
+  // ── API-based multi-stream tracking ──────────────────────────────────
+
+  /**
+   * Builds ChannelSnapshot rows for a multi-stream channel using the YouTube
+   * Data API instead of page-scraping. Used only for channels flagged with
+   * `metadata.multi_stream_via_api`. Single-stream channels and channels
+   * with `multi_stream` (but not the API flag) keep using the scrape path.
+   *
+   * Two-step API flow:
+   * 1. `search.list?channelId=X&eventType=live` (100 quota units) — returns
+   *    every live video owned by the channel. Server-side filtered: foreign
+   *    attribution from /live redirects is structurally impossible. Cached
+   *    per-channel for {@link API_MULTISTREAM_SEARCH_TTL_MS} (5 min default).
+   * 2. `videos.list?id=v1,v2,…` (1 unit per cycle, batched up to 50 ids) —
+   *    returns liveStreamingDetails.concurrentViewers and snippet.title.
+   *
+   * Returns:
+   *   - `ChannelSnapshot[]` (possibly empty) — channel observed offline or
+   *     live with N streams. Each snapshot is tagged with `originalId` so
+   *     the orchestrator's auto-split routes the highest-CCV one to the
+   *     parent and the rest to children.
+   *   - `null` — quota or network error. Caller falls back to the existing
+   *     scrape path. We never silently blank the channel.
+   */
+  private async getMultiStreamSnapshotsViaApi(
+    channelId: string,
+    originalId: string,
+  ): Promise<ChannelSnapshot[] | null> {
+    let videoIds: string[] = [];
+
+    const cached = this.apiMultiStreamCache.get(channelId);
+    if (cached && Date.now() - cached.cachedAt < API_MULTISTREAM_SEARCH_TTL_MS) {
+      videoIds = cached.videoIds;
+    } else {
+      const acquired = await this.acquirePoolClient(
+        QUOTA_COST.search,
+        null,
+        `multi-stream-API search.list(${channelId})`,
+      );
+      if (!acquired) {
+        // Pool exhausted. If we have a stale cache, use it rather than
+        // falling all the way back to scrape — the channel's video set
+        // changes infrequently, and stale ids stop returning data once
+        // they go offline (videos.list returns 0 viewers).
+        if (cached && cached.videoIds.length > 0) {
+          logger.warn(
+            `YouTube: multi-stream-API pool exhausted for ${channelId}, ` +
+            `reusing stale cache (${cached.videoIds.length} videoId(s))`,
+          );
+          videoIds = cached.videoIds;
+        } else {
+          return null;
+        }
+      } else {
+        const result = await this.requestWithRetry(async () => {
+          const { data } = await acquired.client.get<YouTubeListResponse<YouTubeSearchItem>>(
+            '/search',
+            {
+              params: {
+                channelId,
+                eventType: 'live',
+                type: 'video',
+                part: 'id',
+                maxResults: 50,
+              },
+            },
+          );
+          return data;
+        }, `multi-stream-API search.list(${channelId}, key=${acquired.keyLabel})`);
+
+        if (!result) {
+          // Network / 5xx after retries. Fall back to scrape.
+          return null;
+        }
+
+        videoIds = result.items.map((it) => it.id.videoId);
+        this.apiMultiStreamCache.set(channelId, {
+          videoIds,
+          cachedAt: Date.now(),
+        });
+
+        logger.info(
+          `YouTube: multi-stream-API ${originalId} → ${videoIds.length} live id(s)` +
+          (videoIds.length > 0 ? ` (${videoIds.join(', ')})` : ''),
+        );
+      }
+    }
+
+    if (videoIds.length === 0) return [];
+
+    // videos.list — uses the legacy single-key counter (consumeQuota), not
+    // the per-key pool. Same machinery as the existing scrape-then-enrich
+    // flow, so behaviour stays consistent on quota exhaustion.
+    const details = await this.getVideoDetails(videoIds);
+    if (details.length === 0 && videoIds.length > 0) {
+      // Quota exhausted on the legacy single key. Fall back to scrape.
+      logger.warn(
+        `YouTube: multi-stream-API videos.list returned no data for ${channelId} ` +
+        `(legacy single-key quota?), falling back to scrape`,
+      );
+      return null;
+    }
+
+    const snapshots: ChannelSnapshot[] = [];
+    for (const v of details) {
+      // Defense-in-depth: search.list filters server-side, but reject any
+      // mismatched ownership all the same.
+      if (v.snippet.channelId !== channelId) {
+        logger.warn(
+          `YouTube: multi-stream-API ${channelId} dropping foreign id ` +
+          `${v.id} (owner=${v.snippet.channelId})`,
+        );
+        continue;
+      }
+      const ccv = v.liveStreamingDetails?.concurrentViewers
+        ? parseInt(v.liveStreamingDetails.concurrentViewers, 10)
+        : 0;
+      snapshots.push({
+        channelIdentifier: originalId,
+        displayName: v.snippet.channelTitle ?? originalId,
+        concurrentViewers: ccv,
+        isLive: true,
+        language: v.snippet.defaultAudioLanguage ?? null,
+        gameName: null,
+        title: v.snippet.title ?? null,
+        startedAt: v.liveStreamingDetails?.actualStartTime ?? null,
+        streamId: v.id,
+        streamTitle: v.snippet.title ?? undefined,
+      });
+    }
+
+    return snapshots;
   }
 
   // ── Retry wrapper ─────────────────────────────────────────────────────
@@ -1231,6 +1428,40 @@ export class YouTubeAdapter implements PlatformAdapter {
         continue;
       }
 
+      // API multi-stream branch — runs BEFORE the scrape result is consulted.
+      // When this channel is opted into the API path, we ignore /live and
+      // /streams scrapes entirely (the /live request was made earlier, but
+      // we don't trust its output for these channels because foreign
+      // attribution from the /live redirect is the bug we're routing
+      // around). On API failure (quota / network) we fall through to the
+      // existing scrape handling so we never blank the channel out.
+      const isApiMode =
+        this.multiStreamApiChannels.has(resolvedId.toLowerCase()) ||
+        this.multiStreamApiChannels.has(originalId.toLowerCase());
+
+      if (isApiMode) {
+        const apiSnapshots = await this.getMultiStreamSnapshotsViaApi(resolvedId, originalId);
+        if (apiSnapshots !== null) {
+          if (apiSnapshots.length === 0) {
+            // search.list returned no live videos — channel offline.
+            results.push({
+              channelIdentifier: originalId,
+              displayName: originalId,
+              concurrentViewers: 0,
+              isLive: false,
+              language: null,
+              gameName: null,
+              title: null,
+              startedAt: null,
+            });
+          } else {
+            results.push(...apiSnapshots);
+          }
+          continue;
+        }
+        logger.warn(`YouTube: multi-stream-API failed for ${originalId}, falling back to scrape`);
+      }
+
       const scraped = scrapedData.get(resolvedId);
 
       if (!scraped) {
@@ -1358,44 +1589,8 @@ export class YouTubeAdapter implements PlatformAdapter {
     const searchResults: Array<{ videoId: string; snippet: YouTubeSearchItem['snippet'] }> = [];
     const MAX_PAGES = 4; // 4 pages × 50 = up to 200 results per search term
 
-    /**
-     * Pick a key from the discovery pool that has enough remaining quota,
-     * charge it, and return a one-shot axios client bound to that key. If
-     * no pool key has room, returns null — discovery skips for this cycle
-     * (no fall-through to the legacy single key on purpose; the operator
-     * sees pool exhaustion in the Settings UI and adds keys).
-     */
-    const acquirePoolClient = async (
-      cost: number,
-      context: string,
-    ): Promise<{ client: AxiosInstance; keyId: string; keyLabel: string } | null> => {
-      const picked = await YouTubeApiKeyModel.pickBestKey(
-        partner ?? null,
-        cost,
-        this.perKeyUsed,
-      );
-      if (!picked) {
-        logger.error(
-          `YouTube discovery pool exhausted (partner=${partner ?? 'shared'}, ` +
-          `need ${cost} for ${context}). Add a key in Settings or wait for daily reset.`,
-        );
-        return null;
-      }
-      if (!this.chargePoolKey(picked.id, picked.daily_quota, cost)) {
-        logger.warn(`YouTube pool key ${picked.label} couldn't accept ${cost} units`);
-        return null;
-      }
-      // Touch last_used_at lazily; failure isn't fatal
-      YouTubeApiKeyModel.touchLastUsed(picked.id).catch(() => {});
-      const client = axios.create({
-        baseURL: API_BASE,
-        params: { key: picked.secret },
-      });
-      return { client, keyId: picked.id, keyLabel: picked.label };
-    };
-
     for (const searchTerm of searchTerms) {
-      const acquired = await acquirePoolClient(QUOTA_COST.search, `searchLiveStreams("${searchTerm}")`);
+      const acquired = await this.acquirePoolClient(QUOTA_COST.search, partner ?? null, `searchLiveStreams("${searchTerm}")`);
       if (!acquired) break;
       let activeClient = acquired.client;
       let activeKeyLabel = acquired.keyLabel;
@@ -1435,8 +1630,9 @@ export class YouTubeAdapter implements PlatformAdapter {
         // Additional pages cost quota too — pick a (potentially different)
         // pool key for the next page.
         if (page < MAX_PAGES - 1) {
-          const nextAcquired = await acquirePoolClient(
+          const nextAcquired = await this.acquirePoolClient(
             QUOTA_COST.search,
+            partner ?? null,
             `searchLiveStreams("${searchTerm}") p${page + 2}`,
           );
           if (!nextAcquired) break;
