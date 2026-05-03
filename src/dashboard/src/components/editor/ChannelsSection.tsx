@@ -447,6 +447,14 @@ function InlineRowEditor({
   const [selectedDays, setSelectedDays] = useState<Set<string>>(
     () => new Set(channel.broadcast_day_ids ?? []),
   );
+  // YouTube-only metadata flags. Stored as boolean in metadata JSONB.
+  const initialMeta = (channel.metadata ?? {}) as Record<string, unknown>;
+  const [multiStream, setMultiStream] = useState<boolean>(
+    initialMeta.multi_stream === true,
+  );
+  const [multiStreamViaApi, setMultiStreamViaApi] = useState<boolean>(
+    initialMeta.multi_stream_via_api === true,
+  );
   const [saving, setSaving] = useState(false);
 
   const toggleDay = (id: string) => {
@@ -461,11 +469,22 @@ function InlineRowEditor({
   const handleSave = async () => {
     setSaving(true);
     try {
+      // Build the metadata payload. Preserve unrelated keys, set/clear the
+      // two boolean flags. Sending the merged object replaces metadata
+      // wholesale on the server, so include any keys we don't manage in UI.
+      const nextMeta: Record<string, unknown> = { ...initialMeta };
+      if (channel.platform === 'youtube') {
+        if (multiStream) nextMeta.multi_stream = true;
+        else delete nextMeta.multi_stream;
+        if (multiStreamViaApi) nextMeta.multi_stream_via_api = true;
+        else delete nextMeta.multi_stream_via_api;
+      }
       await api.updateChannel(channel.id, {
         display_name: displayName.trim() || channel.display_name,
         language: language.trim() || undefined,
         region: region.trim() || undefined,
         tier,
+        metadata: nextMeta,
       });
       await api.updateChannelDays(channel.id, Array.from(selectedDays));
       onSaved();
@@ -567,6 +586,64 @@ function InlineRowEditor({
               );
             })}
           </Row>
+        </Col>
+      )}
+
+      {/* YouTube multi-stream toggles. Only meaningful for YouTube channels
+          where one external channel hosts multiple simultaneous broadcasts
+          (e.g. PUBGEsports with a separate Map feed). */}
+      {channel.platform === 'youtube' && (
+        <Col gap={6}>
+          <div className="eyebrow" style={{ fontSize: 9 }}>
+            YouTube tracking
+          </div>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 12,
+              color: 'var(--fg-muted)',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={multiStream}
+              onChange={(e) => setMultiStream(e.target.checked)}
+            />
+            <span>
+              Multi-stream channel{' '}
+              <span style={{ color: 'var(--fg-dim)' }}>
+                — channel hosts more than one simultaneous live broadcast
+              </span>
+            </span>
+          </label>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 12,
+              color: multiStream ? 'var(--fg-muted)' : 'var(--fg-dim)',
+              cursor: multiStream ? 'pointer' : 'not-allowed',
+              opacity: multiStream ? 1 : 0.5,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={multiStreamViaApi}
+              disabled={!multiStream}
+              onChange={(e) => setMultiStreamViaApi(e.target.checked)}
+            />
+            <span>
+              Track via YouTube Data API{' '}
+              <span style={{ color: 'var(--fg-dim)' }}>
+                — recommended; avoids /live foreign-attribution and /streams
+                regex flakiness. Costs ~6.6K quota units per 5-hour broadcast.
+              </span>
+            </span>
+          </label>
         </Col>
       )}
 
