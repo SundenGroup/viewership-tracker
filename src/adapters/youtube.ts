@@ -681,17 +681,64 @@ export class YouTubeAdapter implements PlatformAdapter {
 
     if (videoIds.length === 0) return [];
 
-    // videos.list — uses the legacy single-key counter (consumeQuota), not
-    // the per-key pool. Same machinery as the existing scrape-then-enrich
-    // flow, so behaviour stays consistent on quota exhaustion.
-    const details = await this.getVideoDetails(videoIds);
-    if (details.length === 0 && videoIds.length > 0) {
-      // Quota exhausted on the legacy single key. Fall back to scrape.
-      logger.warn(
-        `YouTube: multi-stream-API videos.list returned no data for ${channelId} ` +
-        `(legacy single-key quota?), falling back to scrape`,
+    // videos.list — route through the per-key pool, NOT the legacy single-
+    // key counter. Earlier we used `getVideoDetails` here, which charges
+    // the legacy 10K/day key shared with single-stream enrichment; that
+    // counter exhausts much faster than the pool and would push the API
+    // path back to the scrape (and its foreign-attribution problem) for
+    // most of a multi-broadcast day. Charging against the pool means the
+    // API path stays alive as long as ANY pool key has ≥ 1 unit left.
+    //
+    // Up to 50 ids per request; with at most a few simultaneous live
+    // streams per channel we never need to batch in practice.
+    const details: YouTubeVideoItem[] = [];
+    const idChunks: string[][] = [];
+    for (let i = 0; i < videoIds.length; i += MAX_VIDEO_IDS_PER_REQUEST) {
+      idChunks.push(videoIds.slice(i, i + MAX_VIDEO_IDS_PER_REQUEST));
+    }
+    for (const batch of idChunks) {
+      const acquired = await this.acquirePoolClient(
+        QUOTA_COST.videosList,
+        null,
+        `multi-stream-API videos.list(${channelId})`,
       );
-      return null;
+      if (!acquired) {
+        // Pool exhausted mid-call. Caller falls back to scrape.
+        logger.warn(
+          `YouTube: multi-stream-API videos.list pool exhausted for ${channelId}, ` +
+          `falling back to scrape`,
+        );
+        return null;
+      }
+      const result = await this.requestWithRetry(async () => {
+        const { data } = await acquired.client.get<YouTubeListResponse<YouTubeVideoItem>>(
+          '/videos',
+          {
+            params: {
+              id: batch.join(','),
+              part: 'snippet,liveStreamingDetails',
+            },
+          },
+        );
+        return data;
+      }, `multi-stream-API videos.list(${channelId}, key=${acquired.keyLabel})`);
+
+      if (!result) {
+        // Network / 5xx after retries. Fall back to scrape.
+        return null;
+      }
+      details.push(...result.items);
+    }
+    if (details.length === 0 && videoIds.length > 0) {
+      // search.list returned ids but videos.list returned no items — this
+      // can happen if all ids became unavailable between calls (deleted,
+      // privated, geo-blocked). Treat as offline rather than null so we
+      // don't fall back to scrape and risk foreign attribution.
+      logger.info(
+        `YouTube: multi-stream-API ${channelId} — videos.list returned no ` +
+        `items for ${videoIds.length} candidate id(s); treating as offline`,
+      );
+      return [];
     }
 
     const snapshots: ChannelSnapshot[] = [];
