@@ -72,19 +72,14 @@ Relay Scripts ─┘                     │                                 │
 - **State:** React Context (auth), custom hooks (polling, WebSocket)
 - **Routing:** React Router 7
 
-### Dual-UI Layout (since 2026-04-27)
+### UI Layout (since 2026-04-27 redesign cutover, 2026-05-05 legacy removal)
 
-Two independent SPAs share the same backend and database:
-
-| URL | Source repo | Build dir | `--base` |
-|-----|-------------|-----------|----------|
-| `tracker.clutch.game/` (default) | `clutch-viewership-tracker-redesign/src/dashboard/` | `/opt/clutch-viewership-tracker/src/dashboard/dist/` | `/` |
-| `tracker.clutch.game/legacy/` | `clutch-viewership-tracker/src/dashboard/` | `/opt/clutch-viewership-tracker/legacy-dist/` | `/legacy/` |
-
-The legacy build sets React Router's `basename` from `import.meta.env.BASE_URL` so all in-app navigation stays under `/legacy/`. Both UIs:
-- Share `/api/*`, `/ws`, JWT auth cookie, and the legacy static-HTML reports under `/api/public/<short>/reports/`
-- Read the same `viewership_snapshots` and channel metadata
-- Are served by the same nginx server block
+A single SPA serves the dashboard at `tracker.clutch.game/`, built from the
+redesign repo (`clutch-viewership-tracker-redesign/src/dashboard/`) and
+rsync'd to `/opt/clutch-viewership-tracker/src/dashboard/dist/`. The
+pre-2026-04-27 legacy SPA at `/legacy/` was removed on 2026-05-05; nginx
+never had a `/legacy/` location block, so the URL had been 404'ing in
+practice since the cutover.
 
 **`/preview/*` URLs** that were shared externally during the redesign-in-preview window are 301-redirected to the equivalent `/*` URL (path tail and query string preserved) by nginx.
 
@@ -736,10 +731,6 @@ Test database: `clutch_viewership_test` (from DATABASE_URL containing "test")
 | Static legacy report | `/api/public/:shortName/reports/:filename.html` | Pre-generated static HTML (Express route, served from `/opt/clutch-viewership-tracker/reports/<short-folder>/`); banner-injected at serve time |
 | Explore (post-event) | `/explore[/:seriesId]` | Editor+ post-event analysis surface — scope-aware channel table, multi-channel overlay chart, per-timestamp cross-channel CCV panel. URL-encoded state for bookmarkability. |
 | 404 | `*` | Page not found |
-
-### Pages (legacy at `/legacy/`)
-
-The legacy SPA exposes the same routes minus `/settings/youtube-keys` and the live-report URLs (`/public/.../report/...`). Routes are namespaced under `/legacy/` via the React Router `basename` derived from `import.meta.env.BASE_URL`.
 
 ### Dashboard Panels
 

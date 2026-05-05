@@ -422,9 +422,13 @@ export class YouTubeAdapter implements PlatformAdapter {
         }
       }
 
-      // Strategy 2: Look for "LIVE_NOW" badges near videoIds
+      // Strategy 2: Look for "LIVE_NOW" badges near videoIds.
+      // Window bounded to {0,30000} so an HTML page with a videoId near
+      // the top and no later badge can't trigger pathological backtracking
+      // — the regex engine gives up after scanning ~30 KB instead of the
+      // entire page (often 100s of KB on the new lockupViewModel variant).
       if (liveVideoIds.length === 0) {
-        const liveNowRegex = /"videoId":"([a-zA-Z0-9_-]{11})"[\s\S]*?"BADGE_STYLE_TYPE_LIVE_NOW"/g;
+        const liveNowRegex = /"videoId":"([a-zA-Z0-9_-]{11})"[\s\S]{0,30000}?"BADGE_STYLE_TYPE_LIVE_NOW"/g;
         while ((match = liveNowRegex.exec(html)) !== null) {
           if (!seenIds.has(match[1])) {
             seenIds.add(match[1]);

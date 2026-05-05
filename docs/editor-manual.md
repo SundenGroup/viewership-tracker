@@ -5,7 +5,7 @@ Welcome to the Clutch Viewership Tracker. This guide covers everything you need 
 **Login:** Navigate to [tracker.clutch.game](https://tracker.clutch.game) and sign in with your credentials.
 
 > **2026-04-27 — Redesigned dashboard is now live.**
-> The default URL [tracker.clutch.game](https://tracker.clutch.game) now serves the redesigned UI. Concepts are unchanged from this manual, but the layout and navigation differ — see the **Migration history** appendix at the end for highlights and the location of the legacy build.
+> The default URL [tracker.clutch.game](https://tracker.clutch.game) serves the redesigned UI. Concepts are unchanged from this manual, but the layout and navigation differ — see the **Migration history** appendix at the end for highlights.
 
 ---
 
@@ -297,13 +297,13 @@ The redesigned dashboard, previously available at `/preview/`, was promoted to t
 
 **Routing after cutover:**
 - `tracker.clutch.game/` — redesigned dashboard (default)
-- `tracker.clutch.game/legacy/` — old design, kept indefinitely as a fallback and for side-by-side comparison
 - `tracker.clutch.game/preview/...` — 301-redirected to the equivalent `/...` URL (preserves any external links shared while the redesign was in preview)
-- `tracker.clutch.game/api/public/<short>/reports/<file>.html` — legacy static HTML reports unchanged on disk; now include a banner at the top linking to the same scope rendered live in the redesign
+- `tracker.clutch.game/api/public/<short>/reports/<file>.html` — pre-rendered static HTML reports unchanged on disk; now include a banner at the top linking to the same scope rendered live in the redesign
 
 **Builds:**
-- Redesign: built from `clutch-viewership-tracker-redesign/src/dashboard/` with `npx vite build --base=/`, deployed to `/opt/clutch-viewership-tracker/src/dashboard/dist/`
-- Legacy: built from `clutch-viewership-tracker/src/dashboard/` with `npx vite build --base=/legacy/`, deployed to `/opt/clutch-viewership-tracker/legacy-dist/`
+- Built from `clutch-viewership-tracker-redesign/src/dashboard/` with `npx vite build --base=/`, deployed to `/opt/clutch-viewership-tracker/src/dashboard/dist/`
+
+**Legacy `/legacy/` removed (2026-05-05):** The pre-redesign SPA was removed from the repo and the deploy pipeline. nginx never had a matching location block after the cutover, so the URL had been 404'ing in practice; this just makes the code state match.
 
 **Banner injection:** Implemented at-serve in `src/api/routes/public.ts` — the route reads the static HTML, splices a small dark banner (`View this report in the redesigned dashboard →`) immediately after the first `<div class="container">`, and streams the result. The on-disk file is never modified, preserving each report as a true historical snapshot.
 

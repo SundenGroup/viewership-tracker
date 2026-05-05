@@ -175,9 +175,12 @@ export class TrovoAdapter implements PlatformAdapter {
 
       if (!html || typeof html !== 'string') return null;
 
-      // Trovo embeds channel data as JSON in script tags
-      const stateMatch = html.match(/__NEXT_DATA__\s*=\s*({.+?})\s*<\/script>/s) ||
-        html.match(/window\.__INITIAL_STATE__\s*=\s*({.+?});?\s*<\/script>/s);
+      // Trovo embeds channel data as JSON in script tags. The body match
+      // is bounded to a few MB so a malformed page without a closing
+      // </script> tag can't trigger pathological backtracking that scans
+      // the entire response.
+      const stateMatch = html.match(/__NEXT_DATA__\s*=\s*({[\s\S]{0,2000000}?})\s*<\/script>/) ||
+        html.match(/window\.__INITIAL_STATE__\s*=\s*({[\s\S]{0,2000000}?});?\s*<\/script>/);
 
       if (stateMatch) {
         try {

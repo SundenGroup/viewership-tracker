@@ -8,11 +8,25 @@
  * Auth: Bearer token via RELAY_SECRET env var.
  */
 import { Router, Request, Response, NextFunction } from 'express';
+import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
 import db from '../../utils/db';
 import logger from '../../utils/logger';
 
 const router = Router();
+
+// Per-IP rate limit on relay endpoints. Legitimate relays hit each route at
+// most every 30 s, so 120/min leaves comfortable headroom for retries and
+// occasional bursts while a leaked RELAY_SECRET can't be used to flood the
+// DB. Applied to every route in this router via `router.use` below.
+const relayLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many relay requests, slow down.' },
+});
+router.use(relayLimiter);
 
 // Timing-safe bearer-token auth for relay endpoints
 function requireRelayToken(req: Request, res: Response, next: NextFunction) {
