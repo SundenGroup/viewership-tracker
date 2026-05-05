@@ -205,19 +205,18 @@ export function DiscoverDetailPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: 'var(--bg-sunken)' }}>
-              <th style={th}>#</th>
+              <th style={{ ...th, width: 36 }}>#</th>
+              <th style={{ ...th, width: 80 }}>Platform</th>
               <th style={th}>Channel</th>
-              <th style={th}>Platform</th>
-              <th style={{ ...th, textAlign: 'right' }}>CCV</th>
-              <th style={th}>Title</th>
-              <th style={th}>Lang</th>
+              <th style={{ ...th, width: 60 }}>Lang</th>
+              <th style={{ ...th, textAlign: 'right', width: 100 }}>Live CCV</th>
             </tr>
           </thead>
           <tbody>
             {leaderboard.length === 0 && (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={5}
                   style={{ padding: 32, textAlign: 'center', color: 'var(--fg-muted)' }}
                 >
                   No active streams right now
@@ -227,6 +226,9 @@ export function DiscoverDetailPage() {
             {leaderboard.map((row, i) => (
               <tr key={row.channel_id} style={{ borderBottom: '1px solid var(--border-faint)' }}>
                 <td style={{ ...td, color: 'var(--fg-dim)' }}>{i + 1}</td>
+                <td style={{ ...td, color: 'var(--fg-muted)', textTransform: 'capitalize' }}>
+                  {row.platform}
+                </td>
                 <td style={td}>
                   {row.channel ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -236,37 +238,49 @@ export function DiscoverDetailPage() {
                         }
                         name={row.channel.display_name}
                       />
-                      <a
-                        href={platformUrl(row.platform, row.channel.channel_identifier)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: 'var(--fg)', fontWeight: 500 }}
-                      >
-                        {row.channel.display_name}
-                      </a>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <a
+                          href={platformUrl(row.platform, row.channel.channel_identifier)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            color: 'var(--fg)',
+                            fontWeight: 500,
+                            display: 'block',
+                          }}
+                        >
+                          {row.channel.display_name}
+                        </a>
+                        <div
+                          title={row.stream_title ?? ''}
+                          style={{
+                            fontSize: 11,
+                            color: 'var(--fg-dim)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            maxWidth: 360,
+                          }}
+                        >
+                          {row.stream_title ?? '—'}
+                        </div>
+                      </div>
                     </div>
                   ) : (
                     <span style={{ color: 'var(--fg-muted)' }}>{row.channel_id.slice(0, 8)}</span>
                   )}
                 </td>
-                <td style={{ ...td, color: 'var(--fg-muted)' }}>{row.platform}</td>
-                <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                  {row.concurrent_viewers.toLocaleString()}
-                </td>
+                <td style={{ ...td, color: 'var(--fg-dim)' }}>{row.language ?? '—'}</td>
                 <td
                   style={{
                     ...td,
-                    color: 'var(--fg-muted)',
-                    maxWidth: 280,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
+                    textAlign: 'right',
+                    fontVariantNumeric: 'tabular-nums',
+                    fontWeight: 500,
                   }}
-                  title={row.stream_title ?? ''}
                 >
-                  {row.stream_title ?? '—'}
+                  {row.concurrent_viewers.toLocaleString()}
                 </td>
-                <td style={{ ...td, color: 'var(--fg-dim)' }}>{row.language ?? '—'}</td>
               </tr>
             ))}
           </tbody>
