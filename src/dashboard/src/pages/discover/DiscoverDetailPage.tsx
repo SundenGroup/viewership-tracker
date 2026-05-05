@@ -11,6 +11,7 @@ import {
   Tab,
   PlatformPip,
   ChannelNameWithLink,
+  ThemeToggle,
   IconBolt,
   IconUsers,
   IconEye,
@@ -107,7 +108,10 @@ export function DiscoverDetailPage() {
 
   return (
     <div style={{ padding: '32px 24px 64px', maxWidth: 1320, margin: '0 auto' }}>
-      <BackLink />
+      <Row justify="space-between" align="center">
+        <BackLink />
+        <ThemeToggle />
+      </Row>
 
       {/* ── Hero ──────────────────────────────────────────────────────── */}
       <Row justify="space-between" align="flex-end" wrap style={{ marginTop: 14, marginBottom: 24, gap: 16 }}>

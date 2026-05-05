@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as api from '@/services/api';
+import { Row, ThemeToggle } from '@/components/design';
 
 interface GameLookupResult {
   twitch: Array<{ id: string; name: string }>;
@@ -90,6 +91,10 @@ export function DiscoverAdminNew() {
 
   return (
     <div style={{ padding: '32px 24px', maxWidth: 800, margin: '0 auto' }}>
+      <Row justify="space-between" align="center" style={{ marginBottom: 8 }}>
+        <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}></span>
+        <ThemeToggle />
+      </Row>
       <h1 style={{ fontSize: 24, fontWeight: 600, color: 'var(--fg)', margin: 0 }}>
         New game tracker
       </h1>

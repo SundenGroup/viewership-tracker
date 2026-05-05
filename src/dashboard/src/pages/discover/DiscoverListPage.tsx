@@ -8,6 +8,7 @@ import {
   Col,
   Pill,
   PlatformPip,
+  ThemeToggle,
   IconPlus,
   IconBolt,
 } from '@/components/design';
@@ -61,16 +62,19 @@ export function DiscoverListPage() {
             Continuous viewership tracking per game on Twitch and Kick.
           </p>
         </Col>
-        {isAdmin && (
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => navigate('/discover/admin/new')}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-          >
-            <IconPlus size={13} /> New tracker
-          </button>
-        )}
+        <Row gap={8} align="center">
+          <ThemeToggle />
+          {isAdmin && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => navigate('/discover/admin/new')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <IconPlus size={13} /> New tracker
+            </button>
+          )}
+        </Row>
       </Row>
 
       {error && (
