@@ -6,6 +6,21 @@ import type {
   GameTrackerRangeLeaderboardRow,
   GameTrackerPlatformBreakdown,
 } from '@/services/api';
+import {
+  Row,
+  Col,
+  Section,
+  Pill,
+  Kpi,
+  PlatformPip,
+  ChannelNameWithLink,
+  IconCalendar,
+  IconBolt,
+  IconTrophy,
+  IconX,
+} from '@/components/design';
+import { fmtCompact, fmtN } from '@/design/format';
+import { Avatar } from './DiscoverDetailPage';
 import { DiscoverTimelineChart } from './DiscoverTimelineChart';
 
 type RangePreset = '1h' | '6h' | '24h' | '7d' | '30d';
@@ -40,17 +55,14 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
     platform: GameTrackerPlatformBreakdown[];
     language: api.GameTrackerLanguageBreakdown[];
   } | null>(null);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const range = RANGE_OPTIONS.find((r) => r.key === rangeKey)!;
 
-  // Load timeline + breakdown when range changes.
   useEffect(() => {
     let cancelled = false;
     const from = new Date(Date.now() - range.hours * 60 * 60_000);
     const to = new Date();
-    setLoading(true);
     setError(null);
     setSelection(null);
     setPointSnapshot(null);
@@ -67,9 +79,6 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
       });
 
     return () => {
@@ -77,13 +86,11 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
     };
   }, [slug, range.hours, range.bucketSeconds]);
 
-  // Load side-panel content when selection changes.
   useEffect(() => {
     if (!selection) return;
     let cancelled = false;
     const at = new Date(selection.fromIso);
     if (selection.toIso === null) {
-      // Single-timestamp click → top streams at that moment.
       api
         .getGameTrackerLeaderboard(slug, at, 25)
         .then((rows) => {
@@ -91,7 +98,6 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
         })
         .catch(() => {});
     } else {
-      // Range → range leaderboard.
       const to = new Date(selection.toIso);
       api
         .getGameTrackerRangeLeaderboard(slug, at, to, 25)
@@ -110,87 +116,94 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
     const sum = buckets.reduce((acc, b) => acc + b.total_ccv, 0);
     return Math.round(sum / buckets.length);
   }, [buckets]);
-
   const peakCcv = useMemo(
     () => buckets.reduce((max, b) => (b.total_ccv > max ? b.total_ccv : max), 0),
     [buckets],
   );
-
   const peakBucket = useMemo(
     () => buckets.find((b) => b.total_ccv === peakCcv) ?? null,
     [buckets, peakCcv],
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <Col gap={16}>
       {/* Range picker */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 11, color: 'var(--fg-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Range
+      <Row gap={8} align="center">
+        <span
+          className="eyebrow"
+          style={{ fontSize: 10, color: 'var(--fg-muted)', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+        >
+          <IconCalendar size={11} /> Range
         </span>
-        <div style={{ display: 'inline-flex', gap: 4 }}>
+        <Row gap={4}>
           {RANGE_OPTIONS.map((opt) => (
-            <button
+            <RangePill
               key={opt.key}
-              type="button"
+              active={rangeKey === opt.key}
               onClick={() => setRangeKey(opt.key)}
-              className="btn"
-              style={{
-                fontSize: 12,
-                padding: '4px 12px',
-                background: rangeKey === opt.key ? 'var(--red)' : 'transparent',
-                color: rangeKey === opt.key ? '#fff' : 'var(--fg-muted)',
-                borderColor: rangeKey === opt.key ? 'var(--red)' : 'var(--border)',
-              }}
             >
               {opt.label}
-            </button>
+            </RangePill>
           ))}
-        </div>
-      </div>
+        </Row>
+      </Row>
 
       {error && (
-        <div className="placeholder" style={{ color: 'var(--red)' }}>
-          {error}
-        </div>
+        <Section style={{ color: 'var(--red)' }}>{error}</Section>
       )}
 
-      {/* Aggregate metrics */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-        <ReportKpi label={`Avg CCV (${range.label})`} value={totalAvgCcv.toLocaleString()} />
-        <ReportKpi
+      {/* Aggregate KPIs */}
+      <Row gap={12} wrap style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        <TrendKpi
+          icon={<IconBolt size={13} />}
+          label={`Avg CCV (${range.label})`}
+          value={fmtN(totalAvgCcv)}
+        />
+        <TrendKpi
+          icon={<IconTrophy size={13} />}
           label="Peak"
-          value={peakCcv.toLocaleString()}
+          value={fmtN(peakCcv)}
           sub={
-            peakBucket ? new Date(peakBucket.ts).toLocaleString([], {
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-            }) : undefined
+            peakBucket
+              ? new Date(peakBucket.ts).toLocaleString([], {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })
+              : null
           }
         />
-        <ReportKpi
-          label="Buckets"
-          value={loading ? '—' : `${buckets.length}`}
-          sub={`${range.bucketSeconds < 60 ? `${range.bucketSeconds}s` : `${range.bucketSeconds / 60}m`} resolution`}
+        <TrendKpi
+          label="Resolution"
+          value={
+            range.bucketSeconds < 60
+              ? `${range.bucketSeconds}s`
+              : `${range.bucketSeconds / 60}m`
+          }
+          sub={`${buckets.length} buckets`}
         />
-      </div>
+      </Row>
 
       {/* Drag-to-select chart */}
-      <div className="card" style={{ padding: 20, paddingBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)', margin: 0 }}>
-            Total concurrent viewers
-          </h3>
+      <Section
+        title="Total concurrent viewers"
+        eyebrow="TIMELINE"
+        right={
           <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
             click a point or drag to inspect
           </span>
-        </div>
-        <DiscoverTimelineChart buckets={buckets} selection={selection} onPick={setSelection} height={300} />
-      </div>
+        }
+      >
+        <DiscoverTimelineChart
+          buckets={buckets}
+          selection={selection}
+          onPick={setSelection}
+          height={300}
+        />
+      </Section>
 
-      {/* Side-panel: details for the selected point or range */}
+      {/* Side-by-side: selected detail + breakdowns */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <SelectedPanel
           selection={selection}
@@ -200,58 +213,78 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
         />
         <BreakdownPanel breakdown={breakdown} />
       </div>
-    </div>
+    </Col>
   );
 }
 
 // ── Sub-components ────────────────────────────────────────────────────
 
-function ReportKpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function RangePill({
+  children,
+  active,
+  onClick,
+}: {
+  children: React.ReactNode;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: '4px 12px',
+        fontSize: 11,
+        fontFamily: 'var(--font-mono)',
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: '0.06em',
+        borderRadius: 999,
+        border: `1px solid ${active ? 'var(--red)' : 'var(--border)'}`,
+        background: active ? 'var(--red-wash, color-mix(in oklab, var(--red) 12%, transparent))' : 'transparent',
+        color: active ? 'var(--red)' : 'var(--fg-muted)',
+        cursor: 'pointer',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function TrendKpi({
+  icon,
+  label,
+  value,
+  sub,
+}: {
+  icon?: React.ReactNode;
+  label: React.ReactNode;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+}) {
   return (
     <div
       className="card"
       style={{
-        padding: '20px 22px',
+        padding: '18px 20px',
         position: 'relative',
         overflow: 'hidden',
       }}
     >
       <div
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          height: 3,
-          background: 'var(--red)',
-        }}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: 'var(--red)' }}
       />
-      <div
-        style={{
-          fontSize: 10,
-          color: 'var(--fg-muted)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.12em',
-          marginBottom: 10,
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontFamily: 'var(--font-mono, monospace)',
-          fontSize: 30,
-          fontWeight: 700,
-          color: 'var(--fg)',
-          fontVariantNumeric: 'tabular-nums',
-          lineHeight: 1.05,
-        }}
-      >
-        {value}
-      </div>
-      {sub && (
-        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--fg-dim)' }}>{sub}</div>
-      )}
+      <Kpi
+        size="md"
+        label={
+          <Row gap={5} align="center" style={{ color: 'var(--fg-muted)' }}>
+            {icon}
+            {label}
+          </Row>
+        }
+        value={value}
+        sub={sub ? <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>{sub}</span> : undefined}
+      />
     </div>
   );
 }
@@ -269,9 +302,11 @@ function SelectedPanel({
 }) {
   if (!selection) {
     return (
-      <div className="card" style={{ padding: 20, color: 'var(--fg-muted)', fontSize: 13 }}>
-        Click a point on the chart to see top streams at that moment, or drag to inspect a range.
-      </div>
+      <Section title="Selection" eyebrow="DETAIL">
+        <div style={{ color: 'var(--fg-muted)', fontSize: 13, padding: '12px 0' }}>
+          Click a point on the chart to see top streams at that moment, or drag to inspect a range.
+        </div>
+      </Section>
     );
   }
 
@@ -279,70 +314,70 @@ function SelectedPanel({
   const fromDate = new Date(selection.fromIso);
 
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div
-        style={{
-          padding: '14px 18px',
-          borderBottom: '1px solid var(--border)',
-          display: 'flex',
-          alignItems: 'baseline',
-          justifyContent: 'space-between',
-          gap: 8,
-        }}
-      >
-        <div>
-          <div
-            style={{
-              fontSize: 10,
-              color: 'var(--fg-muted)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-              marginBottom: 2,
-            }}
-          >
-            {isRange ? 'Range' : 'At'}
-          </div>
-          <div style={{ fontSize: 13, color: 'var(--fg)', fontWeight: 500 }}>
-            {fromDate.toLocaleString()}
-            {isRange && selection.toIso && ` → ${new Date(selection.toIso).toLocaleString()}`}
-          </div>
-        </div>
+    <Section
+      title={
+        <Row gap={6} align="baseline">
+          <span style={{ fontSize: 13, fontWeight: 500 }}>
+            {fromDate.toLocaleString([], {
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </span>
+          {isRange && selection.toIso && (
+            <span style={{ fontSize: 12, color: 'var(--fg-dim)' }}>
+              → {new Date(selection.toIso).toLocaleString([], {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </span>
+          )}
+        </Row>
+      }
+      eyebrow={isRange ? 'RANGE' : 'AT MOMENT'}
+      right={
         <button
           type="button"
           onClick={onClear}
+          aria-label="Clear selection"
           style={{
-            background: 'transparent',
-            color: 'var(--fg-muted)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 22,
+            height: 22,
             border: 'none',
+            background: 'transparent',
+            color: 'var(--fg-dim)',
             cursor: 'pointer',
-            fontSize: 11,
           }}
         >
-          clear
+          <IconX size={14} />
         </button>
+      }
+      style={{ padding: 0 }}
+    >
+      <div style={{ maxHeight: 360, overflowY: 'auto', margin: -16, marginTop: 0 }}>
+        {isRange ? <RangeRowsTable rows={rangeRows} /> : <PointSnapshotTable rows={pointSnapshot} />}
       </div>
-      <div style={{ maxHeight: 360, overflowY: 'auto' }}>
-        {isRange ? (
-          <RangeRowsTable rows={rangeRows} />
-        ) : (
-          <PointSnapshotTable rows={pointSnapshot} />
-        )}
-      </div>
-    </div>
+    </Section>
   );
 }
 
 function PointSnapshotTable({ rows }: { rows: GameTrackerLeaderboardRow[] | null }) {
   if (rows === null) {
-    return <div style={{ padding: 20, color: 'var(--fg-muted)', fontSize: 12 }}>Loading…</div>;
+    return <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 12 }}>Loading…</div>;
   }
   if (rows.length === 0) {
-    return <div style={{ padding: 20, color: 'var(--fg-muted)', fontSize: 12 }}>No streams in this minute.</div>;
+    return <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 12 }}>No streams in this minute.</div>;
   }
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
       <thead>
-        <tr style={{ background: 'var(--bg-sunken)' }}>
+        <tr style={{ borderBottom: '1px solid var(--border-faint)' }}>
           <th style={miniTh}>#</th>
           <th style={miniTh}>Channel</th>
           <th style={{ ...miniTh, textAlign: 'right' }}>CCV</th>
@@ -351,19 +386,34 @@ function PointSnapshotTable({ rows }: { rows: GameTrackerLeaderboardRow[] | null
       <tbody>
         {rows.map((r, i) => (
           <tr key={r.channel_id} style={{ borderBottom: '1px solid var(--border-faint)' }}>
-            <td style={{ ...miniTd, color: 'var(--fg-dim)', width: 30 }}>{i + 1}</td>
-            <td style={miniTd}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-sunken)', color: 'var(--fg-muted)' }}>
-                  {r.platform}
-                </span>
-                <span style={{ color: 'var(--fg)', fontWeight: 500 }}>
-                  {r.channel?.display_name ?? r.channel_id.slice(0, 8)}
-                </span>
-              </div>
+            <td style={{ ...miniTd, color: 'var(--fg-dim)', width: 30, fontFamily: 'var(--font-mono)' }}>
+              {i + 1}
             </td>
-            <td style={{ ...miniTd, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-              {r.concurrent_viewers.toLocaleString()}
+            <td style={miniTd}>
+              <Row gap={8} align="center">
+                <PlatformPip id={r.platform} size={11} />
+                {r.channel ? (
+                  <ChannelNameWithLink
+                    name={r.channel.display_name}
+                    platform={r.platform}
+                    channelIdentifier={r.channel.channel_identifier}
+                  />
+                ) : (
+                  <span style={{ color: 'var(--fg-muted)' }}>{r.channel_id.slice(0, 8)}</span>
+                )}
+              </Row>
+            </td>
+            <td
+              style={{
+                ...miniTd,
+                textAlign: 'right',
+                fontFamily: 'var(--font-mono)',
+                fontVariantNumeric: 'tabular-nums',
+                fontWeight: 500,
+                color: 'var(--fg)',
+              }}
+            >
+              {fmtCompact(r.concurrent_viewers)}
             </td>
           </tr>
         ))}
@@ -374,15 +424,15 @@ function PointSnapshotTable({ rows }: { rows: GameTrackerLeaderboardRow[] | null
 
 function RangeRowsTable({ rows }: { rows: GameTrackerRangeLeaderboardRow[] | null }) {
   if (rows === null) {
-    return <div style={{ padding: 20, color: 'var(--fg-muted)', fontSize: 12 }}>Loading…</div>;
+    return <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 12 }}>Loading…</div>;
   }
   if (rows.length === 0) {
-    return <div style={{ padding: 20, color: 'var(--fg-muted)', fontSize: 12 }}>No streams in this range.</div>;
+    return <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 12 }}>No streams in this range.</div>;
   }
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
       <thead>
-        <tr style={{ background: 'var(--bg-sunken)' }}>
+        <tr style={{ borderBottom: '1px solid var(--border-faint)' }}>
           <th style={miniTh}>#</th>
           <th style={miniTh}>Channel</th>
           <th style={{ ...miniTh, textAlign: 'right' }}>Peak</th>
@@ -393,26 +443,28 @@ function RangeRowsTable({ rows }: { rows: GameTrackerRangeLeaderboardRow[] | nul
       <tbody>
         {rows.map((r, i) => (
           <tr key={r.channel_id} style={{ borderBottom: '1px solid var(--border-faint)' }}>
-            <td style={{ ...miniTd, color: 'var(--fg-dim)', width: 30 }}>{i + 1}</td>
+            <td style={{ ...miniTd, color: 'var(--fg-dim)', width: 30, fontFamily: 'var(--font-mono)' }}>
+              {i + 1}
+            </td>
             <td style={miniTd}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-sunken)', color: 'var(--fg-muted)' }}>
-                  {r.platform}
-                </span>
-                <span style={{ color: 'var(--fg)', fontWeight: 500 }}>
-                  {r.channel?.display_name ?? r.channel_id.slice(0, 8)}
-                </span>
-              </div>
+              <Row gap={8} align="center">
+                <PlatformPip id={r.platform} size={11} />
+                {r.channel ? (
+                  <ChannelNameWithLink
+                    name={r.channel.display_name}
+                    platform={r.platform}
+                    channelIdentifier={r.channel.channel_identifier}
+                  />
+                ) : (
+                  <span style={{ color: 'var(--fg-muted)' }}>{r.channel_id.slice(0, 8)}</span>
+                )}
+              </Row>
             </td>
-            <td style={{ ...miniTd, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
-              {r.peak_ccv.toLocaleString()}
+            <td style={{ ...miniTd, ...numericTd, fontWeight: 600 }}>{fmtCompact(r.peak_ccv)}</td>
+            <td style={{ ...miniTd, ...numericTd, color: 'var(--fg-muted)' }}>
+              {fmtCompact(r.avg_ccv)}
             </td>
-            <td style={{ ...miniTd, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--fg-muted)' }}>
-              {r.avg_ccv.toLocaleString()}
-            </td>
-            <td style={{ ...miniTd, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--fg-dim)' }}>
-              {r.minutes_live}
-            </td>
+            <td style={{ ...miniTd, ...numericTd, color: 'var(--fg-dim)' }}>{r.minutes_live}</td>
           </tr>
         ))}
       </tbody>
@@ -426,77 +478,63 @@ function BreakdownPanel({
   breakdown: { platform: GameTrackerPlatformBreakdown[]; language: api.GameTrackerLanguageBreakdown[] } | null;
 }) {
   if (!breakdown) {
-    return <div className="card" style={{ padding: 20, color: 'var(--fg-muted)', fontSize: 13 }}>Loading…</div>;
+    return (
+      <Section title="Breakdown" eyebrow="DISTRIBUTION">
+        <div style={{ color: 'var(--fg-muted)', fontSize: 13 }}>Loading…</div>
+      </Section>
+    );
   }
 
   const platformTotal = breakdown.platform.reduce((sum, p) => sum + p.total_ccv_minutes, 0);
   const languageTotal = breakdown.language.reduce((sum, p) => sum + p.total_ccv_minutes, 0);
 
   return (
-    <div className="card" style={{ padding: 20 }}>
-      <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)', margin: 0, marginBottom: 14 }}>
-        Breakdown
-      </h3>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-        <SimpleBreakdownList
+    <Section title="Breakdown" eyebrow="DISTRIBUTION">
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22 }}>
+        <BreakdownGroup
           title="Platform"
           rows={breakdown.platform.map((p) => ({
             key: p.platform,
-            label: p.platform,
+            label: <Row gap={6} align="center"><PlatformPip id={p.platform} size={11} /><span style={{ textTransform: 'capitalize' }}>{p.platform}</span></Row>,
             value: p.total_ccv_minutes,
-            peak: p.peak,
             share: platformTotal > 0 ? p.total_ccv_minutes / platformTotal : 0,
           }))}
         />
-        <SimpleBreakdownList
+        <BreakdownGroup
           title="Language"
           rows={breakdown.language.slice(0, 6).map((p) => ({
             key: p.language ?? 'unknown',
-            label: p.language ?? '—',
+            label: <span style={{ textTransform: 'uppercase', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{p.language ?? '—'}</span>,
             value: p.total_ccv_minutes,
-            peak: p.peak,
             share: languageTotal > 0 ? p.total_ccv_minutes / languageTotal : 0,
           }))}
         />
       </div>
-    </div>
+    </Section>
   );
 }
 
-function SimpleBreakdownList({
+function BreakdownGroup({
   title,
   rows,
 }: {
   title: string;
-  rows: Array<{ key: string; label: string; value: number; peak: number; share: number }>;
+  rows: Array<{ key: string; label: React.ReactNode; value: number; share: number }>;
 }) {
   return (
-    <div>
-      <div
-        style={{
-          fontSize: 10,
-          color: 'var(--fg-muted)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.1em',
-          marginBottom: 8,
-        }}
-      >
+    <Col gap={8}>
+      <div className="eyebrow" style={{ fontSize: 10 }}>
         {title}
       </div>
-      {rows.length === 0 && (
-        <div style={{ fontSize: 12, color: 'var(--fg-dim)' }}>No data</div>
-      )}
+      {rows.length === 0 && <div style={{ fontSize: 12, color: 'var(--fg-dim)' }}>No data</div>}
       {rows.map((r) => (
-        <div key={r.key} style={{ marginBottom: 6 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, fontSize: 12 }}>
-            <span style={{ color: 'var(--fg)', fontWeight: 500, textTransform: 'capitalize' }}>{r.label}</span>
-            <span style={{ color: 'var(--fg-muted)', fontVariantNumeric: 'tabular-nums', fontSize: 11 }}>
-              {(r.share * 100).toFixed(1)}%
-            </span>
-          </div>
+        <Col key={r.key} gap={3}>
+          <Row justify="space-between" align="center" gap={8} style={{ fontSize: 12 }}>
+            <span style={{ color: 'var(--fg)', fontWeight: 500 }}>{r.label}</span>
+            <Pill>{(r.share * 100).toFixed(1)}%</Pill>
+          </Row>
           <div
             style={{
-              marginTop: 2,
               height: 4,
               background: 'var(--bg-sunken)',
               borderRadius: 2,
@@ -508,26 +546,33 @@ function SimpleBreakdownList({
                 width: `${r.share * 100}%`,
                 height: '100%',
                 background: 'var(--red)',
-                opacity: 0.8,
+                opacity: 0.85,
               }}
             />
           </div>
-        </div>
+        </Col>
       ))}
-    </div>
+    </Col>
   );
 }
 
 const miniTh: React.CSSProperties = {
   padding: '8px 12px',
   textAlign: 'left',
-  fontSize: 10,
+  fontSize: 9,
   fontWeight: 600,
   color: 'var(--fg-muted)',
   textTransform: 'uppercase',
-  letterSpacing: '0.05em',
+  letterSpacing: '0.08em',
 };
 
 const miniTd: React.CSSProperties = {
   padding: '8px 12px',
+};
+
+const numericTd: React.CSSProperties = {
+  textAlign: 'right',
+  fontFamily: 'var(--font-mono)',
+  fontVariantNumeric: 'tabular-nums',
+  color: 'var(--fg)',
 };

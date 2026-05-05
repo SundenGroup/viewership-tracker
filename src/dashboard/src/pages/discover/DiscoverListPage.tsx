@@ -3,12 +3,19 @@ import { Link, useNavigate } from 'react-router-dom';
 import * as api from '@/services/api';
 import type { GameTracker } from '@/services/api';
 import { useAuth } from '@/hooks/useAuth';
+import {
+  Row,
+  Col,
+  Pill,
+  PlatformPip,
+  IconPlus,
+  IconBolt,
+} from '@/components/design';
 
 /**
- * /discover — list of all game trackers.
+ * /discover — landing page listing all game trackers.
  *
- * Phase 1 layout: simple card grid. Phase 3 will replace this with the
- * publisher-friendly aesthetic per the plan.
+ * Grid of card-style tiles. Empty state guides admin to /discover/admin/new.
  */
 export function DiscoverListPage() {
   const auth = useAuth();
@@ -34,62 +41,71 @@ export function DiscoverListPage() {
   const isAdmin = auth.user?.role === 'admin';
 
   return (
-    <div style={{ padding: '32px 24px', maxWidth: 1200, margin: '0 auto' }}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: 24,
-        }}
-      >
-        <div>
-          <h1 style={{ fontSize: 28, fontWeight: 600, color: 'var(--fg)', margin: 0 }}>
+    <div style={{ padding: '32px 24px 64px', maxWidth: 1280, margin: '0 auto' }}>
+      <Row justify="space-between" align="flex-end" style={{ marginBottom: 28, gap: 16 }}>
+        <Col gap={6}>
+          <h1
+            style={{
+              fontFamily: 'var(--font-display, var(--font-sans))',
+              fontSize: 40,
+              fontWeight: 700,
+              color: 'var(--fg)',
+              margin: 0,
+              letterSpacing: '-0.02em',
+              lineHeight: 1,
+            }}
+          >
             Discover
           </h1>
-          <p style={{ marginTop: 6, color: 'var(--fg-muted)', fontSize: 13 }}>
-            Continuous viewership tracking per game, across Twitch
-            <span style={{ color: 'var(--fg-dim)' }}> (Kick + YouTube to follow)</span>.
+          <p style={{ color: 'var(--fg-muted)', fontSize: 13, margin: 0 }}>
+            Continuous viewership tracking per game on Twitch and Kick.
           </p>
-        </div>
+        </Col>
         {isAdmin && (
           <button
             type="button"
             className="btn btn-primary"
             onClick={() => navigate('/discover/admin/new')}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
-            New tracker
+            <IconPlus size={13} /> New tracker
           </button>
         )}
-      </div>
+      </Row>
 
       {error && (
-        <div className="placeholder" style={{ color: 'var(--red)', marginBottom: 20 }}>
+        <div className="card" style={{ padding: 16, color: 'var(--red)', marginBottom: 20 }}>
           Failed to load trackers: {error}
         </div>
       )}
 
       {trackers && trackers.length === 0 && (
-        <div className="placeholder" style={{ padding: '60px 24px', textAlign: 'center' }}>
-          <div style={{ fontSize: 14, color: 'var(--fg-muted)' }}>
-            No game trackers yet.
-            {isAdmin && (
-              <>
-                {' '}
-                <Link to="/discover/admin/new" style={{ color: 'var(--red)' }}>
-                  Create one
-                </Link>{' '}
-                to start.
-              </>
-            )}
-          </div>
+        <div
+          className="card"
+          style={{
+            padding: '60px 24px',
+            textAlign: 'center',
+          }}
+        >
+          <Row justify="center" gap={6}>
+            <IconBolt size={14} />
+            <span style={{ fontSize: 14, color: 'var(--fg-muted)' }}>No game trackers yet.</span>
+          </Row>
+          {isAdmin && (
+            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--fg-muted)' }}>
+              <Link to="/discover/admin/new" style={{ color: 'var(--red)' }}>
+                Create one
+              </Link>{' '}
+              to start.
+            </div>
+          )}
         </div>
       )}
 
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
           gap: 16,
         }}
       >
@@ -106,70 +122,57 @@ export function DiscoverListPage() {
             <div
               className="card shadow-lg"
               style={{
-                padding: 18,
+                padding: 20,
                 cursor: 'pointer',
-                transition: 'transform 0.1s',
+                position: 'relative',
+                overflow: 'hidden',
               }}
             >
               <div
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  marginBottom: 8,
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: 2,
+                  background: 'var(--red)',
                 }}
-              >
+              />
+              <Row justify="space-between" align="flex-start" style={{ marginBottom: 12 }}>
                 <div
                   style={{
-                    fontSize: 16,
+                    fontFamily: 'var(--font-display, var(--font-sans))',
+                    fontSize: 18,
                     fontWeight: 600,
                     color: 'var(--fg)',
+                    letterSpacing: '-0.01em',
                   }}
                 >
                   {t.name}
                 </div>
-                <span
-                  style={{
-                    fontSize: 10,
-                    padding: '2px 8px',
-                    borderRadius: 999,
-                    background:
-                      t.status === 'active'
-                        ? 'color-mix(in oklab, #10b981 20%, transparent)'
-                        : 'color-mix(in oklab, var(--fg-dim) 20%, transparent)',
-                    color: t.status === 'active' ? '#10b981' : 'var(--fg-dim)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                  }}
-                >
-                  {t.status}
-                </span>
-              </div>
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 4,
-                  fontSize: 12,
-                  color: 'var(--fg-muted)',
-                }}
-              >
+                <Pill tone={t.status === 'active' ? 'live' : 'default'}>
+                  {t.status === 'active' ? '● Live' : t.status}
+                </Pill>
+              </Row>
+              <Col gap={6} style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
                 {t.twitch_game_name && (
-                  <div>
-                    <span style={{ color: 'var(--fg-dim)' }}>Twitch:</span>{' '}
-                    {t.twitch_game_name}
-                  </div>
+                  <Row gap={6} align="center">
+                    <PlatformPip id="twitch" size={11} />
+                    <span>{t.twitch_game_name}</span>
+                  </Row>
                 )}
                 {t.kick_category_slug && (
-                  <div>
-                    <span style={{ color: 'var(--fg-dim)' }}>Kick:</span>{' '}
-                    {t.kick_category_slug}
-                  </div>
+                  <Row gap={6} align="center">
+                    <PlatformPip id="kick" size={11} />
+                    <span>{t.kick_category_slug}</span>
+                  </Row>
                 )}
-                <div style={{ color: 'var(--fg-dim)', marginTop: 4 }}>
-                  poll every {t.polling_interval_seconds}s · min {t.min_ccv_threshold} CCV
-                </div>
-              </div>
+              </Col>
+              <Row gap={10} style={{ marginTop: 12, fontSize: 11, color: 'var(--fg-dim)' }}>
+                <span>poll {t.polling_interval_seconds}s</span>
+                <span>·</span>
+                <span>min {t.min_ccv_threshold} CCV</span>
+              </Row>
             </div>
           </Link>
         ))}

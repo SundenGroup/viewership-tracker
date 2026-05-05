@@ -2,27 +2,41 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import * as api from '@/services/api';
 import type { GameTrackerDetail, GameTrackerLeaderboardRow } from '@/services/api';
+import {
+  Row,
+  Col,
+  Section,
+  Kpi,
+  Pill,
+  Tab,
+  PlatformPip,
+  ChannelNameWithLink,
+  IconBolt,
+  IconUsers,
+  IconEye,
+  IconTrophy,
+  IconList,
+  IconGrid,
+  IconChev,
+} from '@/components/design';
+import { fmtN, fmtCompact } from '@/design/format';
 import { DiscoverTrendsTab } from './DiscoverTrendsTab';
 import { DiscoverChannelsTab } from './DiscoverChannelsTab';
 
 const POLL_INTERVAL_MS = 30_000;
-type Tab = 'live' | 'trends' | 'channels';
+type TabKey = 'live' | 'trends' | 'channels';
 
 /**
  * /discover/:slug — live game tracker page.
  *
- * Three tabs: Live (default; KPIs + top streams now), Trends
- * (drag-to-select timeline + breakdowns), Channels (full list with
- * platform filter).
- *
- * Aesthetic mirrors the exported HTML reports: large mono numerals on
- * report-style KPI cards with a red accent bar, generous padding,
- * theme-token colors throughout for full dark/light parity.
+ * Mirrors the published-report aesthetic (HeroKPIs + Section cards),
+ * uses the design kit primitives end-to-end so dark/light parity holds
+ * and surface tokens stay consistent with the rest of the redesign.
  */
 export function DiscoverDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = (searchParams.get('tab') as Tab | null) ?? 'live';
+  const tab = (searchParams.get('tab') as TabKey | null) ?? 'live';
 
   const [detail, setDetail] = useState<GameTrackerDetail | null>(null);
   const [leaderboard, setLeaderboard] = useState<GameTrackerLeaderboardRow[] | null>(null);
@@ -35,7 +49,7 @@ export function DiscoverDetailPage() {
       try {
         const [d, lb] = await Promise.all([
           api.getGameTracker(slug),
-          api.getGameTrackerLeaderboard(slug, undefined, 20),
+          api.getGameTrackerLeaderboard(slug, undefined, 25),
         ]);
         if (cancelled) return;
         setDetail(d);
@@ -57,19 +71,17 @@ export function DiscoverDetailPage() {
     () => (leaderboard ?? []).reduce((sum, row) => sum + row.concurrent_viewers, 0),
     [leaderboard],
   );
-
   const peakNow = useMemo(
     () => (leaderboard ?? []).reduce((max, row) => Math.max(max, row.concurrent_viewers), 0),
     [leaderboard],
   );
-
   const platforms = useMemo(() => {
     const set = new Set<string>();
     for (const r of leaderboard ?? []) set.add(r.platform);
     return Array.from(set).sort();
   }, [leaderboard]);
 
-  const setTab = (next: Tab) => {
+  const setTab = (next: TabKey) => {
     const params = new URLSearchParams(searchParams);
     if (next === 'live') params.delete('tab');
     else params.set('tab', next);
@@ -79,48 +91,32 @@ export function DiscoverDetailPage() {
   if (error) {
     return (
       <div style={{ padding: 32 }}>
-        <Link to="/discover" style={{ color: 'var(--fg-muted)' }}>
-          ← back to Discover
-        </Link>
-        <div className="placeholder" style={{ marginTop: 20, color: 'var(--red)' }}>
-          {error}
-        </div>
+        <BackLink />
+        <Section style={{ marginTop: 20, color: 'var(--red)' }}>{error}</Section>
       </div>
     );
   }
-
   if (!detail || !slug) {
     return (
       <div style={{ padding: 32, color: 'var(--fg-muted)' }}>
-        <Link to="/discover" style={{ color: 'var(--fg-muted)' }}>
-          ← back to Discover
-        </Link>
+        <BackLink />
         <div style={{ marginTop: 20 }}>Loading…</div>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: '32px 24px 64px', maxWidth: 1280, margin: '0 auto' }}>
-      <Link to="/discover" style={{ color: 'var(--fg-muted)', fontSize: 13 }}>
-        ← back to Discover
-      </Link>
+    <div style={{ padding: '32px 24px 64px', maxWidth: 1320, margin: '0 auto' }}>
+      <BackLink />
 
-      {/* ── Hero ─────────────────────────────────────────────────────── */}
-      <div style={{ marginTop: 14, marginBottom: 24 }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 16,
-            flexWrap: 'wrap',
-          }}
-        >
-          <div>
+      {/* ── Hero ──────────────────────────────────────────────────────── */}
+      <Row justify="space-between" align="flex-end" wrap style={{ marginTop: 14, marginBottom: 24, gap: 16 }}>
+        <Col gap={10}>
+          <Row gap={10} align="center">
             <h1
               style={{
-                fontSize: 40,
+                fontFamily: 'var(--font-display, var(--font-sans))',
+                fontSize: 44,
                 fontWeight: 700,
                 color: 'var(--fg)',
                 margin: 0,
@@ -130,80 +126,60 @@ export function DiscoverDetailPage() {
             >
               {detail.name}
             </h1>
-            <div style={{ display: 'flex', gap: 12, marginTop: 10, fontSize: 12, color: 'var(--fg-muted)' }}>
-              {detail.twitch_game_name && (
-                <span>
-                  <span style={{ color: 'var(--fg-dim)' }}>Twitch:</span> {detail.twitch_game_name}
-                </span>
-              )}
-              {detail.kick_category_slug && (
-                <span>
-                  <span style={{ color: 'var(--fg-dim)' }}>Kick:</span> {detail.kick_category_slug}
-                </span>
-              )}
-              <span>
-                <span style={{ color: 'var(--fg-dim)' }}>Min CCV:</span> {detail.min_ccv_threshold}
-              </span>
-            </div>
-          </div>
-          <span
-            style={{
-              fontSize: 11,
-              padding: '4px 12px',
-              borderRadius: 999,
-              background:
-                detail.status === 'active'
-                  ? 'color-mix(in oklab, #10b981 18%, transparent)'
-                  : 'color-mix(in oklab, var(--fg-dim) 20%, transparent)',
-              color: detail.status === 'active' ? '#10b981' : 'var(--fg-dim)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.08em',
-              fontWeight: 600,
-            }}
-          >
-            {detail.status === 'active' ? '● Live' : detail.status}
-          </span>
-        </div>
-      </div>
+            <Pill tone={detail.status === 'active' ? 'live' : 'default'}>
+              {detail.status === 'active' ? '● Live' : detail.status}
+            </Pill>
+          </Row>
+          <Row gap={14} wrap style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+            {detail.twitch_game_name && (
+              <Row gap={6} align="center">
+                <PlatformPip id="twitch" size={12} />
+                <span>{detail.twitch_game_name}</span>
+              </Row>
+            )}
+            {detail.kick_category_slug && (
+              <Row gap={6} align="center">
+                <PlatformPip id="kick" size={12} />
+                <span>{detail.kick_category_slug}</span>
+              </Row>
+            )}
+            <span>
+              <span style={{ color: 'var(--fg-dim)' }}>min CCV</span>{' '}
+              <span style={{ color: 'var(--fg)' }}>{detail.min_ccv_threshold}</span>
+            </span>
+            <span>
+              <span style={{ color: 'var(--fg-dim)' }}>poll every</span>{' '}
+              <span style={{ color: 'var(--fg)' }}>{detail.polling_interval_seconds}s</span>
+            </span>
+          </Row>
+        </Col>
+      </Row>
 
-      {/* ── Tabs ─────────────────────────────────────────────────────── */}
-      <div
+      {/* ── Tab bar ───────────────────────────────────────────────────── */}
+      <Row
+        gap={4}
         style={{
-          display: 'flex',
-          gap: 0,
-          borderBottom: '1px solid var(--border)',
           marginBottom: 24,
+          paddingBottom: 0,
+          borderBottom: '1px solid var(--border)',
           position: 'sticky',
           top: 0,
           background: 'var(--bg)',
           zIndex: 4,
         }}
       >
-        {(['live', 'trends', 'channels'] as Tab[]).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)}
-            style={{
-              padding: '12px 20px',
-              border: 'none',
-              background: 'transparent',
-              color: tab === t ? 'var(--fg)' : 'var(--fg-muted)',
-              fontWeight: tab === t ? 600 : 500,
-              fontSize: 13,
-              borderBottom: tab === t ? '2px solid var(--red)' : '2px solid transparent',
-              marginBottom: -1,
-              textTransform: 'capitalize',
-              cursor: 'pointer',
-              letterSpacing: '0.02em',
-            }}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+        <Tab active={tab === 'live'} onClick={() => setTab('live')} icon={<IconBolt size={13} />}>
+          Live
+        </Tab>
+        <Tab active={tab === 'trends'} onClick={() => setTab('trends')} icon={<IconGrid size={13} />}>
+          Trends
+        </Tab>
+        <Tab active={tab === 'channels'} onClick={() => setTab('channels')} icon={<IconList size={13} />}>
+          Channels
+        </Tab>
+      </Row>
 
-      {/* ── Tab content ─────────────────────────────────────────────── */}
+      {/* ── Tab content ──────────────────────────────────────────────── */}
       {tab === 'live' && (
         <LiveTab
           totalCcvNow={totalCcvNow}
@@ -220,7 +196,28 @@ export function DiscoverDetailPage() {
   );
 }
 
-// ── Live tab ──────────────────────────────────────────────────────────
+function BackLink() {
+  return (
+    <Link
+      to="/discover"
+      style={{
+        color: 'var(--fg-muted)',
+        fontSize: 12,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        textDecoration: 'none',
+      }}
+    >
+      <span style={{ display: 'inline-block', transform: 'rotate(180deg)' }}>
+        <IconChev size={12} />
+      </span>
+      back to Discover
+    </Link>
+  );
+}
+
+// ── Live tab ─────────────────────────────────────────────────────────
 
 function LiveTab({
   totalCcvNow,
@@ -238,134 +235,77 @@ function LiveTab({
   lastCycle: GameTrackerDetail['last_cycle'];
 }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* KPI row */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: 12,
-        }}
-      >
-        <ReportKpi label="Total CCV (now)" value={totalCcvNow.toLocaleString()} />
-        <ReportKpi label="Top stream" value={peakNow.toLocaleString()} />
-        <ReportKpi label="Live streams" value={activeChannelCount.toLocaleString()} />
-        <ReportKpi label="Platforms" value={platformCount.toString()} />
-      </div>
+    <Col gap={16}>
+      {/* Hero KPI strip */}
+      <Row gap={12} wrap style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        <KpiCard
+          icon={<IconUsers size={14} />}
+          label="Total CCV (now)"
+          value={fmtN(totalCcvNow)}
+        />
+        <KpiCard
+          icon={<IconTrophy size={14} />}
+          label="Top stream"
+          value={fmtN(peakNow)}
+          sub={leaderboard?.[0]?.channel?.display_name ?? null}
+        />
+        <KpiCard
+          icon={<IconEye size={14} />}
+          label="Live streams"
+          value={fmtN(activeChannelCount)}
+        />
+        <KpiCard
+          icon={<IconGrid size={14} />}
+          label="Platforms"
+          value={String(platformCount)}
+        />
+      </Row>
 
       {/* Top streams */}
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)', margin: 0 }}>
-            Top streams now
-          </h3>
-        </div>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: 'var(--bg-sunken)' }}>
-              <th style={{ ...th, width: 36 }}>#</th>
-              <th style={{ ...th, width: 80 }}>Platform</th>
-              <th style={th}>Channel</th>
-              <th style={{ ...th, width: 60 }}>Lang</th>
-              <th style={{ ...th, textAlign: 'right', width: 110 }}>Live CCV</th>
-            </tr>
-          </thead>
-          <tbody>
-            {leaderboard === null && (
-              <tr>
-                <td colSpan={5} style={{ padding: 24, textAlign: 'center', color: 'var(--fg-muted)' }}>
-                  Loading…
-                </td>
-              </tr>
-            )}
-            {leaderboard && leaderboard.length === 0 && (
-              <tr>
-                <td colSpan={5} style={{ padding: 32, textAlign: 'center', color: 'var(--fg-muted)' }}>
-                  No active streams right now
-                </td>
-              </tr>
-            )}
-            {(leaderboard ?? []).map((row, i) => {
-              const profilePic = row.channel?.metadata?.profile_image_url as string | undefined;
-              return (
-                <tr key={row.channel_id} style={{ borderBottom: '1px solid var(--border-faint)' }}>
-                  <td style={{ ...td, color: 'var(--fg-dim)' }}>{i + 1}</td>
-                  <td style={{ ...td, color: 'var(--fg-muted)', textTransform: 'capitalize' }}>
-                    {row.platform}
-                  </td>
-                  <td style={td}>
-                    {row.channel ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <Avatar src={profilePic ?? null} name={row.channel.display_name} />
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <a
-                            href={platformUrl(row.platform, row.channel.channel_identifier)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: 'var(--fg)', fontWeight: 500, display: 'block' }}
-                          >
-                            {row.channel.display_name}
-                          </a>
-                          <div
-                            title={row.stream_title ?? ''}
-                            style={{
-                              fontSize: 11,
-                              color: 'var(--fg-dim)',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              maxWidth: 460,
-                            }}
-                          >
-                            {row.stream_title ?? '—'}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <span style={{ color: 'var(--fg-muted)' }}>{row.channel_id.slice(0, 8)}</span>
-                    )}
-                  </td>
-                  <td style={{ ...td, color: 'var(--fg-dim)' }}>{row.language ?? '—'}</td>
-                  <td
-                    style={{
-                      ...td,
-                      textAlign: 'right',
-                      fontVariantNumeric: 'tabular-nums',
-                      fontWeight: 600,
-                      fontFamily: 'var(--font-mono, monospace)',
-                    }}
-                  >
-                    {row.concurrent_viewers.toLocaleString()}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <Section title="Top streams now" eyebrow="LIVE LEADERBOARD">
+        <LeaderboardTable rows={leaderboard} />
+      </Section>
 
       {/* Footer cycle status */}
       {lastCycle && (
-        <div style={{ fontSize: 11, color: 'var(--fg-dim)', textAlign: 'right' }}>
+        <Row justify="flex-end" style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
           last cycle: {lastCycle.snapshotsWritten} snapshots in {lastCycle.durationMs}ms
           {lastCycle.bumpedMismatch > 0 && ` · ${lastCycle.bumpedMismatch} bumped`}
           {lastCycle.dropped > 0 && ` · ${lastCycle.dropped} dropped`}
-        </div>
+        </Row>
       )}
-    </div>
+    </Col>
   );
 }
 
-// ── Shared bits ──────────────────────────────────────────────────────
+// ── Shared ───────────────────────────────────────────────────────────
 
-function ReportKpi({ label, value }: { label: string; value: string }) {
+/**
+ * KpiCard — Section-styled wrapper around the design-kit Kpi with a
+ * red accent bar at the top and an optional icon next to the eyebrow,
+ * so it reads like a published-report KPI tile.
+ */
+function KpiCard({
+  icon,
+  label,
+  value,
+  sub,
+}: {
+  icon: React.ReactNode;
+  label: React.ReactNode;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+}) {
   return (
     <div
       className="card"
       style={{
-        padding: '22px 24px',
+        padding: '20px 22px',
         position: 'relative',
         overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
       }}
     >
       <div
@@ -374,49 +314,131 @@ function ReportKpi({ label, value }: { label: string; value: string }) {
           top: 0,
           left: 0,
           right: 0,
-          height: 3,
+          height: 2,
           background: 'var(--red)',
         }}
       />
-      <div
-        style={{
-          fontSize: 10,
-          color: 'var(--fg-muted)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.12em',
-          marginBottom: 12,
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontFamily: 'var(--font-mono, monospace)',
-          fontSize: 32,
-          fontWeight: 700,
-          color: 'var(--fg)',
-          fontVariantNumeric: 'tabular-nums',
-          lineHeight: 1.05,
-        }}
-      >
-        {value}
-      </div>
+      <Kpi
+        size="lg"
+        label={
+          <Row gap={5} align="center" style={{ color: 'var(--fg-muted)' }}>
+            {icon}
+            {label}
+          </Row>
+        }
+        value={value}
+        sub={
+          sub ? (
+            <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>{sub}</span>
+          ) : undefined
+        }
+      />
     </div>
   );
 }
 
-function platformUrl(platform: string, identifier: string): string {
-  switch (platform) {
-    case 'twitch':
-      return `https://twitch.tv/${identifier}`;
-    case 'kick':
-      return `https://kick.com/${identifier}`;
-    default:
-      return '#';
-  }
+export function LeaderboardTable({
+  rows,
+}: {
+  rows: GameTrackerLeaderboardRow[] | null;
+}) {
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+      <thead>
+        <tr style={{ borderBottom: '1px solid var(--border)' }}>
+          <th style={{ ...thStyle, width: 36 }}>#</th>
+          <th style={{ ...thStyle, width: 56 }}></th>
+          <th style={thStyle}>Channel</th>
+          <th style={{ ...thStyle, width: 60 }}>Lang</th>
+          <th style={{ ...thStyle, textAlign: 'right', width: 110 }}>Live CCV</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows === null && (
+          <tr>
+            <td colSpan={5} style={{ padding: 24, textAlign: 'center', color: 'var(--fg-muted)' }}>
+              Loading…
+            </td>
+          </tr>
+        )}
+        {rows && rows.length === 0 && (
+          <tr>
+            <td colSpan={5} style={{ padding: 32, textAlign: 'center', color: 'var(--fg-muted)' }}>
+              No active streams right now
+            </td>
+          </tr>
+        )}
+        {(rows ?? []).map((row, i) => {
+          const profilePic = row.channel?.metadata?.profile_image_url as string | undefined;
+          return (
+            <tr key={row.channel_id} style={{ borderBottom: '1px solid var(--border-faint)' }}>
+              <td style={{ ...tdStyle, color: 'var(--fg-dim)', fontFamily: 'var(--font-mono)' }}>
+                {i + 1}
+              </td>
+              <td style={tdStyle}>
+                <PlatformPip id={row.platform} size={12} />
+              </td>
+              <td style={tdStyle}>
+                {row.channel ? (
+                  <Row gap={10} align="center">
+                    <Avatar src={profilePic ?? null} name={row.channel.display_name} size={32} />
+                    <Col gap={2} style={{ minWidth: 0, flex: 1 }}>
+                      <ChannelNameWithLink
+                        name={row.channel.display_name}
+                        platform={row.platform}
+                        channelIdentifier={row.channel.channel_identifier}
+                      />
+                      <div
+                        title={row.stream_title ?? ''}
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--fg-dim)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          maxWidth: 480,
+                        }}
+                      >
+                        {row.stream_title ?? '—'}
+                      </div>
+                    </Col>
+                  </Row>
+                ) : (
+                  <span style={{ color: 'var(--fg-muted)' }}>{row.channel_id.slice(0, 8)}</span>
+                )}
+              </td>
+              <td style={{ ...tdStyle, color: 'var(--fg-dim)' }}>
+                {row.language?.toUpperCase() ?? '—'}
+              </td>
+              <td
+                style={{
+                  ...tdStyle,
+                  textAlign: 'right',
+                  fontFamily: 'var(--font-mono)',
+                  fontVariantNumeric: 'tabular-nums',
+                  fontWeight: 600,
+                  color: 'var(--fg)',
+                }}
+              >
+                {fmtCompact(row.concurrent_viewers)}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
 }
 
-function Avatar({ src, name }: { src: string | null; name: string }) {
+export function Avatar({
+  src,
+  name,
+  size = 28,
+}: {
+  src: string | null;
+  name: string;
+  size?: number;
+}) {
   const initials = name
     .split(/\s+/)
     .map((s) => s[0])
@@ -430,11 +452,11 @@ function Avatar({ src, name }: { src: string | null; name: string }) {
         src={src}
         alt=""
         loading="lazy"
-        width={32}
-        height={32}
+        width={size}
+        height={size}
         style={{
-          width: 32,
-          height: 32,
+          width: size,
+          height: size,
           borderRadius: '50%',
           background: 'var(--bg-sunken)',
           objectFit: 'cover',
@@ -446,15 +468,15 @@ function Avatar({ src, name }: { src: string | null; name: string }) {
   return (
     <div
       style={{
-        width: 32,
-        height: 32,
+        width: size,
+        height: size,
         borderRadius: '50%',
         background: 'var(--bg-sunken)',
         color: 'var(--fg-muted)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        fontSize: 11,
+        fontSize: Math.max(9, Math.round(size * 0.36)),
         fontWeight: 600,
         flexShrink: 0,
       }}
@@ -464,16 +486,16 @@ function Avatar({ src, name }: { src: string | null; name: string }) {
   );
 }
 
-const th: React.CSSProperties = {
-  padding: '10px 14px',
+const thStyle: React.CSSProperties = {
+  padding: '10px 12px',
   textAlign: 'left',
-  fontSize: 11,
+  fontSize: 10,
   fontWeight: 600,
   color: 'var(--fg-muted)',
   textTransform: 'uppercase',
-  letterSpacing: '0.05em',
+  letterSpacing: '0.08em',
 };
 
-const td: React.CSSProperties = {
-  padding: '12px 14px',
+const tdStyle: React.CSSProperties = {
+  padding: '10px 12px',
 };
