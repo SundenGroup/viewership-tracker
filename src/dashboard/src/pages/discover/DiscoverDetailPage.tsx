@@ -229,14 +229,22 @@ export function DiscoverDetailPage() {
                 <td style={{ ...td, color: 'var(--fg-dim)' }}>{i + 1}</td>
                 <td style={td}>
                   {row.channel ? (
-                    <a
-                      href={platformUrl(row.platform, row.channel.channel_identifier)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ color: 'var(--fg)', fontWeight: 500 }}
-                    >
-                      {row.channel.display_name}
-                    </a>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <Avatar
+                        src={
+                          (row.channel.metadata?.profile_image_url as string | undefined) ?? null
+                        }
+                        name={row.channel.display_name}
+                      />
+                      <a
+                        href={platformUrl(row.platform, row.channel.channel_identifier)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: 'var(--fg)', fontWeight: 500 }}
+                      >
+                        {row.channel.display_name}
+                      </a>
+                    </div>
                   ) : (
                     <span style={{ color: 'var(--fg-muted)' }}>{row.channel_id.slice(0, 8)}</span>
                   )}
@@ -281,6 +289,55 @@ const th: React.CSSProperties = {
 const td: React.CSSProperties = {
   padding: '10px 12px',
 };
+
+function Avatar({ src, name }: { src: string | null; name: string }) {
+  const initials = name
+    .split(/\s+/)
+    .map((s) => s[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        width={28}
+        height={28}
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: '50%',
+          background: 'var(--bg-sunken)',
+          objectFit: 'cover',
+          flexShrink: 0,
+        }}
+      />
+    );
+  }
+  return (
+    <div
+      style={{
+        width: 28,
+        height: 28,
+        borderRadius: '50%',
+        background: 'var(--bg-sunken)',
+        color: 'var(--fg-muted)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: '0.02em',
+        flexShrink: 0,
+      }}
+    >
+      {initials || '?'}
+    </div>
+  );
+}
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (

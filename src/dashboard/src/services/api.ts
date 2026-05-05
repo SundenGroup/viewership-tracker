@@ -850,6 +850,7 @@ export interface GameTrackerLeaderboardRow {
     display_name: string;
     channel_identifier: string;
     platform: string;
+    metadata: Record<string, unknown>;
   } | null;
 }
 
