@@ -305,6 +305,12 @@ export class GameTrackerService {
       result.snapshotsWritten = await GameTrackerSnapshotModel.bulkInsert(snapshotsToInsert);
     }
 
+    // ── Cache streamer profile pics on first sighting ─────────────────
+    // Profile pics rarely change, so we only fetch for channels missing
+    // metadata.profile_image_url. One Helix /users batch per cycle (≤100
+    // logins each) — cheap on Helix points budget.
+    await this.refreshProfilePics(eligible, existingChannels);
+
     result.durationMs = Date.now() - start;
     this.lastResults.set(trackerId, result);
 
@@ -314,6 +320,58 @@ export class GameTrackerService {
         `${result.bumpedMismatch} bumped, ${result.dropped} dropped (${result.durationMs}ms)`,
     );
     return result;
+  }
+
+  /**
+   * For every Twitch channel in this cycle that's missing a cached
+   * profile picture in metadata, batch-fetch via Helix /users and
+   * persist. Existing pics are left alone — they almost never change
+   * and refetching every cycle would burn Helix budget unnecessarily.
+   */
+  private async refreshProfilePics(
+    streams: DiscoveredStream[],
+    channelMap: Map<string, import('../models/channel').Channel>,
+  ): Promise<void> {
+    const needLookup: Array<{ login: string; channel: import('../models/channel').Channel }> = [];
+    for (const s of streams) {
+      const ch = channelMap.get(this.channelKey('twitch', s.channelIdentifier));
+      if (!ch) continue;
+      const meta = (ch.metadata as Record<string, unknown>) ?? {};
+      if (typeof meta.profile_image_url !== 'string' || meta.profile_image_url.length === 0) {
+        needLookup.push({ login: s.channelIdentifier, channel: ch });
+      }
+    }
+    if (needLookup.length === 0) return;
+
+    try {
+      const twitch = this.registry.getAdapter('twitch') as TwitchAdapter;
+      const profiles = await twitch.getUsersByLogin(needLookup.map((n) => n.login));
+      const byLogin = new Map<string, (typeof profiles)[number]>();
+      for (const p of profiles) byLogin.set(p.login.toLowerCase(), p);
+
+      for (const { login, channel } of needLookup) {
+        const p = byLogin.get(login.toLowerCase());
+        if (!p) continue;
+        const updated = {
+          ...(channel.metadata as Record<string, unknown>),
+          profile_image_url: p.profileImageUrl,
+          twitch_display_name: p.displayName,
+        };
+        await this.db('channels')
+          .where('id', channel.id)
+          .update({ metadata: JSON.stringify(updated) });
+        // Update the in-memory copy so subsequent loops in the same
+        // cycle see the new value.
+        channel.metadata = updated;
+      }
+      logger.debug(
+        `[GameTracker] cached profile pics for ${profiles.length}/${needLookup.length} channel(s)`,
+      );
+    } catch (err) {
+      logger.warn('[GameTracker] profile pic fetch failed', {
+        error: (err as Error).message,
+      });
+    }
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────

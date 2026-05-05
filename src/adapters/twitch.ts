@@ -40,6 +40,26 @@ interface TwitchGameData {
   box_art_url: string;
 }
 
+interface TwitchUserData {
+  id: string;
+  login: string;
+  display_name: string;
+  type: string;
+  broadcaster_type: string;
+  description: string;
+  profile_image_url: string;
+  offline_image_url: string;
+  view_count: number;
+  created_at: string;
+}
+
+export interface TwitchUserProfile {
+  login: string;
+  displayName: string;
+  profileImageUrl: string;
+  description: string;
+}
+
 interface TwitchPaginatedResponse<T> {
   data: T[];
   pagination: { cursor?: string };
@@ -365,6 +385,44 @@ export class TwitchAdapter implements PlatformAdapter {
       keywords,
     });
     return allStreams;
+  }
+
+  /**
+   * Look up profile metadata (display_name, profile_image_url, etc.)
+   * for a list of Twitch login handles. Used by the live game tracker
+   * to cache streamer avatars on first sighting — Helix `/streams`
+   * doesn't return them.
+   *
+   * Batches at 100 logins/call (the Helix max). Empty input → empty
+   * output. Logins not found are silently omitted (just won't appear in
+   * the result map).
+   */
+  async getUsersByLogin(logins: string[]): Promise<TwitchUserProfile[]> {
+    if (logins.length === 0) return [];
+    const out: TwitchUserProfile[] = [];
+    const chunks: string[][] = [];
+    for (let i = 0; i < logins.length; i += 100) chunks.push(logins.slice(i, i + 100));
+
+    for (const batch of chunks) {
+      const result = await this.requestWithRetry(async () => {
+        const params = new URLSearchParams();
+        for (const l of batch) params.append('login', l);
+        const { data } = await this.client.get<TwitchPaginatedResponse<TwitchUserData>>(
+          `/users?${params.toString()}`,
+        );
+        return data.data;
+      }, 'getUsersByLogin');
+      if (!result) continue;
+      for (const u of result) {
+        out.push({
+          login: u.login,
+          displayName: u.display_name,
+          profileImageUrl: u.profile_image_url,
+          description: u.description,
+        });
+      }
+    }
+    return out;
   }
 
   async getGameId(gameName: string): Promise<string | null> {
