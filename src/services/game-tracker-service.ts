@@ -20,7 +20,15 @@ import type { Knex } from 'knex';
 import logger from '../utils/logger';
 import type { AdapterRegistry } from '../adapters';
 import type { TwitchAdapter } from '../adapters/twitch';
+import type { KickAdapter } from '../adapters/kick';
 import type { DiscoveredStream } from '../adapters/types';
+
+type TrackedPlatform = 'twitch' | 'kick';
+
+interface PlatformStream {
+  platform: TrackedPlatform;
+  stream: DiscoveredStream;
+}
 import * as GameTrackerModel from '../models/game-tracker';
 import * as GameTrackerChannelModel from '../models/game-tracker-channel';
 import * as GameTrackerSnapshotModel from '../models/game-tracker-snapshot';
@@ -134,38 +142,62 @@ export class GameTrackerService {
     }
 
     const slug = tracker.slug;
-    const liveStreams: DiscoveredStream[] = [];
+    const liveStreams: PlatformStream[] = [];
 
-    // Phase 1: Twitch only. Phase 2 will add Kick here.
+    // Twitch + Kick run in parallel; either platform can be left
+    // unconfigured (null game/category id = skip this platform).
+    const fetches: Array<Promise<void>> = [];
     if (tracker.twitch_game_id) {
-      try {
-        const twitch = this.registry.getAdapter('twitch') as TwitchAdapter;
-        const streams = await twitch.searchLiveStreams(tracker.twitch_game_id);
-        for (const s of streams) {
-          // Twitch returns the canonical category name on every row, so
-          // streams that switched away from the target game won't appear
-          // in this list at all. We tag the snapshots with platform
-          // 'twitch' downstream.
-          liveStreams.push({ ...s, gameName: s.gameName ?? tracker.twitch_game_name });
-        }
-      } catch (err) {
-        logger.warn(`[GameTracker:${slug}] Twitch fetch failed`, {
-          error: (err as Error).message,
-        });
-      }
+      fetches.push(
+        (async () => {
+          try {
+            const twitch = this.registry.getAdapter('twitch') as TwitchAdapter;
+            const streams = await twitch.searchLiveStreams(tracker.twitch_game_id!);
+            for (const s of streams) {
+              liveStreams.push({
+                platform: 'twitch',
+                stream: { ...s, gameName: s.gameName ?? tracker.twitch_game_name },
+              });
+            }
+          } catch (err) {
+            logger.warn(`[GameTracker:${slug}] Twitch fetch failed`, {
+              error: (err as Error).message,
+            });
+          }
+        })(),
+      );
     }
+    if (tracker.kick_category_id) {
+      fetches.push(
+        (async () => {
+          try {
+            const kick = this.registry.getAdapter('kick') as KickAdapter;
+            const streams = await kick.searchLiveStreams(String(tracker.kick_category_id));
+            for (const s of streams) {
+              liveStreams.push({
+                platform: 'kick',
+                stream: { ...s, gameName: s.gameName ?? tracker.kick_category_slug ?? null },
+              });
+            }
+          } catch (err) {
+            logger.warn(`[GameTracker:${slug}] Kick fetch failed`, {
+              error: (err as Error).message,
+            });
+          }
+        })(),
+      );
+    }
+    await Promise.all(fetches);
 
-    // Cap at max_active_channels to protect against runaway growth.
+    // Cap at max_active_channels to protect against runaway growth. Sort
+    // by CCV across platforms so the top of each tracker's set is the
+    // platform-agnostic top streams.
     const eligible = liveStreams
-      .filter((s) => s.concurrentViewers >= tracker.min_ccv_threshold)
-      .sort((a, b) => b.concurrentViewers - a.concurrentViewers)
+      .filter((p) => p.stream.concurrentViewers >= tracker.min_ccv_threshold)
+      .sort((a, b) => b.stream.concurrentViewers - a.stream.concurrentViewers)
       .slice(0, tracker.max_active_channels);
 
     const cycleTimestamp = new Date();
-    const eligibleByKey = new Map<string, DiscoveredStream>();
-    for (const s of eligible) {
-      eligibleByKey.set(this.channelKey('twitch', s.channelIdentifier), s);
-    }
 
     // ── Resolve channels (insert if new, reuse if known) ──────────────
     const result: CycleResult = {
@@ -179,12 +211,13 @@ export class GameTrackerService {
       durationMs: 0,
     };
 
-    // Bulk-load existing channels matching this cycle's identifiers.
-    const identifiersByPlatform = new Map<string, string[]>();
-    for (const s of eligible) {
-      const list = identifiersByPlatform.get('twitch') ?? [];
-      list.push(s.channelIdentifier.toLowerCase());
-      identifiersByPlatform.set('twitch', list);
+    // Bulk-load existing channels matching this cycle's identifiers,
+    // grouped by platform.
+    const identifiersByPlatform = new Map<TrackedPlatform, string[]>();
+    for (const p of eligible) {
+      const list = identifiersByPlatform.get(p.platform) ?? [];
+      list.push(p.stream.channelIdentifier.toLowerCase());
+      identifiersByPlatform.set(p.platform, list);
     }
 
     const existingChannels = new Map<string, Channel>();
@@ -209,27 +242,21 @@ export class GameTrackerService {
     const snapshotsToInsert: GameTrackerSnapshotModel.InsertSnapshot[] = [];
     const matchedChannelIds = new Set<string>();
 
-    for (const stream of eligible) {
-      const key = this.channelKey('twitch', stream.channelIdentifier);
+    for (const { platform, stream } of eligible) {
+      const key = this.channelKey(platform, stream.channelIdentifier);
       let channel = existingChannels.get(key);
 
-      // Insert a new channels row for previously-unseen streamers. The
-      // game tracker uses series_id = NULL — which is allowed by the
-      // schema (channels has a NOT NULL series_id today, so we need a
-      // workaround: use the dedicated tracker pseudo-series mechanism).
-      //
-      // To keep Phase 1 simple AND the schema clean, we adopt a small
-      // convention: every game_tracker has an associated series_id stub
-      // generated on first need. We store that pseudo-series-id in
-      // tracker.metadata.bound_series_id so existing channels-table
-      // constraints still apply.
+      // Insert a new channels row for previously-unseen streamers.
+      // channels.series_id is NOT NULL today, so we lazily mint a stub
+      // series per tracker (see ensureBoundSeries) to satisfy the
+      // constraint without polluting the tournament UI.
       if (!channel) {
         const seriesId = await this.ensureBoundSeries(tracker);
         try {
           const [created] = await this.db('channels')
             .insert({
               series_id: seriesId,
-              platform: 'twitch',
+              platform,
               channel_identifier: stream.channelIdentifier,
               display_name: stream.displayName,
               language: stream.language ? stream.language.split('-')[0].toLowerCase() : null,
@@ -249,13 +276,14 @@ export class GameTrackerService {
         } catch (err) {
           // Another concurrent cycle inserted this channel — refetch.
           const refetch = await this.db<Channel>('channels')
-            .where('platform', 'twitch')
+            .where('platform', platform)
             .whereRaw('LOWER(channel_identifier) = ?', [stream.channelIdentifier.toLowerCase()])
             .first();
           if (!refetch) {
-            logger.warn(`[GameTracker:${slug}] failed to insert/find channel for ${stream.channelIdentifier}`, {
-              error: (err as Error).message,
-            });
+            logger.warn(
+              `[GameTracker:${slug}] failed to insert/find ${platform} channel for ${stream.channelIdentifier}`,
+              { error: (err as Error).message },
+            );
             continue;
           }
           channel = refetch;
@@ -279,12 +307,17 @@ export class GameTrackerService {
         channel_id: channel.id,
         timestamp: cycleTimestamp,
         concurrent_viewers: stream.concurrentViewers,
-        platform: 'twitch',
+        platform,
         language: stream.language ? stream.language.split('-')[0].toLowerCase() : null,
         region: null,
         stream_id: stream.streamId ?? null,
         stream_title: stream.title ?? null,
-        game_name: stream.gameName ?? tracker.twitch_game_name ?? null,
+        game_name:
+          stream.gameName ??
+          (platform === 'twitch'
+            ? tracker.twitch_game_name
+            : tracker.kick_category_slug) ??
+          null,
         started_at: stream.startedAt ? new Date(stream.startedAt) : null,
       });
     }
@@ -306,9 +339,9 @@ export class GameTrackerService {
     }
 
     // ── Cache streamer profile pics on first sighting ─────────────────
-    // Profile pics rarely change, so we only fetch for channels missing
-    // metadata.profile_image_url. One Helix /users batch per cycle (≤100
-    // logins each) — cheap on Helix points budget.
+    // Twitch only — Kick's public API doesn't expose user profile pics
+    // without scraping their unauthenticated v2 endpoint. Initials
+    // fallback handles Kick streamers in the leaderboard.
     await this.refreshProfilePics(eligible, existingChannels);
 
     result.durationMs = Date.now() - start;
@@ -329,16 +362,17 @@ export class GameTrackerService {
    * and refetching every cycle would burn Helix budget unnecessarily.
    */
   private async refreshProfilePics(
-    streams: DiscoveredStream[],
+    streams: PlatformStream[],
     channelMap: Map<string, import('../models/channel').Channel>,
   ): Promise<void> {
     const needLookup: Array<{ login: string; channel: import('../models/channel').Channel }> = [];
-    for (const s of streams) {
-      const ch = channelMap.get(this.channelKey('twitch', s.channelIdentifier));
+    for (const { platform, stream } of streams) {
+      if (platform !== 'twitch') continue; // Kick profile pics not yet supported
+      const ch = channelMap.get(this.channelKey('twitch', stream.channelIdentifier));
       if (!ch) continue;
       const meta = (ch.metadata as Record<string, unknown>) ?? {};
       if (typeof meta.profile_image_url !== 'string' || meta.profile_image_url.length === 0) {
-        needLookup.push({ login: s.channelIdentifier, channel: ch });
+        needLookup.push({ login: stream.channelIdentifier, channel: ch });
       }
     }
     if (needLookup.length === 0) return;

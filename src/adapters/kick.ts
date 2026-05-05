@@ -277,6 +277,13 @@ export class KickAdapter implements PlatformAdapter {
       title: raw.stream_title ?? 'Untitled',
       categoryId: raw.category?.id,
       categoryName: raw.category?.name,
+      gameName: raw.category?.name ?? null,
+      startedAt: raw.started_at ?? null,
+      // Kick doesn't expose a per-broadcast id like Twitch — use the
+      // channel slug + start time as a synthetic session marker. Good
+      // enough for "is this the same broadcast as before?" queries.
+      streamId:
+        raw.started_at && raw.slug ? `${raw.slug}:${raw.started_at}` : raw.slug ?? null,
     };
   }
 
