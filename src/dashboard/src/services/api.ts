@@ -866,6 +866,28 @@ export interface GameTrackerPlatformBreakdown {
   peak: number;
 }
 
+export interface GameTrackerLanguageBreakdown {
+  language: string | null;
+  total_ccv_minutes: number;
+  peak: number;
+}
+
+export interface GameTrackerRangeLeaderboardRow {
+  channel_id: string;
+  peak_ccv: number;
+  avg_ccv: number;
+  minutes_live: number;
+  platform: string;
+  language: string | null;
+  channel: {
+    id: string;
+    display_name: string;
+    channel_identifier: string;
+    platform: string;
+    metadata: Record<string, unknown>;
+  } | null;
+}
+
 export function listGameTrackers() {
   return request<GameTracker[]>('/api/game-trackers');
 }
@@ -929,5 +951,24 @@ export function getGameTrackerBreakdown(slug: string, from: Date, to: Date) {
     from: string;
     to: string;
     platform: GameTrackerPlatformBreakdown[];
+    language: GameTrackerLanguageBreakdown[];
   }>(`/api/game-trackers/${slug}/breakdown?${params.toString()}`);
+}
+
+export function getGameTrackerRangeLeaderboard(
+  slug: string,
+  from: Date,
+  to: Date,
+  limit = 50,
+) {
+  const params = new URLSearchParams({
+    from: from.toISOString(),
+    to: to.toISOString(),
+    limit: String(limit),
+  });
+  return request<{
+    from: string;
+    to: string;
+    rows: GameTrackerRangeLeaderboardRow[];
+  }>(`/api/game-trackers/${slug}/range-leaderboard?${params.toString()}`);
 }
