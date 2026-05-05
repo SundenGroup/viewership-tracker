@@ -176,6 +176,23 @@ export function StartPage({
           </Row>
 
           <Row gap={8} align="center">
+            <button
+              type="button"
+              onClick={() => (window.location.href = '/discover')}
+              className="btn"
+              style={{
+                fontSize: 12,
+                padding: '5px 10px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                background: 'transparent',
+                border: '1px solid var(--border)',
+              }}
+              title="Live game trackers"
+            >
+              Discover
+            </button>
             {isAdmin && onOpenUsers && (
               <button
                 type="button"

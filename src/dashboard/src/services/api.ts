@@ -791,3 +791,142 @@ export function updatePushPreferences(endpoint: string, preferences: Partial<Pus
 export function sendTestPush() {
   return request<PushSendResult>('/api/push/test', { method: 'POST' });
 }
+
+// ── Live Game Tracker (Discover) ──────────────────────────────────────────
+
+export interface GameTracker {
+  id: string;
+  name: string;
+  slug: string;
+  status: 'active' | 'paused';
+  twitch_game_id: string | null;
+  twitch_game_name: string | null;
+  kick_category_id: number | null;
+  kick_category_slug: string | null;
+  min_ccv_threshold: number;
+  mismatch_threshold_cycles: number;
+  discovery_interval_seconds: number;
+  polling_interval_seconds: number;
+  max_active_channels: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GameTrackerDetail extends GameTracker {
+  active_channel_count: number;
+  last_cycle: {
+    snapshotsWritten: number;
+    newChannels: number;
+    bumpedMismatch: number;
+    dropped: number;
+    durationMs: number;
+  } | null;
+}
+
+export interface CreateGameTracker {
+  name: string;
+  slug: string;
+  status?: 'active' | 'paused';
+  twitch_game_id?: string | null;
+  twitch_game_name?: string | null;
+  kick_category_id?: number | null;
+  kick_category_slug?: string | null;
+  min_ccv_threshold?: number;
+  mismatch_threshold_cycles?: number;
+  discovery_interval_seconds?: number;
+  polling_interval_seconds?: number;
+}
+
+export interface GameTrackerLeaderboardRow {
+  channel_id: string;
+  concurrent_viewers: number;
+  stream_title: string | null;
+  platform: string;
+  language: string | null;
+  timestamp: string;
+  channel: {
+    id: string;
+    display_name: string;
+    channel_identifier: string;
+    platform: string;
+  } | null;
+}
+
+export interface GameTrackerRangeBucket {
+  ts: string;
+  total_ccv: number;
+  stream_count: number;
+}
+
+export interface GameTrackerPlatformBreakdown {
+  platform: string;
+  total_ccv_minutes: number;
+  peak: number;
+}
+
+export function listGameTrackers() {
+  return request<GameTracker[]>('/api/game-trackers');
+}
+
+export function getGameTracker(slug: string) {
+  return request<GameTrackerDetail>(`/api/game-trackers/${slug}`);
+}
+
+export function createGameTracker(data: CreateGameTracker) {
+  return request<GameTracker>('/api/game-trackers', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateGameTracker(slug: string, data: Partial<CreateGameTracker>) {
+  return request<GameTracker>(`/api/game-trackers/${slug}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteGameTracker(slug: string) {
+  return request<void>(`/api/game-trackers/${slug}`, { method: 'DELETE' });
+}
+
+export function getGameTrackerLeaderboard(slug: string, at?: Date, limit = 50) {
+  const params = new URLSearchParams();
+  if (at) params.set('at', at.toISOString());
+  params.set('limit', String(limit));
+  return request<GameTrackerLeaderboardRow[]>(
+    `/api/game-trackers/${slug}/leaderboard?${params.toString()}`,
+  );
+}
+
+export function getGameTrackerRange(
+  slug: string,
+  from: Date,
+  to: Date,
+  bucketSeconds = 60,
+) {
+  const params = new URLSearchParams({
+    from: from.toISOString(),
+    to: to.toISOString(),
+    bucketSeconds: String(bucketSeconds),
+  });
+  return request<{
+    from: string;
+    to: string;
+    bucket_seconds: number;
+    buckets: GameTrackerRangeBucket[];
+  }>(`/api/game-trackers/${slug}/snapshots/range?${params.toString()}`);
+}
+
+export function getGameTrackerBreakdown(slug: string, from: Date, to: Date) {
+  const params = new URLSearchParams({
+    from: from.toISOString(),
+    to: to.toISOString(),
+  });
+  return request<{
+    from: string;
+    to: string;
+    platform: GameTrackerPlatformBreakdown[];
+  }>(`/api/game-trackers/${slug}/breakdown?${params.toString()}`);
+}

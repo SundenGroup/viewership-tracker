@@ -16,6 +16,9 @@ import { UserManagementPage } from '@/pages/UserManagementPage';
 import { YouTubeKeysPage } from '@/pages/YouTubeKeysPage';
 import { NotificationsSettingsPage } from '@/pages/NotificationsSettingsPage';
 import { ExplorePage } from '@/pages/ExplorePage';
+import { DiscoverListPage } from '@/pages/discover/DiscoverListPage';
+import { DiscoverDetailPage } from '@/pages/discover/DiscoverDetailPage';
+import { DiscoverAdminNew } from '@/pages/discover/DiscoverAdminNew';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Spinner } from '@/components/common/Loader';
@@ -126,6 +129,9 @@ function AuthGate() {
         <Route path="/settings/notifications" element={<AppContent />} />
         <Route path="/explore/:seriesId" element={<AppContent />} />
         <Route path="/explore" element={<AppContent />} />
+        <Route path="/discover/admin/new" element={<AppContent />} />
+        <Route path="/discover/:slug" element={<AppContent />} />
+        <Route path="/discover" element={<AppContent />} />
         <Route path="/:seriesId/edit" element={<AppContent />} />
         <Route path="/:seriesId" element={<AppContent />} />
         <Route path="/" element={<AppContent />} />
@@ -152,6 +158,9 @@ function AppContent() {
   const isYouTubeKeysPage = pathname === '/settings/youtube-keys';
   const isNotificationsPage = pathname === '/settings/notifications';
   const isExplorePage = pathname.startsWith('/explore');
+  const isDiscoverNew = pathname === '/discover/admin/new';
+  const isDiscoverDetail = /^\/discover\/[^/]+$/.test(pathname) && !isDiscoverNew;
+  const isDiscoverList = pathname === '/discover';
 
   // ── Data fetching ─────────────────────────────────────────────────────
 
@@ -364,6 +373,19 @@ function AppContent() {
         onDeleted={handleSeriesDeleted}
       />
     );
+  }
+
+  // Discover pages — live game tracker surface, separate from tournament
+  // dashboard. Phase 1: minimal read-only views + admin create form.
+  // Phase 3 will replace with publisher-friendly layout per the plan.
+  if (isDiscoverList) {
+    return <DiscoverListPage />;
+  }
+  if (isDiscoverDetail) {
+    return <DiscoverDetailPage />;
+  }
+  if (isDiscoverNew) {
+    return <DiscoverAdminNew />;
   }
 
   // ExplorePage — post-event analysis surface (editor+ only). Self-contained
