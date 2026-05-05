@@ -20,4 +20,4 @@ Claude Code's own plan files live at `~/.claude/plans/<auto-slug>.md`, which wor
 
 ## Index
 
-- [2026-05-05 — Live Game Tracker](2026-05-05-live-game-tracker.md) — continuous tracking of all Twitch / Kick / YouTube streams in a configured game (PUBG: BG, etc.), separate from tournament tracking. Draft, awaiting review.
+- [2026-05-05 — Live Game Tracker](2026-05-05-live-game-tracker.md) — continuous tracking of all Twitch + Kick streams in a configured game (PUBG: BG first), surfaced under a new top-level Discover tab. v1 excludes YouTube. Snapshots in a dedicated table. Draft, awaiting approval to start Phase 0.
