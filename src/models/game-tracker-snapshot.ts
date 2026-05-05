@@ -37,28 +37,61 @@ export async function bulkInsert(rows: InsertSnapshot[]): Promise<number> {
   return rows.length;
 }
 
+/**
+ * Aggregate snapshots into time buckets for trend rendering.
+ *
+ * CCV is a point-in-time quantity — concurrent viewers AT a moment, not
+ * a flow. Naively SUM-ing all rows in a bucket inflates the value by
+ * the number of minutes in the bucket (every channel writes one row
+ * per minute). The correct shape is two steps:
+ *   1. SUM per minute → "total concurrent viewers across all channels
+ *      at this minute" (this IS a sum because the channels are distinct
+ *      at the same instant).
+ *   2. AVG over minutes inside the bucket → "typical total CCV across
+ *      this 5-min window".
+ *
+ * Same logic for stream_count: count distinct channels per minute,
+ * then average minutes within the bucket. (Counting distinct directly
+ * across the full bucket double-counts a streamer that appears in 5
+ * consecutive minutes only once, so the per-minute approach is also
+ * what the user expects when reading the chart.)
+ */
 export async function rangeAggregate(
   gameTrackerId: string,
   fromTs: Date,
   toTs: Date,
   bucketSeconds = 60,
 ): Promise<Array<{ ts: Date; total_ccv: number; stream_count: number }>> {
-  return db(TABLE)
-    .select(
-      db.raw(`date_bin(?::interval, "timestamp", ?::timestamptz) as ts`, [
-        `${bucketSeconds} seconds`,
-        fromTs,
-      ]),
+  const rows = await db.raw<{
+    rows: Array<{ ts: Date; total_ccv: string | null; stream_count: string | null }>;
+  }>(
+    `
+    WITH per_minute AS (
+      SELECT
+        date_trunc('minute', "timestamp") AS minute_ts,
+        SUM(concurrent_viewers) AS minute_total_ccv,
+        COUNT(DISTINCT channel_id) AS minute_stream_count
+      FROM game_tracker_snapshots
+      WHERE game_tracker_id = ?
+        AND "timestamp" >= ?
+        AND "timestamp" < ?
+      GROUP BY minute_ts
     )
-    .sum<{ total_ccv: string }[]>({ total_ccv: 'concurrent_viewers' })
-    .countDistinct<{ stream_count: string }[]>({ stream_count: 'channel_id' })
-    .where('game_tracker_id', gameTrackerId)
-    .where('timestamp', '>=', fromTs)
-    .where('timestamp', '<', toTs)
-    .groupBy('ts')
-    .orderBy('ts', 'asc') as unknown as Promise<
-    Array<{ ts: Date; total_ccv: number; stream_count: number }>
-  >;
+    SELECT
+      date_bin(?::interval, minute_ts, ?::timestamptz) AS ts,
+      AVG(minute_total_ccv)::float AS total_ccv,
+      AVG(minute_stream_count)::float AS stream_count
+    FROM per_minute
+    GROUP BY ts
+    ORDER BY ts ASC
+    `,
+    [gameTrackerId, fromTs, toTs, `${bucketSeconds} seconds`, fromTs],
+  );
+  return rows.rows.map((r) => ({
+    ts: r.ts,
+    total_ccv: r.total_ccv ? Math.round(Number(r.total_ccv)) : 0,
+    stream_count: r.stream_count ? Math.round(Number(r.stream_count)) : 0,
+  }));
 }
 
 export async function leaderboardAt(
