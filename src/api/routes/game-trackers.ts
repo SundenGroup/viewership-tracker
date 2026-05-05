@@ -232,8 +232,46 @@ router.get('/:slug/breakdown', async (req: Request, res: Response, next: NextFun
     }
     const fromTs = req.query.from ? new Date(String(req.query.from)) : new Date(Date.now() - 24 * 60 * 60_000);
     const toTs = req.query.to ? new Date(String(req.query.to)) : new Date();
-    const platform = await GameTrackerSnapshotModel.platformBreakdown(tracker.id, fromTs, toTs);
-    res.json({ from: fromTs, to: toTs, platform });
+    const [platform, language] = await Promise.all([
+      GameTrackerSnapshotModel.platformBreakdown(tracker.id, fromTs, toTs),
+      GameTrackerSnapshotModel.languageBreakdown(tracker.id, fromTs, toTs),
+    ]);
+    res.json({ from: fromTs, to: toTs, platform, language });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:slug/range-leaderboard', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
+    if (!tracker) {
+      res.status(404).json({ error: 'Game tracker not found' });
+      return;
+    }
+    const fromTs = req.query.from ? new Date(String(req.query.from)) : new Date(Date.now() - 24 * 60 * 60_000);
+    const toTs = req.query.to ? new Date(String(req.query.to)) : new Date();
+    const limit = req.query.limit ? Math.min(Math.max(Number(req.query.limit), 1), 200) : 50;
+    if (Number.isNaN(fromTs.getTime()) || Number.isNaN(toTs.getTime())) {
+      res.status(400).json({ error: 'from / to must be valid ISO timestamps' });
+      return;
+    }
+    if (toTs.getTime() <= fromTs.getTime()) {
+      res.status(400).json({ error: 'to must be after from' });
+      return;
+    }
+    const rows = await GameTrackerSnapshotModel.rangeLeaderboard(tracker.id, fromTs, toTs, limit);
+    if (rows.length === 0) {
+      res.json({ from: fromTs, to: toTs, rows: [] });
+      return;
+    }
+    const channels = await ChannelModel.findByIds(rows.map((r) => r.channel_id));
+    const channelMap = new Map(channels.map((c) => [c.id, c]));
+    res.json({
+      from: fromTs,
+      to: toTs,
+      rows: rows.map((r) => ({ ...r, channel: channelMap.get(r.channel_id) ?? null })),
+    });
   } catch (err) {
     next(err);
   }

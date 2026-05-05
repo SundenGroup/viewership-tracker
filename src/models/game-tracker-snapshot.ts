@@ -140,6 +140,81 @@ export async function leaderboardAt(
     .limit(limit);
 }
 
+export async function rangeLeaderboard(
+  gameTrackerId: string,
+  fromTs: Date,
+  toTs: Date,
+  limit = 50,
+): Promise<
+  Array<{
+    channel_id: string;
+    peak_ccv: number;
+    avg_ccv: number;
+    minutes_live: number;
+    platform: string;
+    language: string | null;
+  }>
+> {
+  // Per-channel aggregates within the range. avg_ccv is the AVERAGE
+  // CCV across all snapshots in the range (so a streamer who was live
+  // for 10 minutes at 100 viewers gets avg=100, not avg=33 if the
+  // window was 30 minutes long). Sort by peak DESC.
+  const rows = await db.raw<{
+    rows: Array<{
+      channel_id: string;
+      peak_ccv: string;
+      avg_ccv: string;
+      minutes_live: string;
+      platform: string;
+      language: string | null;
+    }>;
+  }>(
+    `
+    SELECT
+      channel_id,
+      MAX(concurrent_viewers) AS peak_ccv,
+      AVG(concurrent_viewers)::int AS avg_ccv,
+      COUNT(DISTINCT date_trunc('minute', "timestamp")) AS minutes_live,
+      MAX(platform) AS platform,
+      MAX(language) AS language
+    FROM game_tracker_snapshots
+    WHERE game_tracker_id = ?
+      AND "timestamp" >= ?
+      AND "timestamp" < ?
+    GROUP BY channel_id
+    ORDER BY peak_ccv DESC
+    LIMIT ?
+    `,
+    [gameTrackerId, fromTs, toTs, limit],
+  );
+  return rows.rows.map((r) => ({
+    channel_id: r.channel_id,
+    peak_ccv: Number(r.peak_ccv),
+    avg_ccv: Number(r.avg_ccv),
+    minutes_live: Number(r.minutes_live),
+    platform: r.platform,
+    language: r.language,
+  }));
+}
+
+export async function languageBreakdown(
+  gameTrackerId: string,
+  fromTs: Date,
+  toTs: Date,
+): Promise<Array<{ language: string | null; total_ccv_minutes: number; peak: number }>> {
+  return db(TABLE)
+    .select('language')
+    .sum<{ total_ccv_minutes: string }[]>({ total_ccv_minutes: 'concurrent_viewers' })
+    .max<{ peak: number }[]>({ peak: 'concurrent_viewers' })
+    .where('game_tracker_id', gameTrackerId)
+    .where('timestamp', '>=', fromTs)
+    .where('timestamp', '<', toTs)
+    .groupBy('language')
+    .orderBy('total_ccv_minutes', 'desc') as unknown as Promise<
+    Array<{ language: string | null; total_ccv_minutes: number; peak: number }>
+  >;
+}
+
 export async function platformBreakdown(
   gameTrackerId: string,
   fromTs: Date,
