@@ -46,6 +46,11 @@ export async function findById(id: string): Promise<Channel | null> {
   return row ?? null;
 }
 
+export async function findByIds(ids: string[]): Promise<Channel[]> {
+  if (ids.length === 0) return [];
+  return db(TABLE).whereIn('id', ids);
+}
+
 export async function findAll(filters?: Partial<Pick<Channel, 'series_id' | 'platform' | 'is_active' | 'tier' | 'language' | 'region'>>): Promise<Channel[]> {
   const query = db(TABLE);
   if (filters) {

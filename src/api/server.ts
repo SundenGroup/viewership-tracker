@@ -19,6 +19,7 @@ import pushRouter, { pushPublicRouter } from './routes/push';
 import authRouter from './routes/auth';
 import publicRouter from './routes/public';
 import relayRouter from './routes/relay';
+import gameTrackersRouter from './routes/game-trackers';
 import { authenticate, requireRole } from './middleware/auth';
 
 export function createApp() {
@@ -99,6 +100,7 @@ export function createApp() {
   app.use('/api', channelsRouter);
   app.use('/api/viewership', viewershipRouter);
   app.use('/api/report-payload', reportPayloadRouter);
+  app.use('/api/game-trackers', gameTrackersRouter);
 
   // Editor+ routes
   app.use('/api/export', requireRole('admin', 'editor'), exportRouter);

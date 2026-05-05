@@ -19,6 +19,12 @@ export interface DiscoveredStream {
   concurrentViewers: number;
   language: string | null;
   title: string;
+  /** Optional fields populated by adapters that have them (Twitch, Kick).
+   *  Used by the live game tracker to verify the stream is still tagged
+   *  with the target game and to record session-level metadata. */
+  gameName?: string | null;
+  startedAt?: string | null;
+  streamId?: string | null;
 }
 
 export interface PlatformAdapter {

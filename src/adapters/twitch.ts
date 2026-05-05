@@ -349,6 +349,9 @@ export class TwitchAdapter implements PlatformAdapter {
             concurrentViewers: stream.viewer_count,
             language: stream.language,
             title: stream.title,
+            gameName: stream.game_name ?? null,
+            startedAt: stream.started_at ?? null,
+            streamId: stream.id ?? null,
           });
         }
       }

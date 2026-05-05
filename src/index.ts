@@ -17,10 +17,11 @@
 import { config } from './utils/config';
 import logger from './utils/logger';
 import db from './utils/db';
-import { createApp, setOrchestrator, setDiscoveryService, setBroadcastDayDiscoveryService, setReportAgent, setRelayBroadcast } from './api';
+import { createApp, setOrchestrator, setDiscoveryService, setBroadcastDayDiscoveryService, setReportAgent, setRelayBroadcast, setGameTrackerService } from './api';
 import { AdapterRegistry } from './adapters';
 import { PollingOrchestrator, type PollCycleResult } from './services/polling-orchestrator';
 import { DiscoveryService } from './services/discovery-service';
+import { GameTrackerService } from './services/game-tracker-service';
 import { ReportAgent } from './agent/report-agent';
 import { ViewershipWebSocketServer } from './api/websocket';
 import { getPushNotifier } from './services/push-notifier';
@@ -94,6 +95,10 @@ async function bootstrap(): Promise<void> {
     intervalMs: config.polling.discoveryIntervalMs,
   });
   const discoveryService = new DiscoveryService(registry, db);
+
+  // ── 5b. Initialize GameTrackerService ──────────────────────────────────
+  logger.info('[CVT] Initializing game-tracker service...');
+  const gameTrackerService = new GameTrackerService(registry, db);
 
   // ── 6. Initialize ReportAgent ──────────────────────────────────────────
   logger.info('[CVT] Initializing report agent...');
@@ -175,6 +180,7 @@ async function bootstrap(): Promise<void> {
   setDiscoveryService(discoveryService);
   setBroadcastDayDiscoveryService(discoveryService);
   setReportAgent(reportAgent);
+  setGameTrackerService(gameTrackerService);
 
   // Wire TikTok relay → WebSocket broadcast (so dashboard shows TikTok data immediately)
   setRelayBroadcast((seriesIds) => {
@@ -203,6 +209,10 @@ async function bootstrap(): Promise<void> {
   // an emergency override from the dashboard.
   orchestrator.start();
   logger.info('[CVT] Polling orchestrator started (auto-start mode)');
+
+  // ── 10b. Start game-tracker service ────────────────────────────────────
+  await gameTrackerService.start();
+  logger.info('[CVT] Game tracker service started');
 
   // ── 11. Startup complete ───────────────────────────────────────────────
   logger.info(
