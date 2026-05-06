@@ -242,6 +242,76 @@ router.get('/:slug/breakdown', async (req: Request, res: Response, next: NextFun
   }
 });
 
+router.get('/:slug/channels/:channelId/timeline', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
+    if (!tracker) {
+      res.status(404).json({ error: 'Game tracker not found' });
+      return;
+    }
+    const channelId = req.params.channelId as string;
+    const channel = await ChannelModel.findById(channelId);
+    if (!channel) {
+      res.status(404).json({ error: 'Channel not found' });
+      return;
+    }
+    const fromTs = req.query.from
+      ? new Date(String(req.query.from))
+      : new Date(Date.now() - 24 * 60 * 60_000);
+    const toTs = req.query.to ? new Date(String(req.query.to)) : new Date();
+    const bucketSeconds = req.query.bucketSeconds ? Number(req.query.bucketSeconds) : 60;
+    if (Number.isNaN(fromTs.getTime()) || Number.isNaN(toTs.getTime())) {
+      res.status(400).json({ error: 'from / to must be valid ISO timestamps' });
+      return;
+    }
+    const [timeline, sessions] = await Promise.all([
+      GameTrackerSnapshotModel.channelTimeline(tracker.id, channelId, fromTs, toTs, bucketSeconds),
+      GameTrackerSnapshotModel.channelSessions(tracker.id, channelId, 30),
+    ]);
+    res.json({
+      from: fromTs,
+      to: toTs,
+      bucket_seconds: bucketSeconds,
+      channel,
+      timeline,
+      sessions,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:slug/search', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
+    if (!tracker) {
+      res.status(404).json({ error: 'Game tracker not found' });
+      return;
+    }
+    const q = (req.query.q as string | undefined)?.trim();
+    if (!q || q.length < 2) {
+      res.status(400).json({ error: 'q must be at least 2 characters' });
+      return;
+    }
+    const days = req.query.days ? Math.min(Math.max(Number(req.query.days), 1), 90) : 30;
+    const limit = req.query.limit ? Math.min(Math.max(Number(req.query.limit), 1), 100) : 50;
+    const rows = await GameTrackerSnapshotModel.searchTitlesAndChannels(tracker.id, q, days, limit);
+    if (rows.length === 0) {
+      res.json({ query: q, days, rows: [] });
+      return;
+    }
+    const channels = await ChannelModel.findByIds(rows.map((r) => r.channel_id));
+    const channelMap = new Map(channels.map((c) => [c.id, c]));
+    res.json({
+      query: q,
+      days,
+      rows: rows.map((r) => ({ ...r, channel: channelMap.get(r.channel_id) ?? null })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:slug/range-leaderboard', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);

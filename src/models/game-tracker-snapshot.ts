@@ -215,6 +215,199 @@ export async function languageBreakdown(
   >;
 }
 
+/**
+ * Per-channel time series within a tracker — for the broadcast-detail
+ * page when an operator clicks a streamer row in the leaderboard.
+ *
+ * Returns one row per bucket with the channel's CCV. No aggregation
+ * across channels, just this one streamer's timeline.
+ */
+export async function channelTimeline(
+  gameTrackerId: string,
+  channelId: string,
+  fromTs: Date,
+  toTs: Date,
+  bucketSeconds = 60,
+): Promise<
+  Array<{
+    ts: Date;
+    concurrent_viewers: number;
+    stream_title: string | null;
+    stream_id: string | null;
+  }>
+> {
+  const result = await db.raw<{
+    rows: Array<{
+      ts: Date;
+      concurrent_viewers: string;
+      stream_title: string | null;
+      stream_id: string | null;
+    }>;
+  }>(
+    `
+    SELECT
+      date_bin(?::interval, "timestamp", ?::timestamptz) AS ts,
+      AVG(concurrent_viewers)::int AS concurrent_viewers,
+      (array_agg(stream_title ORDER BY "timestamp" DESC) FILTER (WHERE stream_title IS NOT NULL))[1] AS stream_title,
+      (array_agg(stream_id ORDER BY "timestamp" DESC) FILTER (WHERE stream_id IS NOT NULL))[1] AS stream_id
+    FROM game_tracker_snapshots
+    WHERE game_tracker_id = ?
+      AND channel_id = ?
+      AND "timestamp" >= ?
+      AND "timestamp" < ?
+    GROUP BY ts
+    ORDER BY ts ASC
+    `,
+    [`${bucketSeconds} seconds`, fromTs, gameTrackerId, channelId, fromTs, toTs],
+  );
+  return result.rows.map((r) => ({
+    ts: r.ts,
+    concurrent_viewers: Number(r.concurrent_viewers),
+    stream_title: r.stream_title,
+    stream_id: r.stream_id,
+  }));
+}
+
+/**
+ * Distinct stream sessions for a channel within a tracker. A "session"
+ * is a contiguous run of snapshots with the same stream_id. Returns
+ * one row per session: title, peak, avg, start/end, minutes_live.
+ *
+ * Used by the broadcast-detail page to list "today's stream / yesterday's
+ * stream / etc." for the streamer.
+ */
+export async function channelSessions(
+  gameTrackerId: string,
+  channelId: string,
+  daysBack = 30,
+): Promise<
+  Array<{
+    stream_id: string | null;
+    stream_title: string | null;
+    peak_ccv: number;
+    avg_ccv: number;
+    minutes_live: number;
+    started_at: Date;
+    ended_at: Date;
+  }>
+> {
+  const result = await db.raw<{
+    rows: Array<{
+      stream_id: string | null;
+      stream_title: string | null;
+      peak_ccv: string;
+      avg_ccv: string;
+      minutes_live: string;
+      started_at: Date;
+      ended_at: Date;
+    }>;
+  }>(
+    `
+    SELECT
+      stream_id,
+      (array_agg(stream_title ORDER BY "timestamp" DESC) FILTER (WHERE stream_title IS NOT NULL))[1] AS stream_title,
+      MAX(concurrent_viewers) AS peak_ccv,
+      AVG(concurrent_viewers)::int AS avg_ccv,
+      COUNT(DISTINCT date_trunc('minute', "timestamp")) AS minutes_live,
+      MIN("timestamp") AS started_at,
+      MAX("timestamp") AS ended_at
+    FROM game_tracker_snapshots
+    WHERE game_tracker_id = ?
+      AND channel_id = ?
+      AND "timestamp" > NOW() - (?::int * INTERVAL '1 day')
+    GROUP BY stream_id
+    HAVING MAX(concurrent_viewers) > 0
+    ORDER BY MIN("timestamp") DESC
+    `,
+    [gameTrackerId, channelId, daysBack],
+  );
+  return result.rows.map((r) => ({
+    stream_id: r.stream_id,
+    stream_title: r.stream_title,
+    peak_ccv: Number(r.peak_ccv),
+    avg_ccv: Number(r.avg_ccv),
+    minutes_live: Number(r.minutes_live),
+    started_at: r.started_at,
+    ended_at: r.ended_at,
+  }));
+}
+
+/**
+ * Search by stream title and channel display_name within a tracker.
+ * Returns the most-recent matching snapshot per channel — so a streamer
+ * who's been live multiple days only appears once with their latest
+ * title.
+ */
+export async function searchTitlesAndChannels(
+  gameTrackerId: string,
+  query: string,
+  daysBack = 30,
+  limit = 50,
+): Promise<
+  Array<{
+    channel_id: string;
+    last_seen: Date;
+    stream_title: string | null;
+    peak_ccv: number;
+    matched_field: 'title' | 'channel';
+  }>
+> {
+  const escaped = `%${query.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+  const result = await db.raw<{
+    rows: Array<{
+      channel_id: string;
+      last_seen: Date;
+      stream_title: string | null;
+      peak_ccv: string;
+      matched_field: 'title' | 'channel';
+    }>;
+  }>(
+    `
+    WITH match_set AS (
+      SELECT DISTINCT s.channel_id,
+        CASE
+          WHEN s.stream_title ILIKE ? THEN 'title'
+          WHEN c.display_name ILIKE ? OR c.channel_identifier ILIKE ? THEN 'channel'
+        END AS matched_field
+      FROM game_tracker_snapshots s
+      JOIN channels c ON c.id = s.channel_id
+      WHERE s.game_tracker_id = ?
+        AND s."timestamp" > NOW() - (?::int * INTERVAL '1 day')
+        AND (
+          s.stream_title ILIKE ?
+          OR c.display_name ILIKE ?
+          OR c.channel_identifier ILIKE ?
+        )
+    )
+    SELECT
+      m.channel_id,
+      MAX(s."timestamp") AS last_seen,
+      (array_agg(s.stream_title ORDER BY s."timestamp" DESC) FILTER (WHERE s.stream_title IS NOT NULL))[1] AS stream_title,
+      MAX(s.concurrent_viewers) AS peak_ccv,
+      m.matched_field
+    FROM match_set m
+    JOIN game_tracker_snapshots s ON s.channel_id = m.channel_id AND s.game_tracker_id = ?
+    WHERE s."timestamp" > NOW() - (?::int * INTERVAL '1 day')
+    GROUP BY m.channel_id, m.matched_field
+    ORDER BY last_seen DESC
+    LIMIT ?
+    `,
+    [
+      escaped, escaped, escaped,
+      gameTrackerId, daysBack,
+      escaped, escaped, escaped,
+      gameTrackerId, daysBack, limit,
+    ],
+  );
+  return result.rows.map((r) => ({
+    channel_id: r.channel_id,
+    last_seen: r.last_seen,
+    stream_title: r.stream_title,
+    peak_ccv: Number(r.peak_ccv),
+    matched_field: r.matched_field,
+  }));
+}
+
 export async function platformBreakdown(
   gameTrackerId: string,
   fromTs: Date,
