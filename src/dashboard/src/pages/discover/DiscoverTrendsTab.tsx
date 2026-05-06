@@ -266,7 +266,7 @@ function TrendKpi({
     <div
       className="card"
       style={{
-        padding: '18px 20px',
+        padding: '22px 22px',
         position: 'relative',
         overflow: 'hidden',
       }}
@@ -282,7 +282,7 @@ function TrendKpi({
             {label}
           </Row>
         }
-        value={value}
+        value={<span style={{ fontWeight: 600 }}>{value}</span>}
         sub={sub ? <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>{sub}</span> : undefined}
       />
     </div>

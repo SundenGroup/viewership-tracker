@@ -68,7 +68,7 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
         <div style={{ padding: 16, color: 'var(--red)', fontSize: 13 }}>{error}</div>
       )}
       <div style={{ margin: -16, marginTop: 0 }}>
-        <LeaderboardTable rows={filtered} />
+        <LeaderboardTable rows={filtered} trackerSlug={slug} />
       </div>
     </Section>
   );

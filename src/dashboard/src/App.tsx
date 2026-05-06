@@ -18,6 +18,7 @@ import { NotificationsSettingsPage } from '@/pages/NotificationsSettingsPage';
 import { ExplorePage } from '@/pages/ExplorePage';
 import { DiscoverListPage } from '@/pages/discover/DiscoverListPage';
 import { DiscoverDetailPage } from '@/pages/discover/DiscoverDetailPage';
+import { DiscoverChannelPage } from '@/pages/discover/DiscoverChannelPage';
 import { DiscoverAdminNew } from '@/pages/discover/DiscoverAdminNew';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -130,6 +131,7 @@ function AuthGate() {
         <Route path="/explore/:seriesId" element={<AppContent />} />
         <Route path="/explore" element={<AppContent />} />
         <Route path="/discover/admin/new" element={<AppContent />} />
+        <Route path="/discover/:slug/channel/:channelId" element={<AppContent />} />
         <Route path="/discover/:slug" element={<AppContent />} />
         <Route path="/discover" element={<AppContent />} />
         <Route path="/:seriesId/edit" element={<AppContent />} />
@@ -159,6 +161,7 @@ function AppContent() {
   const isNotificationsPage = pathname === '/settings/notifications';
   const isExplorePage = pathname.startsWith('/explore');
   const isDiscoverNew = pathname === '/discover/admin/new';
+  const isDiscoverChannel = /^\/discover\/[^/]+\/channel\/[^/]+$/.test(pathname);
   const isDiscoverDetail = /^\/discover\/[^/]+$/.test(pathname) && !isDiscoverNew;
   const isDiscoverList = pathname === '/discover';
 
@@ -380,6 +383,9 @@ function AppContent() {
   // Phase 3 will replace with publisher-friendly layout per the plan.
   if (isDiscoverList) {
     return <DiscoverListPage />;
+  }
+  if (isDiscoverChannel) {
+    return <DiscoverChannelPage />;
   }
   if (isDiscoverDetail) {
     return <DiscoverDetailPage />;

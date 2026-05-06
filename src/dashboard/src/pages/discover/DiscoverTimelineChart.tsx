@@ -146,10 +146,11 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
           <YAxis stroke="var(--fg-dim)" fontSize={11} width={50} />
           <Tooltip
             contentStyle={{
-              background: 'var(--bg-card)',
-              border: '1px solid var(--border)',
+              background: 'color-mix(in oklab, var(--bg-card) 95%, transparent)',
+              border: '1px solid var(--border-strong)',
               borderRadius: 6,
-              fontSize: 12,
+              fontSize: 11.5,
+              padding: '8px 10px',
             }}
             labelFormatter={(v: string) => new Date(v).toLocaleString()}
             formatter={(value: number, name: string) => [value.toLocaleString(), name]}

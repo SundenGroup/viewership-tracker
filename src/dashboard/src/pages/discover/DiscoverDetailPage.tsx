@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, useSearchParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams, Link, useNavigate } from 'react-router-dom';
 import * as api from '@/services/api';
 import type { GameTrackerDetail, GameTrackerLeaderboardRow } from '@/services/api';
+import { DiscoverSearch } from './DiscoverSearch';
 import {
   Row,
   Col,
@@ -108,9 +109,12 @@ export function DiscoverDetailPage() {
 
   return (
     <div style={{ padding: '32px 24px 64px', maxWidth: 1320, margin: '0 auto' }}>
-      <Row justify="space-between" align="center">
+      <Row justify="space-between" align="center" gap={16}>
         <BackLink />
-        <ThemeToggle />
+        <Row gap={10} align="center" style={{ flex: 1, justifyContent: 'flex-end' }}>
+          <DiscoverSearch slug={slug ?? ''} />
+          <ThemeToggle />
+        </Row>
       </Row>
 
       {/* ── Hero ──────────────────────────────────────────────────────── */}
@@ -186,6 +190,7 @@ export function DiscoverDetailPage() {
       {/* ── Tab content ──────────────────────────────────────────────── */}
       {tab === 'live' && (
         <LiveTab
+          slug={slug}
           totalCcvNow={totalCcvNow}
           peakNow={peakNow}
           activeChannelCount={detail.active_channel_count}
@@ -224,6 +229,7 @@ function BackLink() {
 // ── Live tab ─────────────────────────────────────────────────────────
 
 function LiveTab({
+  slug,
   totalCcvNow,
   peakNow,
   activeChannelCount,
@@ -231,6 +237,7 @@ function LiveTab({
   leaderboard,
   lastCycle,
 }: {
+  slug: string;
   totalCcvNow: number;
   peakNow: number;
   activeChannelCount: number;
@@ -267,7 +274,7 @@ function LiveTab({
 
       {/* Top streams */}
       <Section title="Top streams now" eyebrow="LIVE LEADERBOARD">
-        <LeaderboardTable rows={leaderboard} />
+        <LeaderboardTable rows={leaderboard} trackerSlug={slug} />
       </Section>
 
       {/* Footer cycle status */}
@@ -304,7 +311,7 @@ function KpiCard({
     <div
       className="card"
       style={{
-        padding: '20px 22px',
+        padding: '24px 24px',
         position: 'relative',
         overflow: 'hidden',
         display: 'flex',
@@ -330,7 +337,7 @@ function KpiCard({
             {label}
           </Row>
         }
-        value={value}
+        value={<span style={{ fontWeight: 600 }}>{value}</span>}
         sub={
           sub ? (
             <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>{sub}</span>
@@ -343,9 +350,12 @@ function KpiCard({
 
 export function LeaderboardTable({
   rows,
+  trackerSlug,
 }: {
   rows: GameTrackerLeaderboardRow[] | null;
+  trackerSlug: string;
 }) {
+  const navigate = useNavigate();
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
       <thead>
@@ -374,8 +384,22 @@ export function LeaderboardTable({
         )}
         {(rows ?? []).map((row, i) => {
           const profilePic = row.channel?.metadata?.profile_image_url as string | undefined;
+          const onRowClick = () => navigate(`/discover/${trackerSlug}/channel/${row.channel_id}`);
           return (
-            <tr key={row.channel_id} style={{ borderBottom: '1px solid var(--border-faint)' }}>
+            <tr
+              key={row.channel_id}
+              onClick={onRowClick}
+              style={{
+                borderBottom: '1px solid var(--border-faint)',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--bg-sunken)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+              }}
+            >
               <td style={{ ...tdStyle, color: 'var(--fg-dim)', fontFamily: 'var(--font-mono)' }}>
                 {i + 1}
               </td>
@@ -387,11 +411,16 @@ export function LeaderboardTable({
                   <Row gap={10} align="center">
                     <Avatar src={profilePic ?? null} name={row.channel.display_name} size={32} />
                     <Col gap={2} style={{ minWidth: 0, flex: 1 }}>
-                      <ChannelNameWithLink
-                        name={row.channel.display_name}
-                        platform={row.platform}
-                        channelIdentifier={row.channel.channel_identifier}
-                      />
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ display: 'inline-flex' }}
+                      >
+                        <ChannelNameWithLink
+                          name={row.channel.display_name}
+                          platform={row.platform}
+                          channelIdentifier={row.channel.channel_identifier}
+                        />
+                      </div>
                       <div
                         title={row.stream_title ?? ''}
                         style={{
@@ -491,9 +520,9 @@ export function Avatar({
 }
 
 const thStyle: React.CSSProperties = {
-  padding: '10px 12px',
+  padding: '8px 6px',
   textAlign: 'left',
-  fontSize: 10,
+  fontSize: 10.5,
   fontWeight: 600,
   color: 'var(--fg-muted)',
   textTransform: 'uppercase',
@@ -501,5 +530,5 @@ const thStyle: React.CSSProperties = {
 };
 
 const tdStyle: React.CSSProperties = {
-  padding: '10px 12px',
+  padding: '12px 6px',
 };

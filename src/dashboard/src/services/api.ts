@@ -872,6 +872,53 @@ export interface GameTrackerLanguageBreakdown {
   peak: number;
 }
 
+export interface GameTrackerChannelTimelineBucket {
+  ts: string;
+  concurrent_viewers: number;
+  stream_title: string | null;
+  stream_id: string | null;
+}
+
+export interface GameTrackerChannelSession {
+  stream_id: string | null;
+  stream_title: string | null;
+  peak_ccv: number;
+  avg_ccv: number;
+  minutes_live: number;
+  started_at: string;
+  ended_at: string;
+}
+
+export interface GameTrackerChannelTimelineResponse {
+  from: string;
+  to: string;
+  bucket_seconds: number;
+  channel: {
+    id: string;
+    display_name: string;
+    channel_identifier: string;
+    platform: string;
+    metadata: Record<string, unknown>;
+  };
+  timeline: GameTrackerChannelTimelineBucket[];
+  sessions: GameTrackerChannelSession[];
+}
+
+export interface GameTrackerSearchRow {
+  channel_id: string;
+  last_seen: string;
+  stream_title: string | null;
+  peak_ccv: number;
+  matched_field: 'title' | 'channel';
+  channel: {
+    id: string;
+    display_name: string;
+    channel_identifier: string;
+    platform: string;
+    metadata: Record<string, unknown>;
+  } | null;
+}
+
 export interface GameTrackerRangeLeaderboardRow {
   channel_id: string;
   peak_ccv: number;
@@ -953,6 +1000,36 @@ export function getGameTrackerBreakdown(slug: string, from: Date, to: Date) {
     platform: GameTrackerPlatformBreakdown[];
     language: GameTrackerLanguageBreakdown[];
   }>(`/api/game-trackers/${slug}/breakdown?${params.toString()}`);
+}
+
+export function getGameTrackerChannelTimeline(
+  slug: string,
+  channelId: string,
+  from: Date,
+  to: Date,
+  bucketSeconds = 60,
+) {
+  const params = new URLSearchParams({
+    from: from.toISOString(),
+    to: to.toISOString(),
+    bucketSeconds: String(bucketSeconds),
+  });
+  return request<GameTrackerChannelTimelineResponse>(
+    `/api/game-trackers/${slug}/channels/${channelId}/timeline?${params.toString()}`,
+  );
+}
+
+export function searchGameTracker(slug: string, query: string, days = 30, limit = 50) {
+  const params = new URLSearchParams({
+    q: query,
+    days: String(days),
+    limit: String(limit),
+  });
+  return request<{
+    query: string;
+    days: number;
+    rows: GameTrackerSearchRow[];
+  }>(`/api/game-trackers/${slug}/search?${params.toString()}`);
 }
 
 export function getGameTrackerRangeLeaderboard(
