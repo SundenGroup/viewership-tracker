@@ -418,32 +418,81 @@ export class GameTrackerService {
    * channels.series_id is NOT NULL today. Game-tracker-managed channels
    * don't belong to a tournament, so we lazily create one stub series
    * per tracker and reuse its id. Identified by metadata.is_game_tracker_stub.
-   * The stub never appears in the tournament UI (filtered by status or
-   * is_public depending on the surface).
+   * The stub never appears in the tournament UI (the /api/series list
+   * filters out is_game_tracker_stub).
+   *
+   * Race protection: 100+ channels in the first cycle of a fresh
+   * tracker would all hit this method with the same in-memory tracker
+   * snapshot (metadata.bound_series_id unset), each spawning a stub
+   * row. Two layers of dedup now:
+   *   1. A per-process Map<trackerId, Promise<seriesId>> so concurrent
+   *      callers within one cycle await the same insert.
+   *   2. Persisted DB lookup by metadata short_name (gt-<slug>) before
+   *      inserting, so even across processes / restarts we'd reuse an
+   *      existing stub.
+   * After resolving, the result is mirrored back into tracker.metadata
+   * (in-memory + DB) so subsequent cycles short-circuit on the cheap
+   * field check.
    */
+  private boundSeriesCache = new Map<string, string>();
+  private boundSeriesPending = new Map<string, Promise<string>>();
+
   private async ensureBoundSeries(tracker: GameTrackerModel.GameTracker): Promise<string> {
+    const cached = this.boundSeriesCache.get(tracker.id);
+    if (cached) return cached;
     const stored = (tracker.metadata as Record<string, unknown>)?.bound_series_id;
-    if (typeof stored === 'string' && stored.length > 0) return stored;
+    if (typeof stored === 'string' && stored.length > 0) {
+      this.boundSeriesCache.set(tracker.id, stored);
+      return stored;
+    }
 
-    const stubName = `[game-tracker] ${tracker.name}`;
-    const [series] = await this.db('tournament_series')
-      .insert({
-        name: stubName,
-        short_name: `gt-${tracker.slug}`,
-        status: 'active',
-        timezone: 'UTC',
-        auto_start_polling: false,
-        is_public: false,
-        metadata: JSON.stringify({
-          is_game_tracker_stub: true,
-          game_tracker_id: tracker.id,
-        }),
-      })
-      .returning('id');
+    const inflight = this.boundSeriesPending.get(tracker.id);
+    if (inflight) return inflight;
 
-    const seriesId = series.id as string;
-    const nextMeta = { ...tracker.metadata, bound_series_id: seriesId };
-    await GameTrackerModel.update(tracker.id, { metadata: nextMeta });
-    return seriesId;
+    const promise = (async () => {
+      const stubShortName = `gt-${tracker.slug}`;
+      // First: see if a stub already exists for this tracker (e.g. from
+      // a previous deploy / pod). Reuse it.
+      const existing = await this.db('tournament_series')
+        .where('short_name', stubShortName)
+        .where(this.db.raw(`metadata->>'is_game_tracker_stub' = 'true'`))
+        .select('id')
+        .first();
+      let seriesId: string;
+      if (existing) {
+        seriesId = existing.id as string;
+      } else {
+        const [created] = await this.db('tournament_series')
+          .insert({
+            name: `[game-tracker] ${tracker.name}`,
+            short_name: stubShortName,
+            status: 'active',
+            timezone: 'UTC',
+            auto_start_polling: false,
+            is_public: false,
+            metadata: JSON.stringify({
+              is_game_tracker_stub: true,
+              game_tracker_id: tracker.id,
+            }),
+          })
+          .returning('id');
+        seriesId = created.id as string;
+      }
+
+      // Mirror back to tracker.metadata so subsequent cycles avoid the
+      // DB roundtrip entirely. Mutate the passed-in tracker too so
+      // remaining iterations of THIS cycle see it.
+      const nextMeta = { ...tracker.metadata, bound_series_id: seriesId };
+      await GameTrackerModel.update(tracker.id, { metadata: nextMeta });
+      tracker.metadata = nextMeta;
+      this.boundSeriesCache.set(tracker.id, seriesId);
+      return seriesId;
+    })();
+    this.boundSeriesPending.set(tracker.id, promise);
+    try {
+      return await promise;
+    } finally {
+      this.boundSeriesPending.delete(tracker.id);
+    }
   }
 }

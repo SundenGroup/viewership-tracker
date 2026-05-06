@@ -20,9 +20,15 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const allSeries = await TournamentSeriesModel.findAll(filters);
     // Filter by min_role visibility
     const userRole = (req.user?.role ?? 'viewer') as UserRole;
-    const series = userRole === 'admin'
+    const visible = userRole === 'admin'
       ? allSeries
       : allSeries.filter((s) => hasMinRole(userRole, ((s as unknown as Record<string, unknown>).min_role as UserRole) ?? 'viewer'));
+    // Hide game-tracker stub series — they only exist to satisfy
+    // channels.series_id NOT NULL for game-tracker-managed channels and
+    // are an internal implementation detail of the Discover surface.
+    const series = visible.filter(
+      (s) => (s.metadata as Record<string, unknown>)?.is_game_tracker_stub !== true,
+    );
     res.json(series);
   } catch (err) {
     next(err);
