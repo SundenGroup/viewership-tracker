@@ -3,6 +3,7 @@ import { useParams, useSearchParams, Link, useNavigate } from 'react-router-dom'
 import * as api from '@/services/api';
 import type { GameTrackerDetail, GameTrackerLeaderboardRow } from '@/services/api';
 import { DiscoverSearch } from './DiscoverSearch';
+import { DiscoverSearchResults } from './DiscoverSearchResults';
 import {
   Row,
   Col,
@@ -39,6 +40,7 @@ export function DiscoverDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get('tab') as TabKey | null) ?? 'live';
+  const searchQuery = (searchParams.get('q') ?? '').trim();
 
   const [detail, setDetail] = useState<GameTrackerDetail | null>(null);
   const [leaderboard, setLeaderboard] = useState<GameTrackerLeaderboardRow[] | null>(null);
@@ -163,44 +165,54 @@ export function DiscoverDetailPage() {
         </Col>
       </Row>
 
-      {/* ── Tab bar ───────────────────────────────────────────────────── */}
-      <Row
-        gap={4}
-        style={{
-          marginBottom: 24,
-          paddingBottom: 0,
-          borderBottom: '1px solid var(--border)',
-          position: 'sticky',
-          top: 0,
-          background: 'var(--bg)',
-          zIndex: 4,
-        }}
-      >
-        <Tab active={tab === 'live'} onClick={() => setTab('live')} icon={<IconBolt size={13} />}>
-          Live
-        </Tab>
-        <Tab active={tab === 'trends'} onClick={() => setTab('trends')} icon={<IconGrid size={13} />}>
-          Trends
-        </Tab>
-        <Tab active={tab === 'channels'} onClick={() => setTab('channels')} icon={<IconList size={13} />}>
-          Channels
-        </Tab>
-      </Row>
+      {/* When ?q is set, search results take over the body and the tab
+          bar is hidden — the operator's intent is "find this thing,"
+          not "browse Live/Trends/Channels". Clearing the search returns
+          to the previous tab. */}
+      {searchQuery ? (
+        <DiscoverSearchResults slug={slug} query={searchQuery} />
+      ) : (
+        <>
+          {/* ── Tab bar ─────────────────────────────────────────────── */}
+          <Row
+            gap={4}
+            style={{
+              marginBottom: 24,
+              paddingBottom: 0,
+              borderBottom: '1px solid var(--border)',
+              position: 'sticky',
+              top: 0,
+              background: 'var(--bg)',
+              zIndex: 4,
+            }}
+          >
+            <Tab active={tab === 'live'} onClick={() => setTab('live')} icon={<IconBolt size={13} />}>
+              Live
+            </Tab>
+            <Tab active={tab === 'trends'} onClick={() => setTab('trends')} icon={<IconGrid size={13} />}>
+              Trends
+            </Tab>
+            <Tab active={tab === 'channels'} onClick={() => setTab('channels')} icon={<IconList size={13} />}>
+              Channels
+            </Tab>
+          </Row>
 
-      {/* ── Tab content ──────────────────────────────────────────────── */}
-      {tab === 'live' && (
-        <LiveTab
-          slug={slug}
-          totalCcvNow={totalCcvNow}
-          peakNow={peakNow}
-          activeChannelCount={detail.active_channel_count}
-          platformCount={platforms.length}
-          leaderboard={leaderboard}
-          lastCycle={detail.last_cycle}
-        />
+          {/* ── Tab content ──────────────────────────────────────────── */}
+          {tab === 'live' && (
+            <LiveTab
+              slug={slug}
+              totalCcvNow={totalCcvNow}
+              peakNow={peakNow}
+              activeChannelCount={detail.active_channel_count}
+              platformCount={platforms.length}
+              leaderboard={leaderboard}
+              lastCycle={detail.last_cycle}
+            />
+          )}
+          {tab === 'trends' && <DiscoverTrendsTab slug={slug} />}
+          {tab === 'channels' && <DiscoverChannelsTab slug={slug} />}
+        </>
       )}
-      {tab === 'trends' && <DiscoverTrendsTab slug={slug} />}
-      {tab === 'channels' && <DiscoverChannelsTab slug={slug} />}
     </div>
   );
 }

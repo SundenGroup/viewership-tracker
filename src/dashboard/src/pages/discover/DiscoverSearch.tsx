@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import * as api from '@/services/api';
 import type { GameTrackerSearchRow } from '@/services/api';
 import {
@@ -20,6 +20,7 @@ interface Props {
 }
 
 const DEBOUNCE_MS = 250;
+const DROPDOWN_LIMIT = 10;
 
 /**
  * Search streams within a tracker by title or channel name. Live
@@ -27,14 +28,22 @@ const DEBOUNCE_MS = 250;
  * page. Shows last-seen + most recent title + peak CCV per match.
  */
 export function DiscoverSearch({ slug, placeholder }: Props) {
-  const [query, setQuery] = useState('');
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const urlQuery = searchParams.get('q') ?? '';
+  const [query, setQuery] = useState(urlQuery);
   const [rows, setRows] = useState<GameTrackerSearchRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Debounced search.
+  // Keep input in sync if the URL query changes (e.g. user hits back).
+  useEffect(() => {
+    setQuery(urlQuery);
+  }, [urlQuery]);
+
+  // Debounced search — used to populate the dropdown preview.
   useEffect(() => {
     if (query.trim().length < 2) {
       setRows(null);
@@ -46,7 +55,7 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
     const handle = setTimeout(() => {
       let cancelled = false;
       api
-        .searchGameTracker(slug, query.trim(), 30, 30)
+        .searchGameTracker(slug, query.trim(), 30, DROPDOWN_LIMIT)
         .then((res) => {
           if (cancelled) return;
           setRows(res.rows);
@@ -64,6 +73,13 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
     }, DEBOUNCE_MS);
     return () => clearTimeout(handle);
   }, [slug, query]);
+
+  const submit = (q: string) => {
+    const trimmed = q.trim();
+    if (trimmed.length < 2) return;
+    setOpen(false);
+    navigate(`/discover/${slug}?q=${encodeURIComponent(trimmed)}`);
+  };
 
   // Click outside to close.
   useEffect(() => {
@@ -104,6 +120,15 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              submit(query);
+            } else if (e.key === 'Escape') {
+              setOpen(false);
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
           placeholder={placeholder ?? 'Search titles or channels (e.g. "drops")'}
           style={{
             width: '100%',
@@ -122,6 +147,7 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
             onClick={() => {
               setQuery('');
               setRows(null);
+              if (urlQuery) navigate(`/discover/${slug}`);
             }}
             aria-label="Clear search"
             style={{
@@ -172,6 +198,9 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
             <>
               <div
                 style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
                   padding: '8px 14px',
                   fontSize: 10,
                   color: 'var(--fg-muted)',
@@ -180,7 +209,14 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
                   borderBottom: '1px solid var(--border-faint)',
                 }}
               >
-                {rows.length} match{rows.length === 1 ? '' : 'es'}
+                <span>
+                  Top {rows.length}
+                  {rows.length === DROPDOWN_LIMIT ? '+' : ''} match
+                  {rows.length === 1 ? '' : 'es'}
+                </span>
+                <span style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
+                  Enter for full results
+                </span>
               </div>
               <Col gap={0}>
                 {rows.map((r) => {
@@ -280,6 +316,30 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
                   );
                 })}
               </Col>
+              <button
+                type="button"
+                onClick={() => submit(query)}
+                style={{
+                  width: '100%',
+                  padding: '10px 14px',
+                  border: 'none',
+                  borderTop: '1px solid var(--border-faint)',
+                  background: 'transparent',
+                  color: 'var(--red)',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--bg-sunken)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                See all matches for &ldquo;{query.trim()}&rdquo; →
+              </button>
             </>
           )}
         </div>
