@@ -342,8 +342,22 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
     //
     // The eval returns a Promise (Runtime.evaluate is called with
     // awaitPromise:true) so we can use setTimeout for the popover wait.
+    // Cohost slicing is OFF by default after v3 wrote bogus per-channel
+    // numbers (random page metrics) for non-cohost channels. Only enable
+    // for an explicit allowlist of channels via COHOST_CHANNELS env var:
+    //   COHOST_CHANNELS=pubg_battlegrounds,pubg_br
+    // The official PUBG channels cohost during PAS / PEC broadcasts; the
+    // rest are normal single-stream channels and shouldn't run any
+    // cohost-detection code at all.
+    const cohostAllowList = (process.env.COHOST_CHANNELS ?? '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const cohostEnabled = cohostAllowList.includes(tab.channel.toLowerCase());
+
     const result = (await session.evaluate(`
       (async () => {
+        const COHOST_ENABLED = ${cohostEnabled};
         function parseViewerText(text) {
           if (text == null) return 0;
           // Strip everything that isn't a digit / dot / K / M.
@@ -375,11 +389,10 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
           }
           return { el: null, value: 0 };
         }
-        // Find a clickable popover trigger. Tries (in order):
-        //   1. Ancestor button with aria-haspopup near the badge
-        //   2. SIBLING button next to the badge container
-        //   3. Any button containing the badge or chevron icon
-        // Returns the element + diagnostic shape so we log what we picked.
+        // Find a clickable popover trigger. Conservative — only accept
+        // buttons/elements that have aria-haspopup. The fallback "any
+        // clickable parent" path was finding the share-button on
+        // every page, which isn't what we want.
         function findPopoverTrigger(badgeEl) {
           if (!badgeEl) return { el: null, where: 'no-badge' };
           const tryAncestors = ['button[aria-haspopup]', 'button[aria-expanded]', '[role="button"][aria-haspopup]'];
@@ -387,17 +400,16 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
             const ancestor = badgeEl.closest(sel);
             if (ancestor) return { el: ancestor, where: 'ancestor:' + sel };
           }
-          // Walk up a few levels looking for a sibling button.
+          // Walk up a few levels looking for a sibling button — but
+          // ONLY accept ones with aria-haspopup, never share-button etc.
           let p = badgeEl.parentElement;
           for (let depth = 1; depth <= 5 && p; depth++, p = p.parentElement) {
-            const sibling = p.querySelector('button[aria-haspopup], button[aria-expanded], [role="button"][aria-haspopup]');
+            const sibling = p.querySelector('button[aria-haspopup], [role="button"][aria-haspopup]');
             if (sibling && sibling !== badgeEl && !sibling.contains(badgeEl)) {
               return { el: sibling, where: 'sibling-depth-' + depth };
             }
           }
-          // Fallback: any clickable parent.
-          const fallback = badgeEl.closest('button, [role="button"]');
-          return { el: fallback || null, where: fallback ? 'fallback-button' : 'none' };
+          return { el: null, where: 'none' };
         }
         // Find the per-cohost row matching the URL slug.
         //
@@ -467,15 +479,9 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
             if (got !== null) return { value: got, debug: { tries: tries, strategy: 'href' } };
           }
 
-          // Strategy 3: text-includes-slug-as-whole-word (broadest)
-          for (const el of allEls.slice(0, 2000)) {
-            const t = (el.textContent || '').trim();
-            if (t.length > 60) continue;
-            if (!slugPattern.test(t)) continue;
-            const got = trySeed(el, 'text-incl');
-            if (got !== null) return { value: got, debug: { tries: tries, strategy: 'text-incl' } };
-          }
-
+          // text-includes strategy was removed in v4 — it matched too
+          // much (random page metrics that happened to mention the slug)
+          // and produced bogus values like 4M viewers.
           return { value: null, debug: { tries: tries, linkCount: links.length, textMatchCount: textMatches.length } };
         }
 
@@ -483,14 +489,42 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
         const badge = readBadge();
         const combined = badge.value;
 
+        // Hard short-circuit when cohost slicing is disabled for this
+        // channel. Just return the combined badge — same as the
+        // pre-cohost behaviour. No DOM walking, no clicking.
+        if (!COHOST_ENABLED) {
+          return {
+            viewers: combined,
+            combined: combined,
+            perCohost: null,
+            isCohost: false,
+            slug: slug,
+            path: 'cohost-disabled',
+            debug: { trigger: null, tries: [], cohostEnabled: false },
+          };
+        }
+
+        // Cohost slicing only runs when there's positive evidence we're
+        // on a cohost page. Twitch's cohost popover always contains the
+        // text "Main Broadcast" and "Co-Streamers" — neither appears on
+        // a single-stream page. Without one of these markers we won't
+        // try any heuristics; just use the combined badge.
+        const bodyText = document.body.innerText || '';
+        const cohostMarkerPresent =
+          /Main Broadcast/i.test(bodyText) ||
+          /Co-?Streamers?/i.test(bodyText) ||
+          /co-streaming/i.test(bodyText);
+
         // Strategy 1: try without clicking — many Twitch UIs render
         // cohost rows in the DOM even when the popover is collapsed.
-        let attempt = findSlugRow(slug, combined);
+        let attempt = cohostMarkerPresent
+          ? findSlugRow(slug, combined)
+          : { value: null, debug: { reason: 'no-cohost-marker' } };
         let path = attempt.value !== null ? 'dom-direct:' + (attempt.debug?.strategy || '?') : null;
 
         // Strategy 2: click the popover trigger and retry.
         const triggerInfo = findPopoverTrigger(badge.el);
-        if (attempt.value === null && triggerInfo.el) {
+        if (attempt.value === null && cohostMarkerPresent && triggerInfo.el) {
           try { triggerInfo.el.click(); } catch (_e) {}
           await new Promise(r => setTimeout(r, 700));
           attempt = findSlugRow(slug, combined);
@@ -498,7 +532,19 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
           try { triggerInfo.el.click(); } catch (_e) {} // close popover
         }
 
-        const perCohost = attempt.value;
+        // Sanity guards. The slice MUST be (a) > 0, (b) ≤ combined,
+        // (c) under a sane upper bound. If any fail, fall back to the
+        // combined badge — better to overcount slightly on a cohost
+        // page than to write bogus data like "4 million viewers" from
+        // a stray follower count we accidentally matched.
+        let perCohost = attempt.value;
+        if (perCohost !== null) {
+          const sane = perCohost > 0 && perCohost <= combined && perCohost < 500000;
+          if (!sane) {
+            path = (path || 'unknown') + '+REJECTED-sanity';
+            perCohost = null;
+          }
+        }
         const isCohost = perCohost !== null && perCohost !== combined;
         const viewers = isCohost ? perCohost : combined;
         return {
