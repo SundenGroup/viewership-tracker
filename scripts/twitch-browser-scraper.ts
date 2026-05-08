@@ -368,28 +368,52 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
           }
           return { el: null, value: 0 };
         }
-        // Find a per-cohost row matching the URL slug. Returns the
-        // numeric CCV for that row, or null if none found.
-        function findSlugRow(slug) {
-          if (!slug) return null;
+
+        // Find the per-cohost row in the popover for the URL slug.
+        // The previous version walked too far up the parent tree, so
+        // it kept matching the page chrome that contains the COMBINED
+        // badge. New heuristic: only accept a candidate row whose
+        // ancestor text is SHORT (a cohost row reads as "PUBG_BATTLEGROUNDS 639"
+        // — a few dozen chars at most), not the whole player chrome.
+        //
+        // Returns { value, debug } so we can dump diagnostics from the
+        // outer log on misses.
+        function findSlugRow(slug, combined) {
+          if (!slug) return { value: null, debug: { reason: 'no-slug' } };
           const links = Array.from(document.querySelectorAll(
             \`a[href="/\${slug}" i], a[href="/\${slug}/" i]\`,
           ));
+          const tries = [];
           for (const a of links) {
-            // Walk up a few parent levels looking for a sibling number.
+            // Walk up just 1–3 levels; cohost rows have the number
+            // close to the link.
             let p = a.parentElement;
-            for (let i = 0; i < 5 && p; i++, p = p.parentElement) {
-              const candidates = Array.from(p.querySelectorAll('*'))
+            for (let depth = 1; depth <= 3 && p; depth++, p = p.parentElement) {
+              const ancestorText = (p.textContent || '').trim();
+              // Reject sprawling containers — cohost row text is
+              // short. Tweak ceiling cautiously: PUBG_BATTLEGROUNDS is
+              // 19 chars, plus number, plus a few separators.
+              if (ancestorText.length > 80) continue;
+              // Reject if the ancestor's text doesn't contain the
+              // slug — defensive against unrelated link matches.
+              if (!ancestorText.toLowerCase().includes(slug.toLowerCase())) continue;
+              const numberish = Array.from(p.querySelectorAll('*'))
                 .map(e => (e.textContent || '').trim())
                 .filter(t => /^[\\d,.]+[KMkm]?$/.test(t) && t.length < 12);
+              if (numberish.length === 0) continue;
+              // Pick the smallest matching number (the cohost slice
+              // is by definition ≤ combined). Skip exact matches with
+              // combined — those are likely the badge, not the row.
+              const parsed = numberish.map(parseViewerText).filter(n => n > 0);
+              const candidates = parsed.filter(n => n !== combined);
+              const pick = candidates.length > 0 ? Math.min(...candidates) : parsed[0];
+              tries.push({ depth: depth, text: ancestorText.slice(0, 100), numbers: numberish, pick: pick });
               if (candidates.length > 0) {
-                // Prefer the smallest matching number (cohost slice
-                // is always ≤ combined). Use the first one if multiple.
-                return parseViewerText(candidates[0]);
+                return { value: pick, debug: { tries: tries } };
               }
             }
           }
-          return null;
+          return { value: null, debug: { tries: tries, linkCount: links.length } };
         }
 
         const slug = (location.pathname.split('/').filter(Boolean)[0] || '').toLowerCase();
@@ -398,38 +422,70 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
 
         // Strategy 1: try without clicking — many Twitch UIs render
         // cohost rows in the DOM even when the popover is collapsed.
-        let perCohost = findSlugRow(slug);
-        let path = perCohost !== null ? 'dom-direct' : null;
+        let attempt = findSlugRow(slug, combined);
+        let path = attempt.value !== null ? 'dom-direct' : null;
 
         // Strategy 2: click the popover trigger and retry.
-        if (perCohost === null && badge.el) {
+        let triggerInfo = null;
+        if (attempt.value === null && badge.el) {
           const trigger =
             badge.el.closest('button[aria-haspopup]') ||
             badge.el.closest('button[aria-expanded]') ||
-            badge.el.closest('button, [role="button"]');
+            badge.el.closest('button, [role="button"]') ||
+            badge.el.parentElement?.querySelector('button, [role="button"]');
+          triggerInfo = {
+            found: !!trigger,
+            tag: trigger?.tagName,
+            target: trigger?.getAttribute?.('data-a-target'),
+            haspopup: trigger?.getAttribute?.('aria-haspopup'),
+          };
           if (trigger) {
             try { trigger.click(); } catch (_e) {}
-            await new Promise(r => setTimeout(r, 600));
-            perCohost = findSlugRow(slug);
-            if (perCohost !== null) path = 'dom-after-click';
-            // Close the popover so we don't leave UI artifacts.
-            try { trigger.click(); } catch (_e) {}
+            await new Promise(r => setTimeout(r, 700));
+            attempt = findSlugRow(slug, combined);
+            if (attempt.value !== null) path = 'dom-after-click';
+            try { trigger.click(); } catch (_e) {} // close popover
           }
         }
 
-        // A cohost stream is one where the combined badge differs from
-        // the per-channel slice. Single-stream pages either have no
-        // matching cohost row (perCohost === null) OR have one whose
-        // number equals the combined badge.
+        const perCohost = attempt.value;
         const isCohost = perCohost !== null && perCohost !== combined;
         const viewers = isCohost ? perCohost : combined;
-        return { viewers: viewers, combined: combined, perCohost: perCohost, isCohost: isCohost, slug: slug, path: path };
+        return {
+          viewers: viewers,
+          combined: combined,
+          perCohost: perCohost,
+          isCohost: isCohost,
+          slug: slug,
+          path: path,
+          debug: { trigger: triggerInfo, tries: attempt.debug?.tries || [], linkCount: attempt.debug?.linkCount },
+        };
       })()
-    `)) as { viewers: number; combined: number; perCohost: number | null; isCohost: boolean; slug: string; path: string | null };
+    `)) as {
+      viewers: number;
+      combined: number;
+      perCohost: number | null;
+      isCohost: boolean;
+      slug: string;
+      path: string | null;
+      debug: {
+        trigger: { found: boolean; tag?: string; target?: string; haspopup?: string } | null;
+        tries: Array<{ depth: number; text: string; numbers: string[]; pick: number }>;
+        linkCount?: number;
+      };
+    };
 
     const viewers = typeof result?.viewers === 'number' ? result.viewers : 0;
     if (result?.isCohost) {
       log(`  ${tab.channel}: cohost detected — combined=${result.combined}, slice=${result.perCohost} (path: ${result.path})`);
+    } else if (process.env.COHOST_DEBUG === '1' && result?.combined > 0) {
+      // Verbose path when the user is iterating. Logs every cycle so
+      // we can see why the slug match isn't hitting on a cohost page.
+      log(`  ${tab.channel}: cohost-debug combined=${result.combined} perCohost=${result.perCohost} path=${result.path} linkCount=${result.debug?.linkCount}`);
+      log(`    trigger=${JSON.stringify(result.debug?.trigger)}`);
+      for (const t of (result.debug?.tries ?? []).slice(0, 5)) {
+        log(`    try depth=${t.depth} pick=${t.pick} numbers=${JSON.stringify(t.numbers)} text=${JSON.stringify(t.text)}`);
+      }
     }
 
     // Tame the tab — pause any <video>, force the lowest quality preset,
