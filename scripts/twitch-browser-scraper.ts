@@ -345,22 +345,29 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
     const result = (await session.evaluate(`
       (async () => {
         function parseViewerText(text) {
-          if (!text) return 0;
-          text = String(text).replace(/[\\s,]/g, '').trim();
-          const kMatch = text.match(/^([\\d.]+)[Kk]$/);
+          if (text == null) return 0;
+          // Strip everything that isn't a digit / dot / K / M.
+          let cleaned = String(text).replace(/[^0-9.KMkm]/g, '').trim();
+          if (!cleaned) return 0;
+          const kMatch = cleaned.match(/^([\\d.]+)[Kk]$/);
           if (kMatch) return Math.round(parseFloat(kMatch[1]) * 1000);
-          const mMatch = text.match(/^([\\d.]+)[Mm]$/);
+          const mMatch = cleaned.match(/^([\\d.]+)[Mm]$/);
           if (mMatch) return Math.round(parseFloat(mMatch[1]) * 1000000);
-          const num = parseInt(text, 10);
+          const num = parseInt(cleaned, 10);
           return isNaN(num) ? 0 : num;
+        }
+        // Liberal number-shape recognizer — accepts "1.7K", "639", "1,234"
+        // etc. anywhere in the text after stripping leading dots/dashes.
+        function looksLikeNumber(text) {
+          if (!text) return false;
+          const cleaned = String(text).trim().replace(/^[^\\d]+/, '').replace(/[^\\d.,KMkm]/g, '');
+          if (!cleaned || cleaned.length > 12) return false;
+          return /^[\\d,]+(\\.[\\d]+)?[KMkm]?$/.test(cleaned);
         }
         function readBadge() {
           const el = document.querySelector('[data-a-target="animated-channel-viewers-count"]')
                   || document.querySelector('[data-a-target="player-info-viewer-count"]');
-          if (el) {
-            const t = (el.textContent || '').replace(/[^0-9.KMkm]/g, '');
-            return { el: el, value: parseViewerText(t) };
-          }
+          if (el) return { el: el, value: parseViewerText(el.textContent) };
           const aria = document.querySelector('[aria-label*="viewer" i]');
           if (aria) {
             const m = (aria.getAttribute('aria-label') || '').match(/([\\d,]+)/);
@@ -368,52 +375,108 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
           }
           return { el: null, value: 0 };
         }
-
-        // Find the per-cohost row in the popover for the URL slug.
-        // The previous version walked too far up the parent tree, so
-        // it kept matching the page chrome that contains the COMBINED
-        // badge. New heuristic: only accept a candidate row whose
-        // ancestor text is SHORT (a cohost row reads as "PUBG_BATTLEGROUNDS 639"
-        // — a few dozen chars at most), not the whole player chrome.
+        // Find a clickable popover trigger. Tries (in order):
+        //   1. Ancestor button with aria-haspopup near the badge
+        //   2. SIBLING button next to the badge container
+        //   3. Any button containing the badge or chevron icon
+        // Returns the element + diagnostic shape so we log what we picked.
+        function findPopoverTrigger(badgeEl) {
+          if (!badgeEl) return { el: null, where: 'no-badge' };
+          const tryAncestors = ['button[aria-haspopup]', 'button[aria-expanded]', '[role="button"][aria-haspopup]'];
+          for (const sel of tryAncestors) {
+            const ancestor = badgeEl.closest(sel);
+            if (ancestor) return { el: ancestor, where: 'ancestor:' + sel };
+          }
+          // Walk up a few levels looking for a sibling button.
+          let p = badgeEl.parentElement;
+          for (let depth = 1; depth <= 5 && p; depth++, p = p.parentElement) {
+            const sibling = p.querySelector('button[aria-haspopup], button[aria-expanded], [role="button"][aria-haspopup]');
+            if (sibling && sibling !== badgeEl && !sibling.contains(badgeEl)) {
+              return { el: sibling, where: 'sibling-depth-' + depth };
+            }
+          }
+          // Fallback: any clickable parent.
+          const fallback = badgeEl.closest('button, [role="button"]');
+          return { el: fallback || null, where: fallback ? 'fallback-button' : 'none' };
+        }
+        // Find the per-cohost row matching the URL slug.
         //
-        // Returns { value, debug } so we can dump diagnostics from the
-        // outer log on misses.
+        // Three matching strategies, all subject to the same accept
+        // criteria (short ancestor text, contains slug, has a numeric
+        // child that's not equal to the combined badge):
+        //   1. Exact-text element match (any tag) whose textContent IS
+        //      the slug (case-insensitive). Cohost rows always have a
+        //      short element with the channel name as its only text.
+        //   2. <a href="/{slug}"> match.
+        //   3. textContent contains the slug as a whole word.
         function findSlugRow(slug, combined) {
           if (!slug) return { value: null, debug: { reason: 'no-slug' } };
+          const slugLc = slug.toLowerCase();
+          const slugPattern = new RegExp('(^|[^a-z0-9_])' + slug.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&') + '($|[^a-z0-9_])', 'i');
+          const tries = [];
+
+          function evaluateAncestor(node) {
+            const ancestorText = (node.textContent || '').trim();
+            if (ancestorText.length === 0 || ancestorText.length > 100) return null;
+            if (!ancestorText.toLowerCase().includes(slugLc)) return null;
+            const childNumbers = Array.from(node.querySelectorAll('*'))
+              .map(e => (e.textContent || '').trim())
+              .filter(looksLikeNumber);
+            if (childNumbers.length === 0) return null;
+            const parsed = childNumbers.map(parseViewerText).filter(n => n > 0);
+            if (parsed.length === 0) return null;
+            const candidates = parsed.filter(n => n !== combined);
+            const pick = candidates.length > 0 ? Math.min(...candidates) : parsed[0];
+            return {
+              text: ancestorText.slice(0, 120),
+              numbers: childNumbers,
+              parsed: parsed,
+              pick: pick,
+              isCandidate: candidates.length > 0,
+            };
+          }
+          function trySeed(seed, label) {
+            let p = seed.parentElement;
+            for (let depth = 1; depth <= 5 && p; depth++, p = p.parentElement) {
+              const r = evaluateAncestor(p);
+              if (r) {
+                tries.push({ source: label, depth: depth, ...r });
+                if (r.isCandidate) return r.pick;
+              }
+            }
+            return null;
+          }
+
+          // Strategy 1: text-equals-slug (most specific)
+          const allEls = Array.from(document.querySelectorAll('p, span, div, h1, h2, h3, h4, h5, h6'));
+          const textMatches = allEls.filter(el => {
+            const t = (el.textContent || '').trim().toLowerCase();
+            return t === slugLc;
+          });
+          for (const m of textMatches) {
+            const got = trySeed(m, 'text-eq');
+            if (got !== null) return { value: got, debug: { tries: tries, strategy: 'text-eq' } };
+          }
+
+          // Strategy 2: anchor href matches
           const links = Array.from(document.querySelectorAll(
             \`a[href="/\${slug}" i], a[href="/\${slug}/" i]\`,
           ));
-          const tries = [];
           for (const a of links) {
-            // Walk up just 1–3 levels; cohost rows have the number
-            // close to the link.
-            let p = a.parentElement;
-            for (let depth = 1; depth <= 3 && p; depth++, p = p.parentElement) {
-              const ancestorText = (p.textContent || '').trim();
-              // Reject sprawling containers — cohost row text is
-              // short. Tweak ceiling cautiously: PUBG_BATTLEGROUNDS is
-              // 19 chars, plus number, plus a few separators.
-              if (ancestorText.length > 80) continue;
-              // Reject if the ancestor's text doesn't contain the
-              // slug — defensive against unrelated link matches.
-              if (!ancestorText.toLowerCase().includes(slug.toLowerCase())) continue;
-              const numberish = Array.from(p.querySelectorAll('*'))
-                .map(e => (e.textContent || '').trim())
-                .filter(t => /^[\\d,.]+[KMkm]?$/.test(t) && t.length < 12);
-              if (numberish.length === 0) continue;
-              // Pick the smallest matching number (the cohost slice
-              // is by definition ≤ combined). Skip exact matches with
-              // combined — those are likely the badge, not the row.
-              const parsed = numberish.map(parseViewerText).filter(n => n > 0);
-              const candidates = parsed.filter(n => n !== combined);
-              const pick = candidates.length > 0 ? Math.min(...candidates) : parsed[0];
-              tries.push({ depth: depth, text: ancestorText.slice(0, 100), numbers: numberish, pick: pick });
-              if (candidates.length > 0) {
-                return { value: pick, debug: { tries: tries } };
-              }
-            }
+            const got = trySeed(a, 'href');
+            if (got !== null) return { value: got, debug: { tries: tries, strategy: 'href' } };
           }
-          return { value: null, debug: { tries: tries, linkCount: links.length } };
+
+          // Strategy 3: text-includes-slug-as-whole-word (broadest)
+          for (const el of allEls.slice(0, 2000)) {
+            const t = (el.textContent || '').trim();
+            if (t.length > 60) continue;
+            if (!slugPattern.test(t)) continue;
+            const got = trySeed(el, 'text-incl');
+            if (got !== null) return { value: got, debug: { tries: tries, strategy: 'text-incl' } };
+          }
+
+          return { value: null, debug: { tries: tries, linkCount: links.length, textMatchCount: textMatches.length } };
         }
 
         const slug = (location.pathname.split('/').filter(Boolean)[0] || '').toLowerCase();
@@ -423,29 +486,16 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
         // Strategy 1: try without clicking — many Twitch UIs render
         // cohost rows in the DOM even when the popover is collapsed.
         let attempt = findSlugRow(slug, combined);
-        let path = attempt.value !== null ? 'dom-direct' : null;
+        let path = attempt.value !== null ? 'dom-direct:' + (attempt.debug?.strategy || '?') : null;
 
         // Strategy 2: click the popover trigger and retry.
-        let triggerInfo = null;
-        if (attempt.value === null && badge.el) {
-          const trigger =
-            badge.el.closest('button[aria-haspopup]') ||
-            badge.el.closest('button[aria-expanded]') ||
-            badge.el.closest('button, [role="button"]') ||
-            badge.el.parentElement?.querySelector('button, [role="button"]');
-          triggerInfo = {
-            found: !!trigger,
-            tag: trigger?.tagName,
-            target: trigger?.getAttribute?.('data-a-target'),
-            haspopup: trigger?.getAttribute?.('aria-haspopup'),
-          };
-          if (trigger) {
-            try { trigger.click(); } catch (_e) {}
-            await new Promise(r => setTimeout(r, 700));
-            attempt = findSlugRow(slug, combined);
-            if (attempt.value !== null) path = 'dom-after-click';
-            try { trigger.click(); } catch (_e) {} // close popover
-          }
+        const triggerInfo = findPopoverTrigger(badge.el);
+        if (attempt.value === null && triggerInfo.el) {
+          try { triggerInfo.el.click(); } catch (_e) {}
+          await new Promise(r => setTimeout(r, 700));
+          attempt = findSlugRow(slug, combined);
+          if (attempt.value !== null) path = 'dom-after-click:' + (attempt.debug?.strategy || '?');
+          try { triggerInfo.el.click(); } catch (_e) {} // close popover
         }
 
         const perCohost = attempt.value;
@@ -458,7 +508,12 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
           isCohost: isCohost,
           slug: slug,
           path: path,
-          debug: { trigger: triggerInfo, tries: attempt.debug?.tries || [], linkCount: attempt.debug?.linkCount },
+          debug: {
+            trigger: { found: !!triggerInfo.el, where: triggerInfo.where, tag: triggerInfo.el?.tagName, target: triggerInfo.el?.getAttribute?.('data-a-target'), haspopup: triggerInfo.el?.getAttribute?.('aria-haspopup') },
+            tries: attempt.debug?.tries || [],
+            linkCount: attempt.debug?.linkCount,
+            textMatchCount: attempt.debug?.textMatchCount,
+          },
         };
       })()
     `)) as {
@@ -481,10 +536,11 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
     } else if (process.env.COHOST_DEBUG === '1' && result?.combined > 0) {
       // Verbose path when the user is iterating. Logs every cycle so
       // we can see why the slug match isn't hitting on a cohost page.
-      log(`  ${tab.channel}: cohost-debug combined=${result.combined} perCohost=${result.perCohost} path=${result.path} linkCount=${result.debug?.linkCount}`);
+      log(`  ${tab.channel}: cohost-debug combined=${result.combined} perCohost=${result.perCohost} path=${result.path} linkCount=${result.debug?.linkCount} textMatchCount=${result.debug?.textMatchCount}`);
       log(`    trigger=${JSON.stringify(result.debug?.trigger)}`);
-      for (const t of (result.debug?.tries ?? []).slice(0, 5)) {
-        log(`    try depth=${t.depth} pick=${t.pick} numbers=${JSON.stringify(t.numbers)} text=${JSON.stringify(t.text)}`);
+      for (const t of (result.debug?.tries ?? []).slice(0, 6)) {
+        const tt = t as { source?: string; depth: number; pick: number; numbers: string[]; text: string };
+        log(`    try ${tt.source}@${tt.depth} pick=${tt.pick} nums=${JSON.stringify(tt.numbers)} text=${JSON.stringify(tt.text)}`);
       }
     }
 
