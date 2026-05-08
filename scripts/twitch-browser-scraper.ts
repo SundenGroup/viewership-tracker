@@ -68,7 +68,12 @@ async function refreshChannelList(): Promise<void> {
     });
     if (!res.ok) throw new Error(`${res.status}`);
     const data = (await res.json()) as { channels: string[] };
-    let channels = data.channels.filter(c => c.toLowerCase() !== 'pubg_battlegrounds');
+    // pubg_battlegrounds was previously hard-filtered out because the
+    // single-stream extractor read the COMBINED viewer count from the
+    // cohost badge. The new cohost-aware extractor (readViewerCount)
+    // matches the per-channel slice by URL slug, so the filter is no
+    // longer needed.
+    let channels = data.channels;
     if (Number.isFinite(MAX_CHANNELS) && channels.length > MAX_CHANNELS) {
       log(`Capping channel list at MAX_CHANNELS=${MAX_CHANNELS} (server returned ${channels.length})`);
       channels = channels.slice(0, MAX_CHANNELS);
