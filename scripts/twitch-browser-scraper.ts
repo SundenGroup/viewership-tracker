@@ -314,35 +314,34 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
       return { channel: tab.channel, viewers: 0, isLive: false };
     }
 
-    // Stream is confirmed live — extract viewer count from the DOM
-    const result = await session.evaluate(`
-      (function() {
-        // Method 1: data-a-target attribute (most reliable)
-        let el = document.querySelector('[data-a-target="animated-channel-viewers-count"]');
-        if (el) {
-          const text = el.textContent.replace(/[^0-9.KMkm]/g, '');
-          return parseViewerText(text);
-        }
-
-        // Method 2: aria-label containing "viewers"
-        const ariaEl = document.querySelector('[aria-label*="viewer" i]');
-        if (ariaEl) {
-          const match = (ariaEl.getAttribute('aria-label') || '').match(/([\\d,]+)/);
-          if (match) return parseInt(match[1].replace(/,/g, ''), 10);
-        }
-
-        // Method 3: player info viewer count
-        const liveIndicator = document.querySelector('[data-a-target="player-info-viewer-count"]');
-        if (liveIndicator) {
-          const text = liveIndicator.textContent || '';
-          return parseViewerText(text);
-        }
-
-        return 0;
-
+    // Stream is confirmed live — extract viewer count from the DOM.
+    //
+    // Cohost-aware extractor. The default Twitch player badge (the
+    // [data-a-target="animated-channel-viewers-count"] element) shows
+    // the COMBINED viewer count across all cohosts when a stream is
+    // cohosted (e.g. pubg_battlegrounds + pubg_br). We need just the
+    // page-owner streamer's slice — i.e. only the count for the
+    // channel whose URL we're on.
+    //
+    // Strategy:
+    //   1. Read the combined badge (legacy single value, used as
+    //      fallback and for cohost detection).
+    //   2. Walk the DOM for an <a href="/{slug}"> matching the URL
+    //      channel slug, find a number-like sibling. If found and
+    //      different from the combined badge, that's the per-cohost
+    //      slice. Works whether the popover is open or not — Twitch
+    //      typically renders cohost rows in the DOM regardless.
+    //   3. If no match without clicking, programmatically click the
+    //      popover trigger near the badge, wait briefly, retry.
+    //   4. Return both numbers + a flag so we can log which path won.
+    //
+    // The eval returns a Promise (Runtime.evaluate is called with
+    // awaitPromise:true) so we can use setTimeout for the popover wait.
+    const result = (await session.evaluate(`
+      (async () => {
         function parseViewerText(text) {
           if (!text) return 0;
-          text = text.replace(/,/g, '').trim();
+          text = String(text).replace(/[\\s,]/g, '').trim();
           const kMatch = text.match(/^([\\d.]+)[Kk]$/);
           if (kMatch) return Math.round(parseFloat(kMatch[1]) * 1000);
           const mMatch = text.match(/^([\\d.]+)[Mm]$/);
@@ -350,10 +349,83 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
           const num = parseInt(text, 10);
           return isNaN(num) ? 0 : num;
         }
-      })()
-    `);
+        function readBadge() {
+          const el = document.querySelector('[data-a-target="animated-channel-viewers-count"]')
+                  || document.querySelector('[data-a-target="player-info-viewer-count"]');
+          if (el) {
+            const t = (el.textContent || '').replace(/[^0-9.KMkm]/g, '');
+            return { el: el, value: parseViewerText(t) };
+          }
+          const aria = document.querySelector('[aria-label*="viewer" i]');
+          if (aria) {
+            const m = (aria.getAttribute('aria-label') || '').match(/([\\d,]+)/);
+            if (m) return { el: aria, value: parseInt(m[1].replace(/,/g, ''), 10) };
+          }
+          return { el: null, value: 0 };
+        }
+        // Find a per-cohost row matching the URL slug. Returns the
+        // numeric CCV for that row, or null if none found.
+        function findSlugRow(slug) {
+          if (!slug) return null;
+          const links = Array.from(document.querySelectorAll(
+            \`a[href="/\${slug}" i], a[href="/\${slug}/" i]\`,
+          ));
+          for (const a of links) {
+            // Walk up a few parent levels looking for a sibling number.
+            let p = a.parentElement;
+            for (let i = 0; i < 5 && p; i++, p = p.parentElement) {
+              const candidates = Array.from(p.querySelectorAll('*'))
+                .map(e => (e.textContent || '').trim())
+                .filter(t => /^[\\d,.]+[KMkm]?$/.test(t) && t.length < 12);
+              if (candidates.length > 0) {
+                // Prefer the smallest matching number (cohost slice
+                // is always ≤ combined). Use the first one if multiple.
+                return parseViewerText(candidates[0]);
+              }
+            }
+          }
+          return null;
+        }
 
-    const viewers = typeof result === 'number' ? result : 0;
+        const slug = (location.pathname.split('/').filter(Boolean)[0] || '').toLowerCase();
+        const badge = readBadge();
+        const combined = badge.value;
+
+        // Strategy 1: try without clicking — many Twitch UIs render
+        // cohost rows in the DOM even when the popover is collapsed.
+        let perCohost = findSlugRow(slug);
+        let path = perCohost !== null ? 'dom-direct' : null;
+
+        // Strategy 2: click the popover trigger and retry.
+        if (perCohost === null && badge.el) {
+          const trigger =
+            badge.el.closest('button[aria-haspopup]') ||
+            badge.el.closest('button[aria-expanded]') ||
+            badge.el.closest('button, [role="button"]');
+          if (trigger) {
+            try { trigger.click(); } catch (_e) {}
+            await new Promise(r => setTimeout(r, 600));
+            perCohost = findSlugRow(slug);
+            if (perCohost !== null) path = 'dom-after-click';
+            // Close the popover so we don't leave UI artifacts.
+            try { trigger.click(); } catch (_e) {}
+          }
+        }
+
+        // A cohost stream is one where the combined badge differs from
+        // the per-channel slice. Single-stream pages either have no
+        // matching cohost row (perCohost === null) OR have one whose
+        // number equals the combined badge.
+        const isCohost = perCohost !== null && perCohost !== combined;
+        const viewers = isCohost ? perCohost : combined;
+        return { viewers: viewers, combined: combined, perCohost: perCohost, isCohost: isCohost, slug: slug, path: path };
+      })()
+    `)) as { viewers: number; combined: number; perCohost: number | null; isCohost: boolean; slug: string; path: string | null };
+
+    const viewers = typeof result?.viewers === 'number' ? result.viewers : 0;
+    if (result?.isCohost) {
+      log(`  ${tab.channel}: cohost detected — combined=${result.combined}, slice=${result.perCohost} (path: ${result.path})`);
+    }
 
     // Tame the tab — pause any <video>, force the lowest quality preset,
     // mute. Done on every read so it survives Twitch's React re-renders.
