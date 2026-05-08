@@ -68,12 +68,26 @@ async function refreshChannelList(): Promise<void> {
     });
     if (!res.ok) throw new Error(`${res.status}`);
     const data = (await res.json()) as { channels: string[] };
-    // pubg_battlegrounds was previously hard-filtered out because the
-    // single-stream extractor read the COMBINED viewer count from the
-    // cohost badge. The new cohost-aware extractor (readViewerCount)
-    // matches the per-channel slice by URL slug, so the filter is no
-    // longer needed.
-    let channels = data.channels;
+    // pubg_battlegrounds is excluded from browser scraping because of
+    // Twitch's cohost feature. During PAS / PEC broadcasts the
+    // pubg_battlegrounds channel is cohosted with pubg_br (and
+    // sometimes more), and Twitch's UI replaces the per-channel viewer
+    // count with the COMBINED total across all cohosts. Multiple
+    // attempts at DOM-scraping the per-cohost slice (v1–v4 of the
+    // cohost extractor) either failed to find the popover row or
+    // matched wrong elements (followers, etc.) and wrote garbage.
+    //
+    // Until we have a reliable extraction path (likely a GraphQL
+    // query against gql.twitch.tv that returns user.stream.viewersCount
+    // per channel), we defer to the server-side Helix polling for this
+    // channel — it's stepped 3–5 min but correct per-channel.
+    //
+    // Reactivate by removing this filter once the cohost-extractor
+    // code path (readViewerCount + COHOST_CHANNELS env var) is proven
+    // to return correct slices in production.
+    let channels = data.channels.filter(
+      (c) => c.toLowerCase() !== 'pubg_battlegrounds',
+    );
     if (Number.isFinite(MAX_CHANNELS) && channels.length > MAX_CHANNELS) {
       log(`Capping channel list at MAX_CHANNELS=${MAX_CHANNELS} (server returned ${channels.length})`);
       channels = channels.slice(0, MAX_CHANNELS);
