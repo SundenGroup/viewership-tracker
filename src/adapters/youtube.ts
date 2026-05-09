@@ -1249,6 +1249,13 @@ export class YouTubeAdapter implements PlatformAdapter {
    * Costs ZERO API quota.
    */
   private async resolveToChannelId(identifier: string): Promise<string | null> {
+    // Pseudo-identifier used by the multi-stream auto-split machinery
+    // (e.g. "UCxxxxxx:stream-2"). The orchestrator handles these directly via
+    // the auto-split step in polling-orchestrator.ts — the adapter must not
+    // try to fetch youtube.com/UCxxxxxx:stream-2 (404 every cycle and a
+    // misleading "could not resolve" warn).
+    if (/:stream-\d+$/.test(identifier)) return null;
+
     // Already a channel ID
     if (this.isChannelId(identifier)) return identifier;
 

@@ -784,7 +784,17 @@ export class PollingOrchestrator {
       if (relayHandlesTikTok && channel.platform === 'tiktok') continue;
 
       const key = `${channel.platform}:${channel.channel_identifier.toLowerCase()}`;
-      const channelSnapshots = snapshotMap.get(key) ?? [{
+      const existingSnapshots = snapshotMap.get(key);
+
+      // Auto-discovered multi-stream children (channel_identifier ending in
+      // ":stream-N") only get rows when their parent's auto-split fired this
+      // cycle. Without a snapshot, the child is offline — skip rather than
+      // synthesizing CCV=0 (which pollutes the timeline with fake zero rows
+      // during periods when only the main stream is live, e.g. before the
+      // alternate camera comes online or after it ends).
+      if (!existingSnapshots && channel.source === 'auto_discovered') continue;
+
+      const channelSnapshots = existingSnapshots ?? [{
         channelIdentifier: channel.channel_identifier,
         displayName: channel.channel_identifier,
         concurrentViewers: 0,
