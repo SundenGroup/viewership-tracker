@@ -100,6 +100,15 @@ export class DiscoveryService {
   }
 
   /**
+   * Whether discovery is currently running (has a setInterval handle) for
+   * the given series. Used by the series-update path to decide whether to
+   * restart on a `discovery_interval_ms` change.
+   */
+  isRunning(seriesId: string): boolean {
+    return this.intervals.has(seriesId);
+  }
+
+  /**
    * Stop the discovery interval for the given series.
    */
   stopDiscovery(seriesId: string): void {

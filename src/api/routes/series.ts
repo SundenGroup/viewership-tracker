@@ -4,6 +4,7 @@ import { requireRole, hasMinRole, type UserRole } from '../middleware/auth';
 import { AdapterRegistry } from '../../adapters';
 import { TwitchAdapter } from '../../adapters/twitch';
 import { KickAdapter } from '../../adapters/kick';
+import { getDiscoveryService } from './polling';
 import logger from '../../utils/logger';
 
 const router = Router();
@@ -123,12 +124,30 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
 // PUT /api/series/:id — Update a series (editor+)
 router.put('/:id', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const existing = await TournamentSeriesModel.findById(req.params.id as string);
+    const id = req.params.id as string;
+    const existing = await TournamentSeriesModel.findById(id);
     if (!existing) {
       res.status(404).json({ error: 'Series not found' });
       return;
     }
-    const updated = await TournamentSeriesModel.update(req.params.id as string, req.body);
+    const updated = await TournamentSeriesModel.update(id, req.body);
+
+    // If the discovery cadence changed and discovery is currently running for
+    // this series, restart so the new interval takes effect immediately.
+    // Without this the existing setInterval keeps firing at the old cadence
+    // until the next pm2 restart.
+    if (existing.discovery_interval_ms !== updated.discovery_interval_ms) {
+      const svc = getDiscoveryService();
+      if (svc?.isRunning(id)) {
+        svc.stopDiscovery(id);
+        await svc.startDiscovery(id);
+        logger.info(
+          `[Series] Restarted discovery for ${id} after discovery_interval_ms ` +
+          `changed (${existing.discovery_interval_ms} → ${updated.discovery_interval_ms})`,
+        );
+      }
+    }
+
     res.json(updated);
   } catch (err) {
     next(err);

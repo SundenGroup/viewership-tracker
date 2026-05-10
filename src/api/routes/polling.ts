@@ -15,6 +15,12 @@ export function setDiscoveryService(svc: DiscoveryService): void {
   discoveryService = svc;
 }
 
+/** Singleton accessor for code outside this module (e.g. the series PUT
+ *  handler, which restarts discovery when `discovery_interval_ms` changes). */
+export function getDiscoveryService(): DiscoveryService | null {
+  return discoveryService;
+}
+
 const router = Router();
 
 function ensureOrchestrator(res: Response): PollingOrchestrator | null {
