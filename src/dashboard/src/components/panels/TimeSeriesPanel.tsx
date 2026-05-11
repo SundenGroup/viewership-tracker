@@ -35,8 +35,8 @@ type ViewMode = 'total' | 'platform' | 'language' | 'tier';
 const VIEW_MODES: { value: ViewMode; label: string }[] = [
   { value: 'total', label: 'Total' },
   { value: 'platform', label: 'By Platform' },
-  { value: 'language', label: 'By Language' },
   { value: 'tier', label: 'By Category' },
+  { value: 'language', label: 'By Language' },
 ];
 
 type IntervalOption = 60 | 300 | 600;

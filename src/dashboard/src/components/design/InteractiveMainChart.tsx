@@ -26,7 +26,7 @@ export function InteractiveMainChart({
   totalData,
   height = 260,
   width = 1020,
-  initialDimension = 'platform',
+  initialDimension = 'total',
   initialMode = 'line',
   initialShowTotal = true,
   timestamps,
@@ -112,6 +112,9 @@ export function InteractiveMainChart({
     <div>
       <Row justify="space-between" style={{ marginBottom: 10 }} wrap>
         <Row gap={6}>
+          <Tab active={dimension === 'total'} onClick={() => setDimension('total')}>
+            Total
+          </Tab>
           <Tab active={dimension === 'platform'} onClick={() => setDimension('platform')}>
             Platform
           </Tab>
@@ -121,11 +124,6 @@ export function InteractiveMainChart({
           <Tab active={dimension === 'language'} onClick={() => setDimension('language')}>
             Language
           </Tab>
-          {showTotal && (
-            <Tab active={dimension === 'total'} onClick={() => setDimension('total')}>
-              Total
-            </Tab>
-          )}
         </Row>
         <Row gap={6}>
           <Tab active={mode === 'line'} onClick={() => setMode('line')}>
