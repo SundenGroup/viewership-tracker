@@ -891,9 +891,10 @@ export function buildHTMLReport(data: HTMLReportData): string {
     <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap">
       Concurrent Viewers Over Time
       <span style="display:flex;gap:6px;font-size:12px;font-weight:500">
-        <button class="chart-mode-btn active" data-mode="platform">By Platform</button>
-        <button class="chart-mode-btn" data-mode="language">By Language</button>
+        <button class="chart-mode-btn active" data-mode="total">Total</button>
+        <button class="chart-mode-btn" data-mode="platform">By Platform</button>
         <button class="chart-mode-btn" data-mode="category">By Category</button>
+        <button class="chart-mode-btn" data-mode="language">By Language</button>
       </span>
     </h3>
     <canvas id="lineChart" height="110"></canvas>
@@ -1239,7 +1240,7 @@ var chartOpts = {
 
 var ccvChart = new Chart(document.getElementById('lineChart'), {
   type: 'line',
-  data: { labels: sparseLabels, datasets: buildDatasets('platform') },
+  data: { labels: sparseLabels, datasets: buildDatasets('total') },
   options: chartOpts
 });
 

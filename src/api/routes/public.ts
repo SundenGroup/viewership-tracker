@@ -9,11 +9,17 @@ import { Router, Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { stat, readFile } from 'fs/promises';
 import { requirePublicSeries } from '../middleware/auth';
+import { reportCacheMiddleware } from '../middleware/report-cache';
 import * as ViewershipSnapshotModel from '../../models/viewership-snapshot';
 import * as TournamentSeriesModel from '../../models/tournament-series';
 import db from '../../utils/db';
 
 const router = Router();
+
+// Apply report-cache to the heavy aggregation endpoints. The middleware
+// short-circuits with HIT for requests coming from /public/:shortName/report/*
+// pages; admin dashboard requests (different Referer) pass through every time.
+const cacheMw = reportCacheMiddleware();
 const REPORTS_BASE_DIR = path.resolve(process.cwd(), 'reports');
 
 /**
@@ -214,7 +220,7 @@ router.get('/:shortName/live-ccv', async (req: Request, res: Response, next: Nex
 
 // ── GET /api/public/:shortName/metrics ──────────────────────────────────
 
-router.get('/:shortName/metrics', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/:shortName/metrics', cacheMw, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const series = getPublicSeries(req);
     const scopeObj = parseScope(req.query as Record<string, unknown>, series.id);
@@ -288,7 +294,7 @@ router.get('/:shortName/metrics', async (req: Request, res: Response, next: Next
 
 // ── GET /api/public/:shortName/timeseries ───────────────────────────────
 
-router.get('/:shortName/timeseries', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/:shortName/timeseries', cacheMw, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const series = getPublicSeries(req);
     const scopeObj = parseScope(req.query as Record<string, unknown>, series.id);
@@ -409,7 +415,7 @@ router.get('/:shortName/timeseries', async (req: Request, res: Response, next: N
 
 // ── GET /api/public/:shortName/leaderboard ──────────────────────────────
 
-router.get('/:shortName/leaderboard', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/:shortName/leaderboard', cacheMw, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const series = getPublicSeries(req);
     const seriesId = series.id;

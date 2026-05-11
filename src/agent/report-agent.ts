@@ -53,6 +53,7 @@ import {
   type SnapshotRow,
 } from './report-builder';
 import { buildHTMLReport, type HTMLReportData } from './report-builder-html';
+import { flushReportCache } from '../api/middleware/report-cache';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -306,6 +307,17 @@ export class ReportAgent {
       duration,
       seriesName: payload.series.name,
     });
+
+    // Invalidate the public-report cache for this series so the next visit
+    // to /public/:shortName/report/* picks up the freshly-computed data
+    // instead of a stale cache entry.
+    const shortName = (payload.series as { shortName?: string; short_name?: string }).shortName
+      ?? (payload.series as { short_name?: string }).short_name;
+    if (shortName) {
+      flushReportCache(shortName);
+    } else {
+      flushReportCache(); // unknown short_name → safe wipe
+    }
 
     return result;
   }
