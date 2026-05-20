@@ -367,7 +367,14 @@ export class DiscoveryService {
 
         // New channel — insert as inactive (pending approval via Discovery Feed)
         try {
-          const channelMetadata: Record<string, unknown> = {};
+          // Seed last_seen_at so the channel is immediately visible in the
+          // Discovery Feed UI on the same cycle it was added. Without this,
+          // the dashboard filter (DiscoveryFeedPanel) hides inactive channels
+          // that lack last_seen_at, and the channel only appears on the NEXT
+          // cycle (via the resurfaced branch above).
+          const channelMetadata: Record<string, unknown> = {
+            last_seen_at: new Date().toISOString(),
+          };
           const relevantNew = matchesKeywords(stream.title, stream.displayName);
           if (stream.title && relevantNew) channelMetadata.stream_title = stream.title;
           if (stream.concurrentViewers > 0) channelMetadata.discovered_ccv = stream.concurrentViewers;
