@@ -70,6 +70,13 @@ export function ExportDialog({
   const [error, setError] = useState<string | null>(null);
   const [publicLink, setPublicLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Local override for the active view group inside the dialog. Initialised
+  // from the parent prop on open, but the user can switch without closing
+  // the dialog or touching the top-bar picker.
+  const [viewGroupOverride, setViewGroupOverride] = useState<string | null>(
+    activeViewGroupName ?? null,
+  );
+  const effectiveViewGroupName = viewGroupOverride;
 
   // Reset copied indicator
   useEffect(() => {
@@ -78,7 +85,9 @@ export function ExportDialog({
     return () => clearTimeout(t);
   }, [copied]);
 
-  // Reset state whenever the dialog opens
+  // Reset state whenever the dialog opens. Re-seed the view-group override
+  // from the parent so the dialog always opens on the operator's current
+  // selection but they're free to switch from inside.
   useEffect(() => {
     if (open) {
       setError(null);
@@ -87,8 +96,9 @@ export function ExportDialog({
       setScope('current');
       setSelectedStageIds([]);
       setReRender(false);
+      setViewGroupOverride(activeViewGroupName ?? null);
     }
-  }, [open]);
+  }, [open, activeViewGroupName]);
 
   // Close on Escape
   useEffect(() => {
@@ -145,7 +155,7 @@ export function ExportDialog({
         ? currentStage.name
         : seriesDetail?.name ?? 'Series';
 
-  const viewGroupLabel = activeViewGroupName ?? 'All channels';
+  const viewGroupLabel = effectiveViewGroupName ?? 'All channels';
 
   // Resolve the scope target for the backend export endpoints. Returns
   // either a single (scope, id) pair or a multi_stage list of stage ids.
@@ -190,8 +200,10 @@ export function ExportDialog({
 
   // Append ?view=<name> when a view group is active so the SPA ReportPage
   // can replay the filter. Returns the path unchanged when no group is set.
+  // Uses effectiveViewGroupName so the in-dialog picker override wins over
+  // the top-bar selection (without forcing the operator to close + reopen).
   const withViewParam = (path: string): string => {
-    const groupName = activeViewGroupName?.trim();
+    const groupName = effectiveViewGroupName?.trim();
     if (!groupName) return path;
     const sep = path.includes('?') ? '&' : '?';
     return `${path}${sep}view=${encodeURIComponent(groupName)}`;
@@ -257,9 +269,9 @@ export function ExportDialog({
   ]);
 
   const resolvedViewGroup = useMemo(() => {
-    if (!activeViewGroupName) return null;
-    return viewGroups.find((g) => g.name === activeViewGroupName) ?? null;
-  }, [activeViewGroupName, viewGroups]);
+    if (!effectiveViewGroupName) return null;
+    return viewGroups.find((g) => g.name === effectiveViewGroupName) ?? null;
+  }, [effectiveViewGroupName, viewGroups]);
 
   // Build the preview ReportPage URL for a given scope + detail level.
   // The SPA renders the v6+ redesign live from the API — no server-side
@@ -514,6 +526,50 @@ export function ExportDialog({
                 </span>
               </Row>
             </div>
+
+            {/* View-group picker — only shown when the series defines at
+                least one view group. "All channels" maps to no filter. */}
+            {viewGroups.length > 0 && (
+              <Field label="View group">
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 6,
+                  }}
+                >
+                  {[
+                    { name: null as string | null, label: 'All channels' },
+                    ...viewGroups.map((g) => ({ name: g.name, label: g.name })),
+                  ].map((opt) => {
+                    const active = effectiveViewGroupName === opt.name;
+                    return (
+                      <button
+                        key={opt.name ?? '__all__'}
+                        type="button"
+                        onClick={() => setViewGroupOverride(opt.name)}
+                        style={{
+                          padding: '5px 11px',
+                          borderRadius: 999,
+                          fontSize: 11.5,
+                          fontWeight: active ? 600 : 500,
+                          background: active
+                            ? 'color-mix(in oklab, var(--red) 12%, var(--bg-card))'
+                            : 'var(--bg-card)',
+                          color: active ? 'var(--red)' : 'var(--fg)',
+                          border:
+                            '1px solid ' +
+                            (active ? 'var(--red)' : 'var(--border)'),
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </Field>
+            )}
 
             {/* Format picker */}
             <Field label="Format">
