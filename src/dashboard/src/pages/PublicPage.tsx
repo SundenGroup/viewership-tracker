@@ -122,6 +122,7 @@ export function PublicPage() {
       discovery_keywords: [],
       discovery_game_ids: {},
       discovery_default_tier: 'community',
+      discovery_interval_ms: null,
       is_public: true,
       metadata: {},
       created_at: '',
@@ -324,6 +325,23 @@ function PublicLive({
     [seriesInfo],
   );
 
+  // Resolve the active view group's filter (languages + platforms) into
+  // arrays the API helpers accept. When viewGroup === 'all' (default) both
+  // arrays are undefined and the API sees no filter (returns the full set).
+  const viewFilter = useMemo<{ languages?: string[]; platforms?: string[] }>(() => {
+    if (viewGroup === 'all') return {};
+    const vg = viewGroups.find((g) => g.name === viewGroup);
+    if (!vg) return {};
+    return {
+      ...(vg.languages?.length ? { languages: vg.languages } : {}),
+      ...(vg.platforms?.length ? { platforms: vg.platforms } : {}),
+    };
+  }, [viewGroup, viewGroups]);
+
+  // Stable cache key including the filter so polling-api refetches when
+  // the user changes the dropdown.
+  const filterKey = `${viewFilter.languages?.join(',') ?? ''}|${viewFilter.platforms?.join(',') ?? ''}`;
+
   const scope = useMemo(() => {
     if (scopeLevel === 'series') return { level: 'series' as const, id: seriesInfo.id };
     if (scopeLevel === 'stage' && activeStage) return { level: 'stage' as const, id: activeStage.id };
@@ -331,30 +349,41 @@ function PublicLive({
     return { level: 'series' as const, id: seriesInfo.id };
   }, [scopeLevel, activeStage, activeDay, seriesInfo.id]);
 
-  const timeline = useTimelineSeries({ scope, interval: 60, publicShortName: shortName });
+  const timeline = useTimelineSeries({
+    scope,
+    interval: 60,
+    publicShortName: shortName,
+    languages: viewFilter.languages,
+    platforms: viewFilter.platforms,
+  });
 
   // ── Scope-aware metrics + liveCCV ─────────────────────────────────────
-  // usePublicPollingData only fetches series-level. When scope is narrower
-  // (Day or Stage) the KPIs must follow — otherwise "Peak today" prints
-  // the series peak and "Hours watched" prints the whole series hours.
-  const needsScopedFetch = scope.level !== 'series';
+  // usePublicPollingData only fetches series-level (and is unfiltered).
+  // We need a scoped fetch whenever:
+  //   (a) scope is narrower than series (Day / Stage) — otherwise the KPIs
+  //       print the whole-series numbers, OR
+  //   (b) a view-group filter is active — pollingData has no filter wired in.
+  const hasViewFilter = Boolean(
+    (viewFilter.languages?.length ?? 0) > 0 || (viewFilter.platforms?.length ?? 0) > 0,
+  );
+  const needsScopedFetch = scope.level !== 'series' || hasViewFilter;
   const scopeCacheKey = `${scope.level}:${scope.id}`;
 
   const { data: scopedMetrics } = usePollingApi<MetricsResponse>(
     () =>
       needsScopedFetch && shortName
-        ? api.getPublicMetrics(shortName, scope.level, scope.id)
+        ? api.getPublicMetrics(shortName, scope.level, scope.id, viewFilter.languages, viewFilter.platforms)
         : Promise.resolve(null as unknown as MetricsResponse),
-    [shortName, scopeCacheKey],
+    [shortName, scopeCacheKey, filterKey],
     { intervalMs: 30_000, enabled: needsScopedFetch && !!shortName },
   );
 
   const { data: scopedLiveCCV } = usePollingApi<LiveCCVResponse>(
     () =>
       needsScopedFetch && shortName
-        ? api.getPublicLiveCCV(shortName, scope.level, scope.id)
+        ? api.getPublicLiveCCV(shortName, scope.level, scope.id, viewFilter.languages, viewFilter.platforms)
         : Promise.resolve(null as unknown as LiveCCVResponse),
-    [shortName, scopeCacheKey],
+    [shortName, scopeCacheKey, filterKey],
     { intervalMs: 30_000, enabled: needsScopedFetch && !!shortName },
   );
 
@@ -776,6 +805,12 @@ function PublicRecap({
   const [scopeLevel, setScopeLevel] = useState<'series' | 'stage' | 'day'>('series');
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
   const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
+  const [viewGroup, setViewGroup] = useState<string>('all');
+
+  const viewGroups = useMemo<ViewGroup[]>(
+    () => ((seriesInfo.viewGroups ?? []) as ViewGroup[]),
+    [seriesInfo],
+  );
 
   const activeStage = useMemo(() => {
     if (selectedStageId) return seriesInfo.stages.find((s) => s.id === selectedStageId) ?? null;
@@ -817,6 +852,18 @@ function PublicRecap({
       .map((d) => ({ id: d.id, label: d.label, sub: fmtDateLong(d.date) }));
   }, [scopeLevel, activeStage, allDaysFlat]);
 
+  // Resolve the active view group's filter (languages + platforms)
+  const viewFilter = useMemo<{ languages?: string[]; platforms?: string[] }>(() => {
+    if (viewGroup === 'all') return {};
+    const vg = viewGroups.find((g) => g.name === viewGroup);
+    if (!vg) return {};
+    return {
+      ...(vg.languages?.length ? { languages: vg.languages } : {}),
+      ...(vg.platforms?.length ? { platforms: vg.platforms } : {}),
+    };
+  }, [viewGroup, viewGroups]);
+  const filterKey = `${viewFilter.languages?.join(',') ?? ''}|${viewFilter.platforms?.join(',') ?? ''}`;
+
   const scope = useMemo(() => {
     if (scopeLevel === 'series') return { level: 'series' as const, id: seriesInfo.id };
     if (scopeLevel === 'stage' && activeStage) return { level: 'stage' as const, id: activeStage.id };
@@ -824,24 +871,29 @@ function PublicRecap({
     return { level: 'series' as const, id: seriesInfo.id };
   }, [scopeLevel, activeStage, activeDay, seriesInfo.id]);
 
-  const needsScopedFetch = scope.level !== 'series';
+  // Scoped fetch when scope < series OR when a view-filter is active
+  // (pollingData has no filter wired in).
+  const hasViewFilter = Boolean(
+    (viewFilter.languages?.length ?? 0) > 0 || (viewFilter.platforms?.length ?? 0) > 0,
+  );
+  const needsScopedFetch = scope.level !== 'series' || hasViewFilter;
   const scopeCacheKey = `${scope.level}:${scope.id}`;
 
   const { data: scopedMetrics } = usePollingApi<MetricsResponse>(
     () =>
       needsScopedFetch && shortName
-        ? api.getPublicMetrics(shortName, scope.level, scope.id)
+        ? api.getPublicMetrics(shortName, scope.level, scope.id, viewFilter.languages, viewFilter.platforms)
         : Promise.resolve(null as unknown as MetricsResponse),
-    [shortName, scopeCacheKey],
+    [shortName, scopeCacheKey, filterKey],
     { intervalMs: 30_000, enabled: needsScopedFetch && !!shortName },
   );
 
   const { data: scopedLiveCCV } = usePollingApi<LiveCCVResponse>(
     () =>
       needsScopedFetch && shortName
-        ? api.getPublicLiveCCV(shortName, scope.level, scope.id)
+        ? api.getPublicLiveCCV(shortName, scope.level, scope.id, viewFilter.languages, viewFilter.platforms)
         : Promise.resolve(null as unknown as LiveCCVResponse),
-    [shortName, scopeCacheKey],
+    [shortName, scopeCacheKey, filterKey],
     { intervalMs: 30_000, enabled: needsScopedFetch && !!shortName },
   );
 
@@ -851,7 +903,13 @@ function PublicRecap({
     liveCCV: needsScopedFetch ? scopedLiveCCV : pollingData.liveCCV,
   });
 
-  const timeline = useTimelineSeries({ scope, interval: 300, publicShortName: shortName });
+  const timeline = useTimelineSeries({
+    scope,
+    interval: 300,
+    publicShortName: shortName,
+    languages: viewFilter.languages,
+    platforms: viewFilter.platforms,
+  });
 
   const tierRowsVisible = useMemo(() => {
     const m = new Map<string, number>();
@@ -994,6 +1052,9 @@ function PublicRecap({
           days={dayOptions}
           dayId={activeDay?.id}
           onDayChange={(id) => setSelectedDayId(id)}
+          viewGroup={viewGroup}
+          onViewGroupChange={setViewGroup}
+          viewGroups={viewGroups}
         />
       </div>
 

@@ -17,6 +17,7 @@ import type {
   LiveCCVResponse,
   MetricsResponse,
   ScopeLevel,
+  ViewGroup,
 } from '@/types/api';
 import {
   Row,
@@ -66,6 +67,11 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
   const dayIdFromUrl = searchParams.get('day') ?? undefined;
   // Multi-stage exports: ?stages=<order>,<order>,... (or comma-separated UUIDs)
   const stagesFromUrl = searchParams.get('stages') ?? undefined;
+  // View-group filter: ?view=<groupName> — applied to all metrics / live-CCV /
+  // timeline queries so the report reflects the same channel subset the
+  // operator sees in the dashboard's view-group picker. Resolved against
+  // seriesInfo.viewGroups once the series is loaded.
+  const viewFromUrl = searchParams.get('view') ?? undefined;
 
   const [seriesInfo, setSeriesInfo] = useState<PublicSeriesInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -106,6 +112,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       discovery_keywords: [],
       discovery_game_ids: {},
       discovery_default_tier: 'community',
+      discovery_interval_ms: null,
       is_public: true,
       metadata: {},
       created_at: '',
@@ -219,8 +226,34 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     return { level: 'series', id: seriesInfo.id, label: seriesInfo.name };
   }, [seriesInfo, scopeSlug, stageIdFromUrl, dayIdFromUrl, stagesFromUrl]);
 
-  // Scoped metrics — override pollingData.metrics when we have a sub-scope.
-  const needsScopedFetch = !!resolvedScope && resolvedScope.level !== 'series';
+  // Resolve the active view-group filter (languages + platforms) once the
+  // series is loaded. Falls back to no filter if ?view= references a group
+  // that doesn't exist on the series, so a stale shared link doesn't break.
+  const viewGroup = useMemo<ViewGroup | null>(() => {
+    if (!viewFromUrl || !seriesInfo) return null;
+    const groups = (seriesInfo.viewGroups ?? []) as ViewGroup[];
+    return groups.find((g) => g.name === viewFromUrl) ?? null;
+  }, [viewFromUrl, seriesInfo]);
+
+  const viewFilter = useMemo<{ languages?: string[]; platforms?: string[] }>(() => {
+    if (!viewGroup) return {};
+    return {
+      ...(viewGroup.languages?.length ? { languages: viewGroup.languages } : {}),
+      ...(viewGroup.platforms?.length ? { platforms: viewGroup.platforms } : {}),
+    };
+  }, [viewGroup]);
+
+  const hasViewFilter = Boolean(
+    (viewFilter.languages?.length ?? 0) > 0 ||
+      (viewFilter.platforms?.length ?? 0) > 0,
+  );
+  const filterKey = `${viewFilter.languages?.join(',') ?? ''}|${viewFilter.platforms?.join(',') ?? ''}`;
+
+  // Scoped metrics — override pollingData.metrics when we have a sub-scope
+  // OR when a view filter is active (pollingData is unfiltered, so we can't
+  // use it for "?view=West on the whole series" without an explicit fetch).
+  const needsScopedFetch =
+    (!!resolvedScope && resolvedScope.level !== 'series') || hasViewFilter;
   const scopeCacheKey = !resolvedScope
     ? ''
     : resolvedScope.level === 'multi_stage'
@@ -233,10 +266,22 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
         return Promise.resolve(null as unknown as MetricsResponse);
       }
       return resolvedScope.level === 'multi_stage'
-        ? api.getPublicMetrics(shortName, 'multi_stage', resolvedScope.ids)
-        : api.getPublicMetrics(shortName, resolvedScope.level, resolvedScope.id);
+        ? api.getPublicMetrics(
+            shortName,
+            'multi_stage',
+            resolvedScope.ids,
+            viewFilter.languages,
+            viewFilter.platforms,
+          )
+        : api.getPublicMetrics(
+            shortName,
+            resolvedScope.level,
+            resolvedScope.id,
+            viewFilter.languages,
+            viewFilter.platforms,
+          );
     },
-    [shortName, scopeCacheKey],
+    [shortName, scopeCacheKey, filterKey],
     { intervalMs: 60_000, enabled: needsScopedFetch && !!shortName },
   );
 
@@ -246,10 +291,22 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
         return Promise.resolve(null as unknown as LiveCCVResponse);
       }
       return resolvedScope.level === 'multi_stage'
-        ? api.getPublicLiveCCV(shortName, 'multi_stage', resolvedScope.ids)
-        : api.getPublicLiveCCV(shortName, resolvedScope.level, resolvedScope.id);
+        ? api.getPublicLiveCCV(
+            shortName,
+            'multi_stage',
+            resolvedScope.ids,
+            viewFilter.languages,
+            viewFilter.platforms,
+          )
+        : api.getPublicLiveCCV(
+            shortName,
+            resolvedScope.level,
+            resolvedScope.id,
+            viewFilter.languages,
+            viewFilter.platforms,
+          );
     },
-    [shortName, scopeCacheKey],
+    [shortName, scopeCacheKey, filterKey],
     { intervalMs: 60_000, enabled: needsScopedFetch && !!shortName },
   );
 
@@ -293,9 +350,15 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
   const { data: prevMetrics } = usePollingApi<MetricsResponse>(
     () =>
       previousScope && shortName
-        ? api.getPublicMetrics(shortName, previousScope.level, previousScope.id)
+        ? api.getPublicMetrics(
+            shortName,
+            previousScope.level,
+            previousScope.id,
+            viewFilter.languages,
+            viewFilter.platforms,
+          )
         : Promise.resolve(null as unknown as MetricsResponse),
-    [shortName, previousScope?.id ?? ''],
+    [shortName, previousScope?.id ?? '', filterKey],
     { intervalMs: 60_000, enabled: !!previousScope && !!shortName },
   );
 
@@ -341,6 +404,8 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     interval: 300,
     publicShortName: shortName,
     refreshMs: 60_000,
+    languages: viewFilter.languages,
+    platforms: viewFilter.platforms,
   });
 
   // Day-boundary markers — vertical dashed line + label at the start of each
@@ -481,6 +546,8 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     );
   }
 
+  const viewLabel = viewGroup?.name ?? null;
+
   if (variant === 'simple') {
     return (
       <SimpleReport
@@ -494,6 +561,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
         scopeEnd={scopeEnd}
         trend={trend}
         dayBoundaries={dayBoundaries}
+        viewLabel={viewLabel}
       />
     );
   }
@@ -509,6 +577,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       scopeEnd={scopeEnd}
       trend={trend}
       dayBoundaries={dayBoundaries}
+      viewLabel={viewLabel}
     />
   );
 }
@@ -533,6 +602,7 @@ function SimpleReport({
   scopeEnd,
   trend,
   dayBoundaries,
+  viewLabel,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
@@ -544,6 +614,7 @@ function SimpleReport({
   scopeEnd: string | null;
   trend: TrendDeltas | null;
   dayBoundaries: Array<{ index: number; label: string }>;
+  viewLabel: string | null;
 }) {
   const totalDayCount = useMemo(() => {
     if (scopeLevel === 'day') return 1;
@@ -601,6 +672,7 @@ function SimpleReport({
       <Row justify="space-between" style={{ marginBottom: 32 }}>
         <ClutchWordmark size={20} />
         <Row gap={8}>
+          {viewLabel && <Pill>View: {viewLabel}</Pill>}
           <span className="mono" style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
             Simple report · {new Date().toLocaleDateString()}
           </span>
@@ -755,6 +827,7 @@ function DetailedReport({
   scopeEnd,
   trend,
   dayBoundaries,
+  viewLabel,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
@@ -766,6 +839,7 @@ function DetailedReport({
   scopeEnd: string | null;
   trend: TrendDeltas | null;
   dayBoundaries: Array<{ index: number; label: string }>;
+  viewLabel: string | null;
 }) {
   const totalDayCount = useMemo(() => {
     if (scopeLevel === 'day') return 1;
@@ -1006,6 +1080,7 @@ function DetailedReport({
         <Row gap={6}>
           <Pill>Detailed report</Pill>
           <Pill>{totalDayCount} days</Pill>
+          {viewLabel && <Pill>View: {viewLabel}</Pill>}
           <ThemeToggle />
         </Row>
       </Row>

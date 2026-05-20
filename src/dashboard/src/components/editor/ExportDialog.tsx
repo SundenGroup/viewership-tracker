@@ -188,6 +188,15 @@ export function ExportDialog({
     );
   };
 
+  // Append ?view=<name> when a view group is active so the SPA ReportPage
+  // can replay the filter. Returns the path unchanged when no group is set.
+  const withViewParam = (path: string): string => {
+    const groupName = activeViewGroupName?.trim();
+    if (!groupName) return path;
+    const sep = path.includes('?') ? '&' : '?';
+    return `${path}${sep}view=${encodeURIComponent(groupName)}`;
+  };
+
   // File name / target preview (mono caption in footer).
   // For HTML "new design" mode this is a URL; otherwise a filename.
   const fileName = useMemo(() => {
@@ -198,7 +207,7 @@ export function ExportDialog({
       const base = import.meta.env.BASE_URL.replace(/\/$/, '');
       if (target.kind === 'multi_stage') {
         const orders = orderedSelectedStages.map((s) => s.order).join(',');
-        return `${base}/public/${shortName}/report/${detail}?stages=${orders}`;
+        return withViewParam(`${base}/public/${shortName}/report/${detail}?stages=${orders}`);
       }
       const { scopeLevel, id } = target;
       let slug = '';
@@ -212,7 +221,7 @@ export function ExportDialog({
         const stage = seriesDetail?.stages.find((s) => s.id === id);
         slug = stage ? `stage-${stage.order}` : `${id.slice(0, 6)}…`;
       }
-      return `${base}/public/${shortName}/report/${detail}${slug ? `/${slug}` : ''}`;
+      return withViewParam(`${base}/public/${shortName}/report/${detail}${slug ? `/${slug}` : ''}`);
     }
     const slugBase =
       seriesDetail?.short_name?.trim() || seriesDetail?.name || 'series';
@@ -269,7 +278,9 @@ export function ExportDialog({
     const base = import.meta.env.BASE_URL.replace(/\/$/, '');
     if (target.kind === 'multi_stage') {
       const orders = orderedSelectedStages.map((s) => s.order).join(',');
-      const path = `${base}/public/${shortName}/report/${detail}?stages=${orders}`;
+      const path = withViewParam(
+        `${base}/public/${shortName}/report/${detail}?stages=${orders}`,
+      );
       return `${window.location.origin}${path}`;
     }
     const { scopeLevel, id } = target;
@@ -284,7 +295,9 @@ export function ExportDialog({
       const stage = seriesDetail?.stages.find((s) => s.id === id);
       slug = stage ? `stage-${stage.order}` : id;
     }
-    const path = `${base}/public/${shortName}/report/${detail}${slug ? `/${slug}` : ''}`;
+    const path = withViewParam(
+      `${base}/public/${shortName}/report/${detail}${slug ? `/${slug}` : ''}`,
+    );
     return `${window.location.origin}${path}`;
   };
 
