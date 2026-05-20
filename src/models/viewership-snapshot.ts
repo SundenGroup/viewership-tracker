@@ -284,20 +284,59 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
   // so it's often missing from the bulk-poll timestamp. Include the most
   // recent TikTok snapshot per channel (within last 2 minutes) to avoid
   // the dashboard showing 0 TikTok viewers between relay pushes.
+  //
+  // CRITICAL: this fallback MUST honor the same scope + view filter that the
+  // main query applies — otherwise it leaks cross-scope and unfiltered
+  // TikTok rows into the response. (Bug: when "West" view-group was
+  // selected and latestTs landed on a poll cycle without TikTok in it,
+  // this fallback used to push every TikTok channel regardless of
+  // language/platform/scope, so Vietnamese + Thai TikTok ended up in
+  // the West totals.)
   const hasTikTok = results.some((r: { platform: string }) => r.platform === 'tiktok');
   if (!hasTikTok) {
+    // Build scope predicate matching the main query
+    let fallbackScopeSql = '';
+    const fallbackBindings: Record<string, unknown> = { seriesId };
+    if (scope && scope.level !== 'series') {
+      if (scope.level === 'multi_stage') {
+        fallbackScopeSql = 'AND vs.stage_id = ANY(:scopeIds::uuid[])';
+        fallbackBindings.scopeIds = scope.ids;
+      } else {
+        const col = scopeColumnBare(scope);
+        fallbackScopeSql = `AND vs."${col}" = :scopeId`;
+        fallbackBindings.scopeId = scope.id;
+      }
+    }
+    // Build view-filter predicate (language + platform)
+    let filterSql = '';
+    if (filter?.languages?.length) {
+      filterSql += " AND SPLIT_PART(vs.language, '-', 1) = ANY(:filterLanguages)";
+      fallbackBindings.filterLanguages = filter.languages;
+    }
+    if (filter?.platforms?.length) {
+      // 'tiktok' must itself be in the platform allowlist, otherwise this
+      // fallback shouldn't run at all (the user excluded TikTok).
+      if (!filter.platforms.includes('tiktok')) {
+        return results;
+      }
+      // No additional platform predicate needed — fallback is already
+      // hard-filtered to platform='tiktok'.
+    }
+
     const tiktokRows = await db.raw(`
       SELECT DISTINCT ON (vs.channel_id)
         vs.*, c.display_name, c.channel_identifier, c.tier
       FROM viewership_snapshots vs
       JOIN channels c ON c.id = vs.channel_id
       WHERE vs.series_id = :seriesId
+        ${fallbackScopeSql}
         AND vs.platform = 'tiktok'
         AND vs."timestamp" > NOW() - INTERVAL '2 minutes'
         AND vs.concurrent_viewers > 0
         AND c.is_active = true
+        ${filterSql}
       ORDER BY vs.channel_id, vs."timestamp" DESC
-    `, { seriesId }).then((r: { rows: Array<ViewershipSnapshot & { display_name: string; channel_identifier: string; tier: string | null }> }) => r.rows);
+    `, fallbackBindings).then((r: { rows: Array<ViewershipSnapshot & { display_name: string; channel_identifier: string; tier: string | null }> }) => r.rows);
 
     if (tiktokRows.length > 0) {
       results.push(...tiktokRows);
