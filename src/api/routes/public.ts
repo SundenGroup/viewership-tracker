@@ -9,17 +9,23 @@ import { Router, Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { stat, readFile } from 'fs/promises';
 import { requirePublicSeries } from '../middleware/auth';
-import { reportCacheMiddleware } from '../middleware/report-cache';
+import { publicCacheMiddleware } from '../middleware/public-cache';
 import * as ViewershipSnapshotModel from '../../models/viewership-snapshot';
 import * as TournamentSeriesModel from '../../models/tournament-series';
 import db from '../../utils/db';
 
 const router = Router();
 
-// Apply report-cache to the heavy aggregation endpoints. The middleware
-// short-circuits with HIT for requests coming from /public/:shortName/report/*
-// pages; admin dashboard requests (different Referer) pass through every time.
-const cacheMw = reportCacheMiddleware();
+// Per-endpoint LRU caches keyed on full URL. Only requests coming from a
+// /public/* page get cached; admin dashboard traffic (different Referer)
+// always passes through to fresh data. TTLs picked per endpoint based on
+// how "live" the number needs to feel vs how expensive the query is:
+//   live-ccv   →   10s — feels live; cheapest query; small drift acceptable
+//   metrics    →   30s — aggregations, matches typical poll cadence
+//   timeseries →   60s — heaviest aggregation, lowest volatility
+const liveCcvCache    = publicCacheMiddleware({ ttlMs: 10_000, label: 'live-ccv' });
+const metricsCache    = publicCacheMiddleware({ ttlMs: 30_000, label: 'metrics' });
+const timeseriesCache = publicCacheMiddleware({ ttlMs: 60_000, label: 'timeseries' });
 const REPORTS_BASE_DIR = path.resolve(process.cwd(), 'reports');
 
 /**
@@ -176,7 +182,7 @@ router.get('/:shortName', async (req: Request, res: Response, next: NextFunction
 
 // ── GET /api/public/:shortName/live-ccv ─────────────────────────────────
 
-router.get('/:shortName/live-ccv', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/:shortName/live-ccv', liveCcvCache, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const series = getPublicSeries(req);
     const scope = parseScope(req.query as Record<string, unknown>, series.id);
@@ -220,7 +226,7 @@ router.get('/:shortName/live-ccv', async (req: Request, res: Response, next: Nex
 
 // ── GET /api/public/:shortName/metrics ──────────────────────────────────
 
-router.get('/:shortName/metrics', cacheMw, async (req: Request, res: Response, next: NextFunction) => {
+router.get('/:shortName/metrics', metricsCache, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const series = getPublicSeries(req);
     const scopeObj = parseScope(req.query as Record<string, unknown>, series.id);
@@ -294,7 +300,7 @@ router.get('/:shortName/metrics', cacheMw, async (req: Request, res: Response, n
 
 // ── GET /api/public/:shortName/timeseries ───────────────────────────────
 
-router.get('/:shortName/timeseries', cacheMw, async (req: Request, res: Response, next: NextFunction) => {
+router.get('/:shortName/timeseries', timeseriesCache, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const series = getPublicSeries(req);
     const scopeObj = parseScope(req.query as Record<string, unknown>, series.id);
@@ -415,7 +421,7 @@ router.get('/:shortName/timeseries', cacheMw, async (req: Request, res: Response
 
 // ── GET /api/public/:shortName/leaderboard ──────────────────────────────
 
-router.get('/:shortName/leaderboard', cacheMw, async (req: Request, res: Response, next: NextFunction) => {
+router.get('/:shortName/leaderboard', metricsCache, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const series = getPublicSeries(req);
     const seriesId = series.id;

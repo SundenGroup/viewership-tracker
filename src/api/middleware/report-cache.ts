@@ -20,6 +20,7 @@
  */
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import logger from '../../utils/logger';
+import { flushPublicCache } from './public-cache';
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000;   // 5 min default
 const MAX_ENTRIES = 500;
@@ -99,6 +100,10 @@ export function reportCacheMiddleware(): RequestHandler {
  * - `flushReportCache(shortName)` — clear entries for one series.
  */
 export function flushReportCache(shortName?: string): number {
+  // Also flush the unified public cache so editors who regenerated a
+  // report immediately see fresh aggregations on the public side.
+  flushPublicCache(shortName);
+
   if (!shortName) {
     const n = cache.size;
     cache.clear();
