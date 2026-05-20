@@ -321,7 +321,15 @@ export class DiscoveryService {
         }
 
         // Below minimum viewer threshold?
-        if (stream.concurrentViewers < this.minViewerThreshold) {
+        // Special case: concurrentViewers === -1 means the broadcaster has
+        // disabled YouTube's public live-viewer count. Don't drop those —
+        // their title already matched the search keywords, which is a stronger
+        // signal than a hidden viewer number. Add as 0 (visible) but let
+        // them through.
+        if (
+          stream.concurrentViewers >= 0 &&
+          stream.concurrentViewers < this.minViewerThreshold
+        ) {
           belowThreshold++;
           continue;
         }
@@ -348,7 +356,8 @@ export class DiscoveryService {
             trackedSet.add(lookupKey);
             resurfaced++;
             logger.info(
-              `[Discovery] Re-surfaced disabled channel ${stream.displayName} [${platform}] (${stream.concurrentViewers} viewers)`,
+              `[Discovery] Re-surfaced disabled channel ${stream.displayName} [${platform}] ` +
+              `(${stream.concurrentViewers < 0 ? 'CCV hidden' : `${stream.concurrentViewers} viewers`})`,
             );
           } catch (err) {
             logger.warn(`[Discovery] Failed to re-surface ${stream.channelIdentifier}`, { error: (err as Error).message });
@@ -380,7 +389,9 @@ export class DiscoveryService {
           added++;
 
           logger.info(
-            `[Discovery] Added ${stream.displayName} [${platform}] (${stream.concurrentViewers} viewers) to series ${series.name}`,
+            `[Discovery] Added ${stream.displayName} [${platform}] ` +
+            `(${stream.concurrentViewers < 0 ? 'CCV hidden' : `${stream.concurrentViewers} viewers`}) ` +
+            `to series ${series.name}`,
           );
         } catch (err) {
           // Unique constraint violation is expected if channel was added concurrently

@@ -1721,13 +1721,21 @@ export class YouTubeAdapter implements PlatformAdapter {
       // Secondary keyword validation: YouTube search is broad, so verify
       // the stream title actually contains at least one keyword (case-insensitive).
       // This mirrors how the Twitch adapter filters by title keywords.
+      //
+      // NFKD-normalize first so mathematical bold / italic / fullwidth Unicode
+      // (e.g. 𝐏𝐔𝐁𝐆 𝐆𝐥𝐨𝐛𝐚𝐥 𝐒𝐞𝐫𝐢𝐞𝐬 in stylized titles) collapses to ASCII before
+      // the substring check. Without this, .toLowerCase() leaves math-bold
+      // codepoints unchanged and a substring match against "pubg global
+      // series" fails even though the title visually contains the phrase.
+      const normalize = (s: string): string =>
+        s.normalize('NFKD').toLowerCase();
       if (keywords && keywords.length > 0) {
-        const titleLower = (title ?? '').toLowerCase();
-        const channelLower = result.snippet.channelTitle.toLowerCase();
+        const titleNorm = normalize(title ?? '');
+        const channelNorm = normalize(result.snippet.channelTitle);
         const matches = keywords.some(
           (kw) => {
-            const kwLower = kw.toLowerCase();
-            return titleLower.includes(kwLower) || channelLower.includes(kwLower);
+            const kwNorm = normalize(kw);
+            return titleNorm.includes(kwNorm) || channelNorm.includes(kwNorm);
           },
         );
         if (!matches) {
@@ -1739,10 +1747,20 @@ export class YouTubeAdapter implements PlatformAdapter {
         }
       }
 
+      // YouTube returns `concurrentViewers: null` when the broadcaster has
+      // disabled public live-viewer stats. Coercing that to 0 below would
+      // make these channels fall under any min-viewer threshold downstream
+      // (discovery-service.minViewerThreshold), causing them to be silently
+      // dropped despite their title matching the keywords. Distinguish
+      // "unknown" from "zero" by passing -1 — discovery-service treats this
+      // as "title-matched but CCV hidden, let the operator decide."
+      const ccvParsed = viewers !== undefined && viewers !== null
+        ? parseInt(viewers, 10)
+        : -1;
       streams.push({
         channelIdentifier: result.snippet.channelId,
         displayName: result.snippet.channelTitle,
-        concurrentViewers: viewers ? parseInt(viewers, 10) : 0,
+        concurrentViewers: ccvParsed,
         language: video?.snippet.defaultAudioLanguage ?? null,
         title,
       });
