@@ -1,8 +1,25 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import * as ViewershipSnapshotModel from '../../models/viewership-snapshot';
+import { publicCacheMiddleware } from '../middleware/public-cache';
 import db from '../../utils/db';
 
 const router = Router();
+
+// Editor aggregations are uncacheable from the public-cache layer because
+// their Referer is the admin dashboard, not /public/*. Without protection,
+// each editor poll fires 5-8 heavy timeseries/metrics aggregations on
+// viewership_snapshots — N concurrent editors stampedes PG. Cache with
+// short TTLs so an edit (channel add, view-group change) surfaces within
+// seconds while collapsing duplicate concurrent fetches to a single PG
+// hit per URL window.
+//   live           5s — feels real-time, cheap; small drift fine
+//   metrics       10s — moderate aggregation, matches editor poll cadence
+//   timeseries    15s — heaviest aggregation, low volatility
+//   leaderboard   15s — same shape as timeseries
+const liveCache        = publicCacheMiddleware({ ttlMs:  5_000, label: 'live',        scope: 'any' });
+const metricsCache     = publicCacheMiddleware({ ttlMs: 10_000, label: 'metrics',     scope: 'any' });
+const timeseriesCache  = publicCacheMiddleware({ ttlMs: 15_000, label: 'timeseries',  scope: 'any' });
+const leaderboardCache = publicCacheMiddleware({ ttlMs: 15_000, label: 'leaderboard', scope: 'any' });
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -34,7 +51,7 @@ function isValidUUID(val: unknown): boolean {
 
 // GET /api/viewership/live/:seriesId — Current live CCV (latest snapshot per channel)
 // Optional query params: ?scope=day|stage&id=<uuid> to filter by scope
-router.get('/live/:seriesId', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/live/:seriesId', liveCache, async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (!isValidUUID(req.params.seriesId)) {
       res.status(400).json({ error: 'Invalid seriesId format' });
@@ -132,7 +149,7 @@ router.get('/snapshots', async (req: Request, res: Response, next: NextFunction)
 });
 
 // GET /api/viewership/metrics — Derived metrics for a scope
-router.get('/metrics', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/metrics', metricsCache, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const scopeObj = parseScope(req.query);
     if (!scopeObj) {
@@ -205,7 +222,7 @@ router.get('/metrics', async (req: Request, res: Response, next: NextFunction) =
 });
 
 // GET /api/viewership/timeseries — Time-bucketed data for charting
-router.get('/timeseries', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/timeseries', timeseriesCache, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const scopeObj = parseScope(req.query);
     if (!scopeObj) {
@@ -305,7 +322,7 @@ router.get('/timeseries', async (req: Request, res: Response, next: NextFunction
 });
 
 // GET /api/viewership/leaderboard/:seriesId — Aggregate channel leaderboard
-router.get('/leaderboard/:seriesId', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/leaderboard/:seriesId', leaderboardCache, async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (!isValidUUID(req.params.seriesId)) {
       res.status(400).json({ error: 'Invalid seriesId format' });
@@ -389,7 +406,7 @@ router.get('/leaderboard/:seriesId', async (req: Request, res: Response, next: N
 // drag-to-select-range panel. Same aggregation philosophy as the existing
 // scope-based leaderboard query: SUM multi-stream per cycle, MAX across
 // cycles per channel per minute, then aggregate over the window.
-router.get('/range-leaderboard', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/range-leaderboard', leaderboardCache, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const seriesId = req.query.seriesId as string | undefined;
     const fromStr = req.query.from as string | undefined;

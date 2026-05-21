@@ -47,6 +47,13 @@ interface PublicCacheOptions {
   ttlMs: number;
   /** Optional label for X-Public-Cache header and logging. */
   label?: string;
+  /**
+   * Referer gate. 'public' (default) — only requests from /public/* pages
+   * participate (admin work flows always pass through to fresh data). 'any'
+   * — every GET caches regardless of Referer; use for heavy editor-side
+   * aggregations that can tolerate a few seconds of staleness.
+   */
+  scope?: 'public' | 'any';
 }
 
 /**
@@ -58,12 +65,14 @@ interface PublicCacheOptions {
  * it wraps res.json to capture the response for next time.
  */
 export function publicCacheMiddleware(opts: PublicCacheOptions): RequestHandler {
-  const { ttlMs, label = 'public' } = opts;
+  const { ttlMs, label = 'public', scope = 'public' } = opts;
   return (req: Request, res: Response, next: NextFunction) => {
     if (req.method !== 'GET') return next();
 
-    const referer = req.get('Referer') ?? '';
-    if (!PUBLIC_REFERER.test(referer)) return next();
+    if (scope === 'public') {
+      const referer = req.get('Referer') ?? '';
+      if (!PUBLIC_REFERER.test(referer)) return next();
+    }
 
     // Opt-out hook: clients can force-bypass with ?_nocache=1 (used by
     // server-side diagnostics that need a fresh read).
