@@ -39,6 +39,15 @@ interface CacheEntry {
 // (path + query), so different scopes / filters / endpoints don't collide.
 const cache = new Map<string, CacheEntry>();
 
+// Single-flight coalescing: while a query for a given key is in-flight, every
+// other request for the same key awaits this promise instead of launching its
+// own duplicate query. This is what stops the thundering herd — without it, a
+// cold 18s full-series aggregation viewed by N clients fires N concurrent 18s
+// queries (the cache only helps AFTER the first completes). Resolves with the
+// CacheEntry on success, or null if the leader produced no cacheable result
+// (non-2xx / crash) so waiters fall back to running their own query.
+const inFlight = new Map<string, Promise<CacheEntry | null>>();
+
 /** Any /public/<shortName>/... Referer is cacheable (live dashboard + reports). */
 const PUBLIC_REFERER = /\/public\/[^/]+(\/|$|\?)/;
 
@@ -66,7 +75,7 @@ interface PublicCacheOptions {
  */
 export function publicCacheMiddleware(opts: PublicCacheOptions): RequestHandler {
   const { ttlMs, label = 'public', scope = 'public' } = opts;
-  return (req: Request, res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     if (req.method !== 'GET') return next();
 
     if (scope === 'public') {
@@ -93,23 +102,67 @@ export function publicCacheMiddleware(opts: PublicCacheOptions): RequestHandler 
       return;
     }
 
+    // Coalesce: if an identical query is already running, ride its result
+    // instead of issuing a duplicate. Falls through to run our own only if
+    // the leader produced nothing cacheable (error / non-2xx).
+    const pending = inFlight.get(key);
+    if (pending) {
+      try {
+        const entry = await pending;
+        if (entry && !res.headersSent) {
+          res.setHeader('Content-Type', entry.contentType);
+          res.setHeader('X-Public-Cache', `COALESCED ${label}`);
+          res.send(entry.body as Parameters<Response['send']>[0]);
+          return;
+        }
+      } catch {
+        // leader failed — fall through and run our own query
+      }
+      if (res.headersSent) return;
+      return next();
+    }
+
+    // We are the leader. Register an in-flight promise so concurrent
+    // requests for this key wait on us.
+    let settle: (entry: CacheEntry | null) => void = () => {};
+    const flight = new Promise<CacheEntry | null>((resolve) => {
+      settle = resolve;
+    });
+    inFlight.set(key, flight);
+
+    // Idempotent release — clears the in-flight slot and resolves waiters
+    // exactly once, whichever path finishes first (res.json, or the
+    // finish/close safety net if the handler responded some other way).
+    let released = false;
+    const release = (entry: CacheEntry | null) => {
+      if (released) return;
+      released = true;
+      if (inFlight.get(key) === flight) inFlight.delete(key);
+      settle(entry);
+    };
+    res.on('finish', () => release(null));
+    res.on('close', () => release(null));
+
     const originalJson = res.json.bind(res);
     res.json = (body: unknown) => {
+      let entry: CacheEntry | null = null;
       if (res.statusCode >= 200 && res.statusCode < 300) {
         if (cache.size >= MAX_ENTRIES) {
           // Drop oldest insertion (Map iteration order is insertion order).
           const oldestKey = cache.keys().next().value;
           if (oldestKey) cache.delete(oldestKey);
         }
-        cache.set(key, {
+        entry = {
           body,
           contentType: 'application/json; charset=utf-8',
-          expiresAt: now + ttlMs,
+          expiresAt: Date.now() + ttlMs,
           shortName,
-          storedAt: now,
-        });
+          storedAt: Date.now(),
+        };
+        cache.set(key, entry);
       }
       res.setHeader('X-Public-Cache', `MISS ${label}`);
+      release(entry);
       return originalJson(body);
     };
 
