@@ -126,10 +126,16 @@ function parseScope(
 function parseViewFilter(query: Record<string, unknown>): ViewershipSnapshotModel.ViewFilter | undefined {
   const languages = (query.languages as string)?.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   const platforms = (query.platforms as string)?.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-  if (!languages?.length && !platforms?.length) return undefined;
+  // `exclude` = comma-separated channel UUIDs to drop from the aggregation.
+  // Lets the SPA report (and any public consumer) reproduce the export
+  // dialog's "Exclude channels" selection. The model's buildFilterClauses
+  // turns this into `AND channel_id != ALL(:excludeChannelIds::uuid[])`.
+  const excludeChannelIds = (query.exclude as string)?.split(',').map(s => s.trim()).filter(Boolean);
+  if (!languages?.length && !platforms?.length && !excludeChannelIds?.length) return undefined;
   return {
     ...(languages?.length ? { languages } : {}),
     ...(platforms?.length ? { platforms } : {}),
+    ...(excludeChannelIds?.length ? { excludeChannelIds } : {}),
   };
 }
 
