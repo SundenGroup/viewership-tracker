@@ -249,9 +249,15 @@ export function promoteToManual(channelId: string) {
 // ── Viewership ────────────────────────────────────────────────────────────
 
 /** Append comma-separated filter arrays to URL params when present. */
-function appendFilterParams(params: URLSearchParams, languages?: string[], platforms?: string[]) {
+function appendFilterParams(
+  params: URLSearchParams,
+  languages?: string[],
+  platforms?: string[],
+  excludeChannelIds?: string[],
+) {
   if (languages?.length) params.set('languages', languages.join(','));
   if (platforms?.length) params.set('platforms', platforms.join(','));
+  if (excludeChannelIds?.length) params.set('exclude', excludeChannelIds.join(','));
 }
 
 export function getLiveCCV(seriesId: string, scope?: string, scopeId?: string, languages?: string[], platforms?: string[]) {
@@ -683,10 +689,11 @@ export function getPublicLiveCCV(
   scopeId?: string | string[],
   languages?: string[],
   platforms?: string[],
+  excludeChannelIds?: string[],
 ) {
   const params = new URLSearchParams();
   appendScopeParams(params, scope, scopeId);
-  appendFilterParams(params, languages, platforms);
+  appendFilterParams(params, languages, platforms, excludeChannelIds);
   const qs = params.toString();
   return publicRequest<LiveCCVResponse>(`/api/public/${shortName}/live-ccv${qs ? `?${qs}` : ''}`);
 }
@@ -697,10 +704,11 @@ export function getPublicMetrics(
   id?: string | string[],
   languages?: string[],
   platforms?: string[],
+  excludeChannelIds?: string[],
 ) {
   const params = new URLSearchParams();
   appendScopeParams(params, scope, id);
-  appendFilterParams(params, languages, platforms);
+  appendFilterParams(params, languages, platforms, excludeChannelIds);
   const qs = params.toString() ? `?${params}` : '';
   return publicRequest<MetricsResponse>(`/api/public/${shortName}/metrics${qs}`);
 }
@@ -714,6 +722,7 @@ export function getPublicTimeSeries(
     ids?: string[];
     languages?: string[];
     platforms?: string[];
+    excludeChannelIds?: string[];
   },
 ) {
   const params = new URLSearchParams();
@@ -724,7 +733,7 @@ export function getPublicTimeSeries(
   }
   if (query.interval) params.set('interval', String(query.interval));
   if (query.groupBy) params.set('groupBy', query.groupBy);
-  appendFilterParams(params, query.languages, query.platforms);
+  appendFilterParams(params, query.languages, query.platforms, query.excludeChannelIds);
   return publicRequest<TimeSeriesResponse>(`/api/public/${shortName}/timeseries?${params}`);
 }
 

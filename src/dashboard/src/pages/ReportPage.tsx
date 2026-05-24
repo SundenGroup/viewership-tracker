@@ -72,6 +72,14 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
   // operator sees in the dashboard's view-group picker. Resolved against
   // seriesInfo.viewGroups once the series is loaded.
   const viewFromUrl = searchParams.get('view') ?? undefined;
+  // Channel exclusions: ?exclude=<id,id,...> — drops specific channels from the
+  // aggregation, mirroring the export dialog's "Exclude channels" picker.
+  const excludeChannelIds = useMemo<string[] | undefined>(() => {
+    const raw = searchParams.get('exclude');
+    if (!raw) return undefined;
+    const ids = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    return ids.length ? ids : undefined;
+  }, [searchParams]);
 
   const [seriesInfo, setSeriesInfo] = useState<PublicSeriesInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -245,13 +253,15 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
 
   const hasViewFilter = Boolean(
     (viewFilter.languages?.length ?? 0) > 0 ||
-      (viewFilter.platforms?.length ?? 0) > 0,
+      (viewFilter.platforms?.length ?? 0) > 0 ||
+      (excludeChannelIds?.length ?? 0) > 0,
   );
-  const filterKey = `${viewFilter.languages?.join(',') ?? ''}|${viewFilter.platforms?.join(',') ?? ''}`;
+  const filterKey = `${viewFilter.languages?.join(',') ?? ''}|${viewFilter.platforms?.join(',') ?? ''}|${excludeChannelIds?.join(',') ?? ''}`;
 
   // Scoped metrics — override pollingData.metrics when we have a sub-scope
-  // OR when a view filter is active (pollingData is unfiltered, so we can't
-  // use it for "?view=West on the whole series" without an explicit fetch).
+  // OR when a view filter / exclusion is active (pollingData is unfiltered,
+  // so we can't use it for "?view=West" or "?exclude=…" on the whole series
+  // without an explicit fetch).
   const needsScopedFetch =
     (!!resolvedScope && resolvedScope.level !== 'series') || hasViewFilter;
   const scopeCacheKey = !resolvedScope
@@ -272,6 +282,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
             resolvedScope.ids,
             viewFilter.languages,
             viewFilter.platforms,
+            excludeChannelIds,
           )
         : api.getPublicMetrics(
             shortName,
@@ -279,6 +290,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
             resolvedScope.id,
             viewFilter.languages,
             viewFilter.platforms,
+            excludeChannelIds,
           );
     },
     [shortName, scopeCacheKey, filterKey],
@@ -297,6 +309,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
             resolvedScope.ids,
             viewFilter.languages,
             viewFilter.platforms,
+            excludeChannelIds,
           )
         : api.getPublicLiveCCV(
             shortName,
@@ -304,6 +317,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
             resolvedScope.id,
             viewFilter.languages,
             viewFilter.platforms,
+            excludeChannelIds,
           );
     },
     [shortName, scopeCacheKey, filterKey],
@@ -356,6 +370,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
             previousScope.id,
             viewFilter.languages,
             viewFilter.platforms,
+            excludeChannelIds,
           )
         : Promise.resolve(null as unknown as MetricsResponse),
     [shortName, previousScope?.id ?? '', filterKey],
@@ -406,6 +421,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     refreshMs: 60_000,
     languages: viewFilter.languages,
     platforms: viewFilter.platforms,
+    excludeChannelIds,
   });
 
   // Day-boundary markers — vertical dashed line + label at the start of each

@@ -77,6 +77,15 @@ export function ExportDialog({
     activeViewGroupName ?? null,
   );
   const effectiveViewGroupName = viewGroupOverride;
+  // Channel-exclusion picker (ported from the legacy ExportPanel). Drops
+  // specific channels from the export's aggregation. Applies to BOTH
+  // renderers: the legacy server-rendered HTML (via excludeChannelIds in
+  // generateReport) and the live SPA report (via ?exclude= on the URL).
+  const [excludeChannelIds, setExcludeChannelIds] = useState<string[]>([]);
+  const [allChannels, setAllChannels] = useState<
+    Array<{ id: string; display_name: string; platform: string }>
+  >([]);
+  const [channelSearch, setChannelSearch] = useState('');
 
   // Reset copied indicator
   useEffect(() => {
@@ -97,8 +106,28 @@ export function ExportDialog({
       setSelectedStageIds([]);
       setReRender(false);
       setViewGroupOverride(activeViewGroupName ?? null);
+      setExcludeChannelIds([]);
+      setChannelSearch('');
     }
   }, [open, activeViewGroupName]);
+
+  // Load the series' active channels for the exclusion picker when the
+  // dialog opens. Cheap, cached by the browser; only fetched while open.
+  useEffect(() => {
+    if (!open || !seriesId) return;
+    api
+      .listChannels(seriesId, { is_active: 'true' })
+      .then((rows) =>
+        setAllChannels(
+          rows.map((c) => ({
+            id: c.id,
+            display_name: c.display_name,
+            platform: c.platform,
+          })),
+        ),
+      )
+      .catch(() => setAllChannels([]));
+  }, [open, seriesId]);
 
   // Close on Escape
   useEffect(() => {
@@ -198,15 +227,20 @@ export function ExportDialog({
     );
   };
 
-  // Append ?view=<name> when a view group is active so the SPA ReportPage
-  // can replay the filter. Returns the path unchanged when no group is set.
-  // Uses effectiveViewGroupName so the in-dialog picker override wins over
-  // the top-bar selection (without forcing the operator to close + reopen).
+  // Append ?view=<name> and/or ?exclude=<ids> so the SPA ReportPage can
+  // replay the dialog's view-group + channel-exclusion selections. Returns
+  // the path unchanged when neither is set. Uses effectiveViewGroupName so
+  // the in-dialog picker override wins over the top-bar selection.
   const withViewParam = (path: string): string => {
+    let out = path;
+    const addParam = (k: string, v: string) => {
+      const sep = out.includes('?') ? '&' : '?';
+      out = `${out}${sep}${k}=${v}`;
+    };
     const groupName = effectiveViewGroupName?.trim();
-    if (!groupName) return path;
-    const sep = path.includes('?') ? '&' : '?';
-    return `${path}${sep}view=${encodeURIComponent(groupName)}`;
+    if (groupName) addParam('view', encodeURIComponent(groupName));
+    if (excludeChannelIds.length) addParam('exclude', excludeChannelIds.map(encodeURIComponent).join(','));
+    return out;
   };
 
   // File name / target preview (mono caption in footer).
@@ -352,6 +386,7 @@ export function ExportDialog({
                 platforms: resolvedViewGroup.platforms,
               }
             : undefined,
+          excludeChannelIds: excludeChannelIds.length ? excludeChannelIds : undefined,
         });
         const reportUrl = api.getReportUrl(result.filePath);
         window.open(reportUrl, '_blank', 'noopener,noreferrer');
@@ -568,6 +603,100 @@ export function ExportDialog({
                     );
                   })}
                 </div>
+              </Field>
+            )}
+
+            {/* Exclude-channels picker — ported from the legacy ExportPanel.
+                Drops the selected channels from the export's aggregation.
+                Honored by both renderers (legacy HTML + live SPA report). */}
+            {allChannels.length > 0 && (
+              <Field
+                label={`Exclude channels${excludeChannelIds.length ? ` (${excludeChannelIds.length})` : ''}`}
+              >
+                <input
+                  type="text"
+                  placeholder="Search channels…"
+                  value={channelSearch}
+                  onChange={(e) => setChannelSearch(e.target.value)}
+                  style={{
+                    width: '100%',
+                    marginBottom: 8,
+                    padding: '6px 9px',
+                    fontSize: 12,
+                    borderRadius: 5,
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--fg)',
+                  }}
+                />
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 6,
+                    maxHeight: 140,
+                    overflowY: 'auto',
+                  }}
+                >
+                  {allChannels
+                    .filter((ch) =>
+                      ch.display_name
+                        .toLowerCase()
+                        .includes(channelSearch.toLowerCase()),
+                    )
+                    .slice(0, 60)
+                    .map((ch) => {
+                      const active = excludeChannelIds.includes(ch.id);
+                      return (
+                        <button
+                          key={ch.id}
+                          type="button"
+                          title={`${ch.platform} · ${ch.display_name}`}
+                          onClick={() =>
+                            setExcludeChannelIds((prev) =>
+                              active
+                                ? prev.filter((v) => v !== ch.id)
+                                : [...prev, ch.id],
+                            )
+                          }
+                          style={{
+                            padding: '4px 10px',
+                            borderRadius: 999,
+                            fontSize: 11.5,
+                            fontWeight: active ? 600 : 500,
+                            background: active
+                              ? 'color-mix(in oklab, var(--red) 14%, var(--bg-card))'
+                              : 'var(--bg-card)',
+                            color: active ? 'var(--red)' : 'var(--fg)',
+                            border:
+                              '1px solid ' +
+                              (active ? 'var(--red)' : 'var(--border)'),
+                            textDecoration: active ? 'line-through' : 'none',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {ch.display_name}
+                        </button>
+                      );
+                    })}
+                </div>
+                {excludeChannelIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setExcludeChannelIds([])}
+                    style={{
+                      marginTop: 8,
+                      fontSize: 10.5,
+                      color: 'var(--fg-dim)',
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                    }}
+                  >
+                    Clear {excludeChannelIds.length} excluded
+                  </button>
+                )}
               </Field>
             )}
 

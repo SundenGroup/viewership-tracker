@@ -28,6 +28,7 @@ export function useTimelineSeries({
   refreshMs = 30_000,
   languages,
   platforms,
+  excludeChannelIds,
   publicShortName,
 }: {
   scope: TimelineScope | null;
@@ -35,6 +36,7 @@ export function useTimelineSeries({
   refreshMs?: number;
   languages?: string[];
   platforms?: string[];
+  excludeChannelIds?: string[];
   publicShortName?: string;
 }): {
   platform: SeriesData[];
@@ -68,6 +70,7 @@ export function useTimelineSeries({
         groupBy,
         languages,
         platforms,
+        excludeChannelIds,
       });
     }
     if (publicShortName) {
@@ -78,6 +81,7 @@ export function useTimelineSeries({
         groupBy,
         languages,
         platforms,
+        excludeChannelIds,
       });
     }
     return api.getTimeSeries({
@@ -92,13 +96,13 @@ export function useTimelineSeries({
 
   const { data: totalData, loading: totalLoading } = usePollingApi<TimeSeriesResponse>(
     () => fetchFor('total'),
-    [qs, publicShortName, languages?.join(','), platforms?.join(',')],
+    [qs, publicShortName, languages?.join(','), platforms?.join(','), excludeChannelIds?.join(',')],
     { intervalMs: refreshMs, enabled },
   );
 
   const { data: platformData } = usePollingApi<TimeSeriesResponse>(
     () => fetchFor('platform'),
-    [qs, publicShortName, languages?.join(','), platforms?.join(',')],
+    [qs, publicShortName, languages?.join(','), platforms?.join(','), excludeChannelIds?.join(',')],
     { intervalMs: refreshMs, enabled },
   );
 
@@ -106,13 +110,13 @@ export function useTimelineSeries({
   // because it's richer than region for these tournaments.
   const { data: tierData } = usePollingApi<TimeSeriesResponse>(
     () => fetchFor('tier'),
-    [qs, publicShortName, languages?.join(','), platforms?.join(',')],
+    [qs, publicShortName, languages?.join(','), platforms?.join(','), excludeChannelIds?.join(',')],
     { intervalMs: refreshMs, enabled },
   );
 
   const { data: languageData } = usePollingApi<TimeSeriesResponse>(
     () => fetchFor('language'),
-    [qs, publicShortName, languages?.join(','), platforms?.join(',')],
+    [qs, publicShortName, languages?.join(','), platforms?.join(','), excludeChannelIds?.join(',')],
     { intervalMs: refreshMs, enabled },
   );
 
