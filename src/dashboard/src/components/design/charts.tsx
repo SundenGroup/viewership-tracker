@@ -17,6 +17,7 @@ export function AreaChart({
   timestamps,
   timezone,
   label = 'Value',
+  disableHover = false,
 }: {
   data: number[];
   width?: number;
@@ -31,6 +32,10 @@ export function AreaChart({
   timezone?: string;
   /** Tooltip row label for the single series. Defaults to "Value". */
   label?: string;
+  /** Suppress this chart's own hover tracker + tooltip. Use when an outer
+   *  wrapper (e.g. ChartHoverOverlay) is already tracking hover over the
+   *  same area — prevents two tooltips showing simultaneously. */
+  disableHover?: boolean;
 }) {
   const baseId = useId();
   const hostRef = useRef<HTMLDivElement>(null);
@@ -54,7 +59,7 @@ export function AreaChart({
   const area = line + ` L${last[0]},${padding + h} L${first[0]},${padding + h} Z`;
   const gid = `af-${baseId}`;
 
-  const hoverEnabled = data.length > 1;
+  const hoverEnabled = data.length > 1 && !disableHover;
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!hoverEnabled) return;

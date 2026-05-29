@@ -180,7 +180,16 @@ export function InteractiveMainChart({
       >
         {dimension === 'total' ? (
           // Total dimension always renders a single filled area chart.
-          <AreaChart data={stackTotals.length ? stackTotals : totalData} width={width} height={height} />
+          // The outer ChartHoverOverlay owns hover for this chart, so
+          // suppress AreaChart's built-in tooltip to avoid a duplicate
+          // ("Value" label fighting "Total CCV") at slightly offset
+          // sample indices due to bounding-rect differences.
+          <AreaChart
+            data={stackTotals.length ? stackTotals : totalData}
+            width={width}
+            height={height}
+            disableHover
+          />
         ) : mode === 'stacked' ? (
           <StackedAreaChart series={visible} width={width} height={height} />
         ) : (
