@@ -416,7 +416,12 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       : { level: resolvedScope.level, id: resolvedScope.id };
   const timeline = useTimelineSeries({
     scope,
-    interval: 300,
+    // Per-minute. (Was 300, but the pre-rollup bucketing SQL only inspected
+    // the sub-minute remainder so it silently collapsed to 1-min anyway;
+    // the rollup fixed bucketing, which surfaced the real 5-min interval and
+    // made reports look coarser. 60 restores the long-standing per-minute view
+    // and matches the live dashboard.)
+    interval: 60,
     publicShortName: shortName,
     refreshMs: 60_000,
     languages: viewFilter.languages,
