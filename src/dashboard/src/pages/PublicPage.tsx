@@ -905,7 +905,11 @@ function PublicRecap({
 
   const timeline = useTimelineSeries({
     scope,
-    interval: 300,
+    // Per-minute, matching PublicLive + the reports. (Was 300, but pre-rollup
+    // bucketing always collapsed to 1-min so it never mattered; the rollup
+    // fixed bucketing and surfaced the real 5-min interval. 60 restores the
+    // expected per-minute resolution on the completed/recap view.)
+    interval: 60,
     publicShortName: shortName,
     languages: viewFilter.languages,
     platforms: viewFilter.platforms,
