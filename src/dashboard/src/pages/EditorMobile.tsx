@@ -23,6 +23,7 @@ import {
   IconMenu,
   IconMore,
   IconPause,
+  IconPlus,
   IconSettings,
   IconSparkle,
   IconUsers,
@@ -44,10 +45,13 @@ import type {
   DiscoveryStatus,
   Channel,
   BroadcastStatus,
+  BroadcastDay,
   MetricsResponse,
   LiveCCVResponse,
+  ViewGroup,
 } from '@/types/api';
 import type { PollingDataState } from '@/hooks/usePollingData';
+import { AddChannelDialog } from '@/components/editor/AddChannelDialog';
 
 type MobileTab = 'live' | 'channels' | 'discovery' | 'ops';
 
@@ -93,6 +97,8 @@ export function EditorMobile({
   const [tab, setTab] = useState<MobileTab>('live');
   const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [viewGroup, setViewGroup] = useState<string>('all');
+  const [addChannelOpen, setAddChannelOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   // Close menu on outside click / Esc
@@ -148,26 +154,47 @@ export function EditorMobile({
       ? { level: 'series' as const, id: seriesId }
       : null;
 
+  // View groups (e.g. "West") from series metadata, + the resolved
+  // language/platform filter for the currently-selected group. Mirrors the
+  // public viewer: selecting a group narrows the live chart, hero KPIs and
+  // the channels leaderboard to that subset.
+  const viewGroups = useMemo<ViewGroup[]>(() => {
+    const raw = (seriesDetail?.metadata as { viewGroups?: ViewGroup[] } | undefined)?.viewGroups;
+    return raw ?? [];
+  }, [seriesDetail]);
+  const viewFilter = useMemo<{ languages?: string[]; platforms?: string[] }>(() => {
+    if (viewGroup === 'all') return {};
+    const vg = viewGroups.find((g) => g.name === viewGroup);
+    if (!vg) return {};
+    return {
+      ...(vg.languages?.length ? { languages: vg.languages } : {}),
+      ...(vg.platforms?.length ? { platforms: vg.platforms } : {}),
+    };
+  }, [viewGroup, viewGroups]);
+  const hasViewFilter = Boolean(viewFilter.languages?.length || viewFilter.platforms?.length);
+  const filterKey = `${viewFilter.languages?.join(',') ?? ''}|${viewFilter.platforms?.join(',') ?? ''}`;
+
   // Scoped metrics + liveCCV (mirrors the desktop EditorDesktop and
   // PublicMobile behaviour). Without this the mobile dashboard's hero
   // peak/avg and the channels-tab leaderboard always render at series
-  // level even when a specific day is selected.
-  const needsScopedFetch = scope?.level === 'day';
+  // level even when a specific day is selected. Also forced when a view
+  // filter is active, since pollingData is unfiltered.
+  const needsScopedFetch = scope?.level === 'day' || hasViewFilter;
   const scopeCacheKey = scope ? `${scope.level}:${scope.id}` : '';
   const { data: scopedMetrics } = usePollingApi<MetricsResponse>(
     () =>
       needsScopedFetch && scope
-        ? api.getMetrics(scope.level, scope.id)
+        ? api.getMetrics(scope.level, scope.id, viewFilter.languages, viewFilter.platforms)
         : Promise.resolve(null as unknown as MetricsResponse),
-    [scopeCacheKey],
+    [scopeCacheKey, filterKey],
     { intervalMs: 30_000, enabled: needsScopedFetch },
   );
   const { data: scopedLiveCCV } = usePollingApi<LiveCCVResponse>(
     () =>
       needsScopedFetch && scope && seriesId
-        ? api.getLiveCCV(seriesId, scope.level, scope.id)
+        ? api.getLiveCCV(seriesId, scope.level, scope.id, viewFilter.languages, viewFilter.platforms)
         : Promise.resolve(null as unknown as LiveCCVResponse),
-    [scopeCacheKey, seriesId],
+    [scopeCacheKey, seriesId, filterKey],
     { intervalMs: 30_000, enabled: needsScopedFetch && !!seriesId },
   );
 
@@ -177,7 +204,18 @@ export function EditorMobile({
     liveCCV: needsScopedFetch ? scopedLiveCCV : pollingData.liveCCV,
   });
 
-  const timeline = useTimelineSeries({ scope, interval: 60 });
+  const timeline = useTimelineSeries({
+    scope,
+    interval: 60,
+    languages: viewFilter.languages,
+    platforms: viewFilter.platforms,
+  });
+
+  // All broadcast days (for the Add-channel dialog's day picker).
+  const allDays = useMemo<BroadcastDay[]>(
+    () => seriesDetail?.stages.flatMap((s) => s.broadcast_days) ?? [],
+    [seriesDetail],
+  );
   const heroAreaData = timeline.total.slice(-48);
 
   // Discovery feed
@@ -365,6 +403,50 @@ export function EditorMobile({
       >
         {tab === 'live' && (
           <>
+            {/* View-group filter — narrows the live chart, KPIs and
+                leaderboard to a group (e.g. "West"). Only shown when the
+                series defines view groups. */}
+            {viewGroups.length > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 6,
+                  overflowX: 'auto',
+                  paddingBottom: 2,
+                  marginBottom: 2,
+                  WebkitOverflowScrolling: 'touch',
+                }}
+              >
+                {[{ name: 'all', label: 'All channels' }, ...viewGroups.map((g) => ({ name: g.name, label: g.name }))].map(
+                  (opt) => {
+                    const active = viewGroup === opt.name;
+                    return (
+                      <button
+                        key={opt.name}
+                        type="button"
+                        onClick={() => setViewGroup(opt.name)}
+                        style={{
+                          flex: '0 0 auto',
+                          padding: '6px 13px',
+                          borderRadius: 999,
+                          fontSize: 12.5,
+                          fontWeight: active ? 600 : 500,
+                          whiteSpace: 'nowrap',
+                          background: active
+                            ? 'color-mix(in oklab, var(--red) 12%, var(--bg-card))'
+                            : 'var(--bg-card)',
+                          color: active ? 'var(--red)' : 'var(--fg)',
+                          border: '1px solid ' + (active ? 'var(--red)' : 'var(--border)'),
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  },
+                )}
+              </div>
+            )}
             {/* Hero CCV */}
             <div className="card" style={{ padding: 18 }}>
               <Row justify="space-between">
@@ -661,6 +743,19 @@ export function EditorMobile({
 
         {tab === 'ops' && (
           <>
+            {/* Add channel — lives in Ops to keep the Channels tab clean. */}
+            <Section eyebrow="Channels" title="Manage" compact>
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ width: '100%', justifyContent: 'center' }}
+                onClick={() => setAddChannelOpen(true)}
+                disabled={!seriesId}
+              >
+                <IconPlus size={13} /> Add channel
+              </button>
+            </Section>
+
             {liveDay ? (
               <Section
                 eyebrow="Broadcast day"
@@ -906,6 +1001,19 @@ export function EditorMobile({
           </button>
         ))}
       </nav>
+
+      {/* Add-channel dialog — opened from the Ops tab. */}
+      <AddChannelDialog
+        open={addChannelOpen}
+        onClose={() => setAddChannelOpen(false)}
+        seriesId={seriesId}
+        broadcastDays={allDays}
+        onAdded={() => {
+          // New channel flows into the dashboard on the next poll cycle;
+          // trigger one so it appears promptly.
+          onTriggerPoll?.();
+        }}
+      />
     </div>
   );
 }
