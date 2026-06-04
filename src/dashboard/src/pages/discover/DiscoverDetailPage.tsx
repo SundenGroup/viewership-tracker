@@ -363,9 +363,12 @@ function KpiCard({
 export function LeaderboardTable({
   rows,
   trackerSlug,
+  metricLabel = 'Live CCV',
 }: {
   rows: GameTrackerLeaderboardRow[] | null;
   trackerSlug: string;
+  /** Header label for the CCV column — "Live CCV" (now) or "Peak CCV" (range). */
+  metricLabel?: string;
 }) {
   const navigate = useNavigate();
   return (
@@ -376,7 +379,7 @@ export function LeaderboardTable({
           <th style={{ ...thStyle, width: 56 }}></th>
           <th style={thStyle}>Channel</th>
           <th style={{ ...thStyle, width: 60 }}>Lang</th>
-          <th style={{ ...thStyle, textAlign: 'right', width: 110 }}>Live CCV</th>
+          <th style={{ ...thStyle, textAlign: 'right', width: 110 }}>{metricLabel}</th>
         </tr>
       </thead>
       <tbody>
