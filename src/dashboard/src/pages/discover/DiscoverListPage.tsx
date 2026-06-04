@@ -154,9 +154,26 @@ export function DiscoverListPage() {
                 >
                   {t.name}
                 </div>
-                <Pill tone={t.status === 'active' ? 'live' : 'default'}>
-                  {t.status === 'active' ? '● Live' : t.status}
-                </Pill>
+                <Row gap={6} align="center">
+                  <Pill tone={t.status === 'active' ? 'live' : 'default'}>
+                    {t.status === 'active' ? '● Live' : t.status}
+                  </Pill>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      className="btn btn-xs"
+                      title="Edit tracker"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        navigate(`/discover/admin/edit/${t.slug}`);
+                      }}
+                      style={{ padding: '2px 8px', fontSize: 11 }}
+                    >
+                      Edit
+                    </button>
+                  )}
+                </Row>
               </Row>
               <Col gap={6} style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
                 {t.twitch_game_name && (

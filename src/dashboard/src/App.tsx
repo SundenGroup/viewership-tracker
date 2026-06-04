@@ -131,6 +131,7 @@ function AuthGate() {
         <Route path="/explore/:seriesId" element={<AppContent />} />
         <Route path="/explore" element={<AppContent />} />
         <Route path="/discover/admin/new" element={<AppContent />} />
+        <Route path="/discover/admin/edit/:slug" element={<AppContent />} />
         <Route path="/discover/:slug/channel/:channelId" element={<AppContent />} />
         <Route path="/discover/:slug" element={<AppContent />} />
         <Route path="/discover" element={<AppContent />} />
@@ -161,6 +162,7 @@ function AppContent() {
   const isNotificationsPage = pathname === '/settings/notifications';
   const isExplorePage = pathname.startsWith('/explore');
   const isDiscoverNew = pathname === '/discover/admin/new';
+  const isDiscoverEdit = /^\/discover\/admin\/edit\/[^/]+$/.test(pathname);
   const isDiscoverChannel = /^\/discover\/[^/]+\/channel\/[^/]+$/.test(pathname);
   const isDiscoverDetail = /^\/discover\/[^/]+$/.test(pathname) && !isDiscoverNew;
   const isDiscoverList = pathname === '/discover';
@@ -390,7 +392,7 @@ function AppContent() {
   if (isDiscoverDetail) {
     return <DiscoverDetailPage />;
   }
-  if (isDiscoverNew) {
+  if (isDiscoverNew || isDiscoverEdit) {
     return <DiscoverAdminNew />;
   }
 

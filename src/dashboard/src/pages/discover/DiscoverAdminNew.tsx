@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import * as api from '@/services/api';
 import { Row, ThemeToggle } from '@/components/design';
 
@@ -9,7 +9,8 @@ interface GameLookupResult {
 }
 
 /**
- * /discover/admin/new — admin form to create a new game tracker.
+ * /discover/admin/new   — create a new game tracker.
+ * /discover/admin/edit/:slug — edit an existing one (same form, prefilled).
  *
  * Uses the existing /api/series/games/lookup endpoint to resolve the
  * Twitch + Kick category IDs from a search term, mirroring the Series
@@ -17,8 +18,12 @@ interface GameLookupResult {
  */
 export function DiscoverAdminNew() {
   const navigate = useNavigate();
+  const { slug: editSlug } = useParams<{ slug?: string }>();
+  const isEdit = !!editSlug;
+
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
+  const [status, setStatus] = useState<'active' | 'paused'>('active');
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState<GameLookupResult | null>(null);
   const [searching, setSearching] = useState(false);
@@ -26,7 +31,42 @@ export function DiscoverAdminNew() {
   const [kickPick, setKickPick] = useState<{ id: string; name: string } | null>(null);
   const [minCcv, setMinCcv] = useState(10);
   const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(isEdit);
   const [error, setError] = useState<string | null>(null);
+
+  // Edit mode: load the existing tracker and prefill the form.
+  useEffect(() => {
+    if (!editSlug) return;
+    let cancelled = false;
+    setLoading(true);
+    api
+      .getGameTracker(editSlug)
+      .then((t) => {
+        if (cancelled) return;
+        setName(t.name);
+        setSlug(t.slug);
+        setStatus(t.status === 'paused' ? 'paused' : 'active');
+        setMinCcv(t.min_ccv_threshold);
+        setTwitchPick(
+          t.twitch_game_id ? { id: t.twitch_game_id, name: t.twitch_game_name ?? t.twitch_game_id } : null,
+        );
+        setKickPick(
+          t.kick_category_id != null
+            ? { id: String(t.kick_category_id), name: t.kick_category_slug ?? String(t.kick_category_id) }
+            : null,
+        );
+        setLoading(false);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) {
+          setError(err.message);
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [editSlug]);
 
   const slugify = (s: string) =>
     s
@@ -71,18 +111,24 @@ export function DiscoverAdminNew() {
     }
     setSubmitting(true);
     setError(null);
+    const payload = {
+      name: name.trim(),
+      slug: slug.trim(),
+      status,
+      twitch_game_id: twitchPick?.id ?? null,
+      twitch_game_name: twitchPick?.name ?? null,
+      kick_category_id: kickPick ? Number(kickPick.id) : null,
+      kick_category_slug: kickPick?.name ?? null,
+      min_ccv_threshold: minCcv,
+    };
     try {
-      const tracker = await api.createGameTracker({
-        name: name.trim(),
-        slug: slug.trim(),
-        status: 'active',
-        twitch_game_id: twitchPick?.id ?? null,
-        twitch_game_name: twitchPick?.name ?? null,
-        kick_category_id: kickPick ? Number(kickPick.id) : null,
-        kick_category_slug: kickPick?.name ?? null,
-        min_ccv_threshold: minCcv,
-      });
-      navigate(`/discover/${tracker.slug}`);
+      if (isEdit && editSlug) {
+        const tracker = await api.updateGameTracker(editSlug, payload);
+        navigate(`/discover/${tracker.slug}`);
+      } else {
+        const tracker = await api.createGameTracker(payload);
+        navigate(`/discover/${tracker.slug}`);
+      }
     } catch (err) {
       setError((err as Error).message);
       setSubmitting(false);
@@ -96,12 +142,17 @@ export function DiscoverAdminNew() {
         <ThemeToggle />
       </Row>
       <h1 style={{ fontSize: 24, fontWeight: 600, color: 'var(--fg)', margin: 0 }}>
-        New game tracker
+        {isEdit ? 'Edit game tracker' : 'New game tracker'}
       </h1>
       <p style={{ marginTop: 6, color: 'var(--fg-muted)', fontSize: 13, marginBottom: 24 }}>
-        Continuously track all live streams of a game on Twitch (Kick to follow). Fill in the
-        details and pick the right platform IDs.
+        {isEdit
+          ? 'Update this tracker’s name, platform mappings, threshold or status. Re-search only if you need to change the platform IDs.'
+          : 'Continuously track all live streams of a game on Twitch (Kick to follow). Fill in the details and pick the right platform IDs.'}
       </p>
+
+      {loading && (
+        <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 13 }}>Loading tracker…</div>
+      )}
 
       {error && (
         <div
@@ -148,8 +199,24 @@ export function DiscoverAdminNew() {
 
       <div className="card" style={{ padding: 20, marginBottom: 16 }}>
         <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--fg)', marginBottom: 12 }}>
-          2. Find platform IDs
+          2. {isEdit ? 'Platform IDs' : 'Find platform IDs'}
         </h3>
+        {(twitchPick || kickPick) && (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+            {twitchPick && (
+              <span style={currentPickStyle}>
+                Twitch: <strong>{twitchPick.name}</strong>{' '}
+                <span style={{ color: 'var(--fg-dim)', fontFamily: 'monospace' }}>#{twitchPick.id}</span>
+              </span>
+            )}
+            {kickPick && (
+              <span style={currentPickStyle}>
+                Kick: <strong>{kickPick.name}</strong>{' '}
+                <span style={{ color: 'var(--fg-dim)', fontFamily: 'monospace' }}>#{kickPick.id}</span>
+              </span>
+            )}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             type="text"
@@ -207,6 +274,33 @@ export function DiscoverAdminNew() {
               Streams below this CCV won't be tracked. 10 is a sensible default.
             </p>
           </div>
+          <div>
+            <label style={lbl}>Status</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {(['active', 'paused'] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  className="btn"
+                  onClick={() => setStatus(s)}
+                  style={{
+                    flex: 1,
+                    textTransform: 'capitalize',
+                    borderColor: status === s ? 'var(--red)' : 'var(--border)',
+                    color: status === s ? 'var(--red)' : 'var(--fg-muted)',
+                    background: status === s
+                      ? 'color-mix(in oklab, var(--red) 10%, transparent)'
+                      : 'var(--bg-sunken)',
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--fg-dim)', marginTop: 4 }}>
+              Paused trackers stop discovering and polling until re-activated.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -220,7 +314,13 @@ export function DiscoverAdminNew() {
           onClick={handleSubmit}
           disabled={submitting || (!twitchPick && !kickPick) || !name.trim() || !slug.trim()}
         >
-          {submitting ? 'Creating…' : 'Create tracker'}
+          {submitting
+            ? isEdit
+              ? 'Saving…'
+              : 'Creating…'
+            : isEdit
+              ? 'Save changes'
+              : 'Create tracker'}
         </button>
       </div>
     </div>
@@ -293,6 +393,15 @@ const lbl: React.CSSProperties = {
   textTransform: 'uppercase',
   letterSpacing: '0.05em',
   marginBottom: 4,
+};
+
+const currentPickStyle: React.CSSProperties = {
+  fontSize: 12,
+  padding: '4px 10px',
+  borderRadius: 6,
+  background: 'var(--bg-sunken)',
+  border: '1px solid var(--border)',
+  color: 'var(--fg)',
 };
 
 const inp: React.CSSProperties = {
