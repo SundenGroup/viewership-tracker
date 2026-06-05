@@ -365,46 +365,58 @@ export class GameTrackerService {
     streams: PlatformStream[],
     channelMap: Map<string, import('../models/channel').Channel>,
   ): Promise<void> {
-    const needLookup: Array<{ login: string; channel: import('../models/channel').Channel }> = [];
+    type Ch = import('../models/channel').Channel;
+    const twitchNeed: Array<{ login: string; channel: Ch }> = [];
+    const kickNeed: Array<{ slug: string; channel: Ch }> = [];
     for (const { platform, stream } of streams) {
-      if (platform !== 'twitch') continue; // Kick profile pics not yet supported
-      const ch = channelMap.get(this.channelKey('twitch', stream.channelIdentifier));
+      const ch = channelMap.get(this.channelKey(platform, stream.channelIdentifier));
       if (!ch) continue;
       const meta = (ch.metadata as Record<string, unknown>) ?? {};
-      if (typeof meta.profile_image_url !== 'string' || meta.profile_image_url.length === 0) {
-        needLookup.push({ login: stream.channelIdentifier, channel: ch });
+      if (typeof meta.profile_image_url === 'string' && meta.profile_image_url.length > 0) continue;
+      if (platform === 'twitch') twitchNeed.push({ login: stream.channelIdentifier, channel: ch });
+      else if (platform === 'kick') kickNeed.push({ slug: stream.channelIdentifier, channel: ch });
+    }
+
+    const persist = async (channel: Ch, patch: Record<string, unknown>) => {
+      const updated = { ...(channel.metadata as Record<string, unknown>), ...patch };
+      await this.db('channels').where('id', channel.id).update({ metadata: JSON.stringify(updated) });
+      channel.metadata = updated; // keep in-memory copy fresh for this cycle
+    };
+
+    // Twitch — Helix /users
+    if (twitchNeed.length > 0) {
+      try {
+        const twitch = this.registry.getAdapter('twitch') as TwitchAdapter;
+        const profiles = await twitch.getUsersByLogin(twitchNeed.map((n) => n.login));
+        const byLogin = new Map<string, (typeof profiles)[number]>();
+        for (const p of profiles) byLogin.set(p.login.toLowerCase(), p);
+        for (const { login, channel } of twitchNeed) {
+          const p = byLogin.get(login.toLowerCase());
+          if (!p) continue;
+          await persist(channel, { profile_image_url: p.profileImageUrl, twitch_display_name: p.displayName });
+        }
+        logger.debug(`[GameTracker] cached twitch pics for ${profiles.length}/${twitchNeed.length}`);
+      } catch (err) {
+        logger.warn('[GameTracker] twitch profile pic fetch failed', { error: (err as Error).message });
       }
     }
-    if (needLookup.length === 0) return;
 
-    try {
-      const twitch = this.registry.getAdapter('twitch') as TwitchAdapter;
-      const profiles = await twitch.getUsersByLogin(needLookup.map((n) => n.login));
-      const byLogin = new Map<string, (typeof profiles)[number]>();
-      for (const p of profiles) byLogin.set(p.login.toLowerCase(), p);
-
-      for (const { login, channel } of needLookup) {
-        const p = byLogin.get(login.toLowerCase());
-        if (!p) continue;
-        const updated = {
-          ...(channel.metadata as Record<string, unknown>),
-          profile_image_url: p.profileImageUrl,
-          twitch_display_name: p.displayName,
-        };
-        await this.db('channels')
-          .where('id', channel.id)
-          .update({ metadata: JSON.stringify(updated) });
-        // Update the in-memory copy so subsequent loops in the same
-        // cycle see the new value.
-        channel.metadata = updated;
+    // Kick — official API (channels → broadcaster_user_id → users → profile_picture)
+    if (kickNeed.length > 0) {
+      try {
+        const kick = this.registry.getAdapter('kick') as KickAdapter;
+        const pics = await kick.getProfilePics(kickNeed.map((n) => n.slug));
+        let n = 0;
+        for (const { slug, channel } of kickNeed) {
+          const url = pics.get(slug.toLowerCase());
+          if (!url) continue;
+          await persist(channel, { profile_image_url: url });
+          n++;
+        }
+        logger.debug(`[GameTracker] cached kick pics for ${n}/${kickNeed.length}`);
+      } catch (err) {
+        logger.warn('[GameTracker] kick profile pic fetch failed', { error: (err as Error).message });
       }
-      logger.debug(
-        `[GameTracker] cached profile pics for ${profiles.length}/${needLookup.length} channel(s)`,
-      );
-    } catch (err) {
-      logger.warn('[GameTracker] profile pic fetch failed', {
-        error: (err as Error).message,
-      });
     }
   }
 

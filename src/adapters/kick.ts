@@ -359,6 +359,54 @@ export class KickAdapter implements PlatformAdapter {
   }
 
   /**
+   * Fetch profile-picture URLs for Kick channels by slug. The official API
+   * has no avatar on the channels endpoint, so it's two hops:
+   *   slug → broadcaster_user_id   (GET /public/v1/channels?slug=…)
+   *   user_id → profile_picture    (GET /public/v1/users?id=…)
+   * Returns a map of lowercased-slug → profile_picture URL. Channels that
+   * can't be resolved are simply absent from the map.
+   */
+  async getProfilePics(slugs: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    if (slugs.length === 0) return out;
+    const BATCH = 40;
+    for (let i = 0; i < slugs.length; i += BATCH) {
+      const batch = slugs.slice(i, i + BATCH);
+      // 1) slug → broadcaster_user_id
+      const chRes = await this.requestWithRetry(async () => {
+        const q = batch.map((s) => `slug=${encodeURIComponent(s)}`).join('&');
+        const { data } = await this.client.get<{ data: KickChannelResponse[] }>(
+          `/public/v1/channels?${q}`,
+        );
+        return data;
+      }, `profilepics channels [${batch.join(',')}]`);
+      if (!chRes || !Array.isArray(chRes.data)) continue;
+      const idToSlug = new Map<number, string>();
+      for (const c of chRes.data) {
+        if (c.broadcaster_user_id != null && c.slug) {
+          idToSlug.set(c.broadcaster_user_id, c.slug.toLowerCase());
+        }
+      }
+      const ids = [...idToSlug.keys()];
+      if (ids.length === 0) continue;
+      // 2) broadcaster_user_id → profile_picture
+      const usRes = await this.requestWithRetry(async () => {
+        const q = ids.map((id) => `id=${id}`).join('&');
+        const { data } = await this.client.get<{
+          data: Array<{ user_id: number; profile_picture?: string }>;
+        }>(`/public/v1/users?${q}`);
+        return data;
+      }, `profilepics users [${ids.join(',')}]`);
+      if (!usRes || !Array.isArray(usRes.data)) continue;
+      for (const u of usRes.data) {
+        const slug = idToSlug.get(u.user_id);
+        if (slug && u.profile_picture) out.set(slug, u.profile_picture);
+      }
+    }
+    return out;
+  }
+
+  /**
    * Look up a category ID by name (e.g. "PUBG: BATTLEGROUNDS" → 15).
    * Uses the v1 search endpoint with a fuzzy query, returns the best match.
    */
