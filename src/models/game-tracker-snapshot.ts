@@ -151,37 +151,50 @@ export async function rangeLeaderboard(
     peak_ccv: number;
     avg_ccv: number;
     minutes_live: number;
+    days_streamed: number;
     platform: string;
     language: string | null;
   }>
 > {
-  // Per-channel aggregates within the range. avg_ccv is the AVERAGE
-  // CCV across all snapshots in the range (so a streamer who was live
-  // for 10 minutes at 100 viewers gets avg=100, not avg=33 if the
-  // window was 30 minutes long). Sort by peak DESC.
+  // Per-STREAMER aggregates within the range. We group by streamer identity
+  // (platform + lower(channel_identifier)) rather than channel_id, because
+  // the same streamer can have several channel rows across series (gt-pubg,
+  // a tournament series, …) and the game tracker accumulates snapshots under
+  // each — grouping by channel_id would list the streamer multiple times.
+  // Merging by identity dedups those and unions their minutes/days.
+  //
+  // - peak_ccv     = MAX across all the streamer's snapshots
+  // - avg_ccv      = AVG across all snapshots
+  // - minutes_live = distinct minutes with a snapshot (overlaps counted once)
+  // - days_streamed= distinct calendar days with a snapshot
+  // A representative channel_id (the highest-peak one) is returned for the
+  // row link/avatar; identifier+platform are identical across the merged set.
   const rows = await db.raw<{
     rows: Array<{
       channel_id: string;
       peak_ccv: string;
       avg_ccv: string;
       minutes_live: string;
+      days_streamed: string;
       platform: string;
       language: string | null;
     }>;
   }>(
     `
     SELECT
-      channel_id,
-      MAX(concurrent_viewers) AS peak_ccv,
-      AVG(concurrent_viewers)::int AS avg_ccv,
-      COUNT(DISTINCT date_trunc('minute', "timestamp")) AS minutes_live,
-      MAX(platform) AS platform,
-      MAX(language) AS language
-    FROM game_tracker_snapshots
-    WHERE game_tracker_id = ?
-      AND "timestamp" >= ?
-      AND "timestamp" < ?
-    GROUP BY channel_id
+      (array_agg(s.channel_id ORDER BY s.concurrent_viewers DESC))[1] AS channel_id,
+      MAX(s.concurrent_viewers) AS peak_ccv,
+      AVG(s.concurrent_viewers)::int AS avg_ccv,
+      COUNT(DISTINCT date_trunc('minute', s."timestamp")) AS minutes_live,
+      COUNT(DISTINCT date_trunc('day', s."timestamp")) AS days_streamed,
+      MAX(s.platform) AS platform,
+      MAX(s.language) AS language
+    FROM game_tracker_snapshots s
+    JOIN channels c ON c.id = s.channel_id
+    WHERE s.game_tracker_id = ?
+      AND s."timestamp" >= ?
+      AND s."timestamp" < ?
+    GROUP BY c.platform, LOWER(c.channel_identifier)
     ORDER BY peak_ccv DESC
     LIMIT ?
     `,
@@ -192,6 +205,7 @@ export async function rangeLeaderboard(
     peak_ccv: Number(r.peak_ccv),
     avg_ccv: Number(r.avg_ccv),
     minutes_live: Number(r.minutes_live),
+    days_streamed: Number(r.days_streamed),
     platform: r.platform,
     language: r.language,
   }));
