@@ -933,6 +933,7 @@ export interface GameTrackerRangeLeaderboardRow {
   peak_ccv: number;
   avg_ccv: number;
   minutes_live: number;
+  days_streamed: number;
   platform: string;
   language: string | null;
   channel: {

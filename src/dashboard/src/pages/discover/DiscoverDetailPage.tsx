@@ -360,17 +360,26 @@ function KpiCard({
   );
 }
 
+export type LeaderboardRow = GameTrackerLeaderboardRow & {
+  minutes_live?: number;
+  days_streamed?: number;
+};
+
 export function LeaderboardTable({
   rows,
   trackerSlug,
   metricLabel = 'Live CCV',
+  showRangeStats = false,
 }: {
-  rows: GameTrackerLeaderboardRow[] | null;
+  rows: LeaderboardRow[] | null;
   trackerSlug: string;
   /** Header label for the CCV column — "Live CCV" (now) or "Peak CCV" (range). */
   metricLabel?: string;
+  /** Show Days streamed + Hours columns (range mode). */
+  showRangeStats?: boolean;
 }) {
   const navigate = useNavigate();
+  const colCount = showRangeStats ? 7 : 5;
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
       <thead>
@@ -379,21 +388,23 @@ export function LeaderboardTable({
           <th style={{ ...thStyle, width: 56 }}></th>
           <th style={thStyle}>Channel</th>
           <th style={{ ...thStyle, width: 60 }}>Lang</th>
+          {showRangeStats && <th style={{ ...thStyle, textAlign: 'right', width: 70 }}>Days</th>}
+          {showRangeStats && <th style={{ ...thStyle, textAlign: 'right', width: 90 }}>Hours</th>}
           <th style={{ ...thStyle, textAlign: 'right', width: 110 }}>{metricLabel}</th>
         </tr>
       </thead>
       <tbody>
         {rows === null && (
           <tr>
-            <td colSpan={5} style={{ padding: 24, textAlign: 'center', color: 'var(--fg-muted)' }}>
+            <td colSpan={colCount} style={{ padding: 24, textAlign: 'center', color: 'var(--fg-muted)' }}>
               Loading…
             </td>
           </tr>
         )}
         {rows && rows.length === 0 && (
           <tr>
-            <td colSpan={5} style={{ padding: 32, textAlign: 'center', color: 'var(--fg-muted)' }}>
-              No active streams right now
+            <td colSpan={colCount} style={{ padding: 32, textAlign: 'center', color: 'var(--fg-muted)' }}>
+              {showRangeStats ? 'No streams in this range' : 'No active streams right now'}
             </td>
           </tr>
         )}
@@ -458,6 +469,32 @@ export function LeaderboardTable({
               <td style={{ ...tdStyle, color: 'var(--fg-dim)' }}>
                 {row.language?.toUpperCase() ?? '—'}
               </td>
+              {showRangeStats && (
+                <td
+                  style={{
+                    ...tdStyle,
+                    textAlign: 'right',
+                    fontFamily: 'var(--font-mono)',
+                    fontVariantNumeric: 'tabular-nums',
+                    color: 'var(--fg-muted)',
+                  }}
+                >
+                  {row.days_streamed ?? '—'}
+                </td>
+              )}
+              {showRangeStats && (
+                <td
+                  style={{
+                    ...tdStyle,
+                    textAlign: 'right',
+                    fontFamily: 'var(--font-mono)',
+                    fontVariantNumeric: 'tabular-nums',
+                    color: 'var(--fg-muted)',
+                  }}
+                >
+                  {row.minutes_live != null ? `${(row.minutes_live / 60).toFixed(1)}h` : '—'}
+                </td>
+              )}
               <td
                 style={{
                   ...tdStyle,

@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as api from '@/services/api';
-import type { GameTrackerLeaderboardRow } from '@/services/api';
 import { Row, Section, IconFilter } from '@/components/design';
-import { LeaderboardTable } from './DiscoverDetailPage';
+import { LeaderboardTable, type LeaderboardRow } from './DiscoverDetailPage';
 
 const POLL_INTERVAL_MS = 30_000;
 type PlatformFilter = 'all' | 'twitch' | 'kick';
@@ -10,7 +9,7 @@ type DateMode = 'now' | '24h' | '7d' | 'custom';
 type SortKey = 'ccv' | 'lang';
 
 export function DiscoverChannelsTab({ slug }: { slug: string }) {
-  const [rows, setRows] = useState<GameTrackerLeaderboardRow[] | null>(null);
+  const [rows, setRows] = useState<LeaderboardRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [platform, setPlatform] = useState<PlatformFilter>('all');
   const [lang, setLang] = useState<string>('all');
@@ -71,6 +70,8 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
             language: r.language,
             timestamp: '',
             channel: r.channel,
+            minutes_live: r.minutes_live,
+            days_streamed: r.days_streamed,
           })),
         );
       })
@@ -206,6 +207,7 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
           rows={filtered}
           trackerSlug={slug}
           metricLabel={range ? 'Peak CCV' : 'Live CCV'}
+          showRangeStats={!!range}
         />
       </div>
     </Section>
