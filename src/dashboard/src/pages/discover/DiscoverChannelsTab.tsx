@@ -199,17 +199,15 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
       )}
       {error && <div style={{ color: 'var(--red)', fontSize: 13 }}>{error}</div>}
 
-      {/* Full-width table that bleeds to the card edges (cancels the
-          section's 16px padding) so rows span edge-to-edge while the
-          header above stays aligned. */}
-      <div style={{ margin: '0 -16px -16px' }}>
-        <LeaderboardTable
-          rows={filtered}
-          trackerSlug={slug}
-          metricLabel={range ? 'Peak CCV' : 'Live CCV'}
-          showRangeStats={!!range}
-        />
-      </div>
+      {/* Table sits within the section padding (no edge bleed) so its left
+          and right line up with the header + the rest of the page — matching
+          the Live/overview leaderboard. */}
+      <LeaderboardTable
+        rows={filtered}
+        trackerSlug={slug}
+        metricLabel={range ? 'Peak CCV' : 'Live CCV'}
+        showRangeStats={!!range}
+      />
     </Section>
   );
 }
