@@ -322,6 +322,9 @@ router.get('/:slug/range-leaderboard', async (req: Request, res: Response, next:
     const fromTs = req.query.from ? new Date(String(req.query.from)) : new Date(Date.now() - 24 * 60 * 60_000);
     const toTs = req.query.to ? new Date(String(req.query.to)) : new Date();
     const limit = req.query.limit ? Math.min(Math.max(Number(req.query.limit), 1), 200) : 50;
+    const offset = req.query.offset ? Math.max(0, Number(req.query.offset)) : 0;
+    const language = req.query.language ? String(req.query.language) : null;
+    const platform = req.query.platform ? String(req.query.platform) : null;
     if (Number.isNaN(fromTs.getTime()) || Number.isNaN(toTs.getTime())) {
       res.status(400).json({ error: 'from / to must be valid ISO timestamps' });
       return;
@@ -330,7 +333,11 @@ router.get('/:slug/range-leaderboard', async (req: Request, res: Response, next:
       res.status(400).json({ error: 'to must be after from' });
       return;
     }
-    const rows = await GameTrackerSnapshotModel.rangeLeaderboard(tracker.id, fromTs, toTs, limit);
+    const rows = await GameTrackerSnapshotModel.rangeLeaderboard(tracker.id, fromTs, toTs, limit, {
+      language,
+      platform,
+      offset,
+    });
     if (rows.length === 0) {
       res.json({ from: fromTs, to: toTs, rows: [] });
       return;

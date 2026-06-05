@@ -145,6 +145,7 @@ export async function rangeLeaderboard(
   fromTs: Date,
   toTs: Date,
   limit = 50,
+  opts: { language?: string | null; platform?: string | null; offset?: number } = {},
 ): Promise<
   Array<{
     channel_id: string;
@@ -169,6 +170,20 @@ export async function rangeLeaderboard(
   // - days_streamed= distinct calendar days with a snapshot
   // A representative channel_id (the highest-peak one) is returned for the
   // row link/avatar; identifier+platform are identical across the merged set.
+  // Optional server-side language/platform filters (so e.g. picking "TR"
+  // returns the top TR streamers, not just the TR streamers that happened to
+  // be in the global top-N), plus OFFSET for pagination.
+  const params: unknown[] = [gameTrackerId, fromTs, toTs];
+  let filterSql = '';
+  if (opts.language) {
+    filterSql += ' AND LOWER(s.language) = LOWER(?)';
+    params.push(opts.language);
+  }
+  if (opts.platform) {
+    filterSql += ' AND c.platform = ?';
+    params.push(opts.platform);
+  }
+  params.push(limit, Math.max(0, opts.offset ?? 0));
   const rows = await db.raw<{
     rows: Array<{
       channel_id: string;
@@ -194,11 +209,12 @@ export async function rangeLeaderboard(
     WHERE s.game_tracker_id = ?
       AND s."timestamp" >= ?
       AND s."timestamp" < ?
+      ${filterSql}
     GROUP BY c.platform, LOWER(c.channel_identifier)
     ORDER BY peak_ccv DESC
-    LIMIT ?
+    LIMIT ? OFFSET ?
     `,
-    [gameTrackerId, fromTs, toTs, limit],
+    params,
   );
   return rows.rows.map((r) => ({
     channel_id: r.channel_id,
