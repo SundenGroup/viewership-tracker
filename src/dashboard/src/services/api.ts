@@ -1047,12 +1047,16 @@ export function getGameTrackerRangeLeaderboard(
   from: Date,
   to: Date,
   limit = 50,
+  opts: { language?: string; platform?: string; offset?: number } = {},
 ) {
   const params = new URLSearchParams({
     from: from.toISOString(),
     to: to.toISOString(),
     limit: String(limit),
   });
+  if (opts.language) params.set('language', opts.language);
+  if (opts.platform) params.set('platform', opts.platform);
+  if (opts.offset) params.set('offset', String(opts.offset));
   return request<{
     from: string;
     to: string;

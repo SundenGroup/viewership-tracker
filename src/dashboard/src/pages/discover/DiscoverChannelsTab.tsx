@@ -8,6 +8,8 @@ type PlatformFilter = 'all' | 'twitch' | 'kick';
 type DateMode = 'now' | '24h' | '7d' | 'custom';
 type SortKey = 'ccv' | 'lang';
 
+const PAGE_SIZE = 50;
+
 export function DiscoverChannelsTab({ slug }: { slug: string }) {
   const [rows, setRows] = useState<LeaderboardRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -17,6 +19,8 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
   const [dateMode, setDateMode] = useState<DateMode>('now');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
+  const [page, setPage] = useState(0);
+  const [rangeLangOptions, setRangeLangOptions] = useState<string[]>([]);
 
   // Resolve the [from, to] window for range modes. Returns null for 'now'
   // (live mode) or an incomplete custom selection.
@@ -35,12 +39,36 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
 
   const rangeKey = range ? `${range.from.toISOString()}|${range.to.toISOString()}` : 'now';
 
+  // Reset to page 1 whenever the range or a server-side filter changes.
+  useEffect(() => {
+    setPage(0);
+  }, [rangeKey, lang, platform]);
+
+  // Range mode: load the full language list for the dropdown (independent of
+  // the active language filter, which is now applied server-side).
+  useEffect(() => {
+    if (!range) return;
+    let cancelled = false;
+    api
+      .getGameTrackerBreakdown(slug, range.from, range.to)
+      .then((b) => {
+        if (cancelled) return;
+        setRangeLangOptions(
+          b.language.map((l) => l.language?.toLowerCase()).filter((x): x is string => !!x).sort(),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, rangeKey, range]);
+
   useEffect(() => {
     let cancelled = false;
     setError(null);
 
     if (!range) {
-      // Live "active now" leaderboard — polls.
+      // Live "active now" leaderboard — polls; filters applied client-side.
       const refresh = () =>
         api
           .getGameTrackerLeaderboard(slug, undefined, 200)
@@ -54,11 +82,16 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
       };
     }
 
-    // Range mode — one-shot historical fetch, ranked by peak CCV over the
-    // window. Map to the live-row shape so the shared table can render it.
+    // Range mode — server-side language/platform filters + offset pagination,
+    // ranked by peak CCV over the window. Map to the live-row shape for the
+    // shared table.
     setRows(null);
     api
-      .getGameTrackerRangeLeaderboard(slug, range.from, range.to, 200)
+      .getGameTrackerRangeLeaderboard(slug, range.from, range.to, PAGE_SIZE, {
+        language: lang !== 'all' ? lang : undefined,
+        platform: platform !== 'all' ? platform : undefined,
+        offset: page * PAGE_SIZE,
+      })
       .then((res) => {
         if (cancelled) return;
         setRows(
@@ -79,24 +112,31 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
     return () => {
       cancelled = true;
     };
-  }, [slug, rangeKey, range]);
+  }, [slug, rangeKey, range, lang, platform, page]);
 
-  // Languages present in the current result set (for the filter dropdown).
+  // Language dropdown options: full range list in range mode; derived from the
+  // live set otherwise.
   const languages = useMemo(() => {
+    if (range) return rangeLangOptions;
     const set = new Set<string>();
     for (const r of rows ?? []) if (r.language) set.add(r.language.toLowerCase());
     return [...set].sort();
-  }, [rows]);
+  }, [range, rangeLangOptions, rows]);
 
+  // Live mode filters client-side; range mode is already filtered server-side.
+  // Sort is applied client-side either way (reorders the current page).
   const filtered = useMemo(() => {
-    let out = (rows ?? []).filter(
-      (r) =>
-        (platform === 'all' || r.platform === platform) &&
-        (lang === 'all' || (r.language?.toLowerCase() ?? '') === lang),
-    );
+    let out = rows ?? [];
+    if (!range) {
+      out = out.filter(
+        (r) =>
+          (platform === 'all' || r.platform === platform) &&
+          (lang === 'all' || (r.language?.toLowerCase() ?? '') === lang),
+      );
+    }
     out = [...out].sort((a, b) => {
       if (sort === 'lang') {
-        const la = a.language?.toLowerCase() ?? '~'; // nulls last
+        const la = a.language?.toLowerCase() ?? '~';
         const lb = b.language?.toLowerCase() ?? '~';
         if (la !== lb) return la.localeCompare(lb);
         return b.concurrent_viewers - a.concurrent_viewers;
@@ -104,7 +144,9 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
       return b.concurrent_viewers - a.concurrent_viewers;
     });
     return out;
-  }, [rows, platform, lang, sort]);
+  }, [rows, platform, lang, sort, range]);
+
+  const hasNextPage = !!range && (rows?.length ?? 0) === PAGE_SIZE;
 
   return (
     <Section
@@ -126,7 +168,7 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
             </Pill>
           ))}
           <span style={{ fontSize: 11, color: 'var(--fg-dim)', marginLeft: 6 }}>
-            {filtered.length} {range ? 'channels' : 'live'}
+            {range ? `${filtered.length} on page ${page + 1}` : `${filtered.length} live`}
           </span>
         </Row>
       }
@@ -208,6 +250,23 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
         metricLabel={range ? 'Peak CCV' : 'Live CCV'}
         showRangeStats={!!range}
       />
+
+      {/* Pagination — range mode only (live "now" is a single small set). */}
+      {range && (page > 0 || hasNextPage) && (
+        <Row gap={10} align="center" justify="center">
+          {page > 0 && (
+            <Pill active={false} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+              ‹ Prev
+            </Pill>
+          )}
+          <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Page {page + 1}</span>
+          {hasNextPage && (
+            <Pill active={false} onClick={() => setPage((p) => p + 1)}>
+              Next ›
+            </Pill>
+          )}
+        </Row>
+      )}
     </Section>
   );
 }
