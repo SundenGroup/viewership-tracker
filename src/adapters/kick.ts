@@ -470,28 +470,32 @@ export class KickAdapter implements PlatformAdapter {
     // Category filter is unreliable — sometimes returns 0 results even when
     // streams exist under that category.
     let allStreams: DiscoveredStream[] = [];
+    // Whether `allStreams` came from the category_id-filtered request (already
+    // game-scoped) vs. the global top-100 fallback (NOT game-scoped — must be
+    // category-gated below).
+    let usedCategoryRequest = false;
 
     const params: Record<string, unknown> = {
       limit: 100,
       sort: 'viewer_count',
     };
 
-    if (gameId) {
-      const numericId = parseInt(gameId, 10);
-      if (!isNaN(numericId)) {
-        // Try with category filter first
-        const catResult = await this.requestWithRetry(async () => {
-          const { data } = await this.client.get<{ data: KickLivestreamResponse[] }>('/public/v1/livestreams', {
-            params: { ...params, category_id: numericId },
-          });
-          return data;
-        }, 'livestreams(category)');
+    const targetCategoryId = gameId ? parseInt(gameId, 10) : NaN;
 
-        if (catResult && Array.isArray(catResult.data) && catResult.data.length > 0) {
-          allStreams = catResult.data.map((raw) => this.parseLivestreamResponse(raw));
-        } else {
-          logger.info(`Kick: category_id ${numericId} returned 0 results, falling back to all livestreams`);
-        }
+    if (!isNaN(targetCategoryId)) {
+      // Try with category filter first
+      const catResult = await this.requestWithRetry(async () => {
+        const { data } = await this.client.get<{ data: KickLivestreamResponse[] }>('/public/v1/livestreams', {
+          params: { ...params, category_id: targetCategoryId },
+        });
+        return data;
+      }, 'livestreams(category)');
+
+      if (catResult && Array.isArray(catResult.data) && catResult.data.length > 0) {
+        allStreams = catResult.data.map((raw) => this.parseLivestreamResponse(raw));
+        usedCategoryRequest = true;
+      } else {
+        logger.info(`Kick: category_id ${targetCategoryId} returned 0 results, falling back to all livestreams`);
       }
     }
 
@@ -516,17 +520,28 @@ export class KickAdapter implements PlatformAdapter {
 
     logger.info(`Kick: fetched ${allStreams.length} livestreams (API max: 100, no pagination)`);
 
-    // Filter by keywords in stream title/channel name (client-side).
-    // When category filter worked, results are already game-scoped — keyword match is enough.
-    // When falling back to all livestreams, also check the stream's category matches our
-    // target game. This prevents generic keywords like "watch party" from matching
-    // Dota streamers when searching for GeoGuessr watch parties.
-    const targetCategoryId = gameId ? parseInt(gameId, 10) : NaN;
-    const categoryFilterWorked = allStreams.length > 0 && !isNaN(targetCategoryId)
-      && allStreams.every((s) => (s as { categoryId?: number }).categoryId === targetCategoryId);
-
+    // Filter results. Two modes:
+    //
+    //  • Category-driven (game trackers): no keywords. When the streams came
+    //    from the global top-100 FALLBACK (the category_id request returned
+    //    nothing), keep only streams whose own category matches the target.
+    //    Without this gate, a niche or momentarily-empty category (e.g.
+    //    "Goals", "GeoGuessr") makes the fallback vacuum up the global top
+    //    Kick streams — Just Chatting, IRL, Slots & Casino, GTA — none of
+    //    which are playing our game. The category_id-request path is already
+    //    game-scoped, so the gate only applies to the fallback.
+    //
+    //  • Keyword-driven (e.g. watch-party discovery): require a title/name
+    //    keyword match; in the fallback, a stream in a different category is
+    //    allowed only if the channel NAME itself matches a keyword.
     const streams = (allStreams as Array<DiscoveredStream & { categoryId?: number; categoryName?: string }>).filter((stream) => {
-      if (!keywords || keywords.length === 0) return true;
+      if (!keywords || keywords.length === 0) {
+        // Category-driven: gate the fallback by the stream's actual category.
+        if (!isNaN(targetCategoryId) && !usedCategoryRequest) {
+          return stream.categoryId === targetCategoryId;
+        }
+        return true;
+      }
       const title = (stream.title ?? '').toLowerCase();
       const displayName = stream.displayName.toLowerCase();
       const matchesKeyword = keywords.some(
@@ -534,14 +549,14 @@ export class KickAdapter implements PlatformAdapter {
       );
       if (!matchesKeyword) return false;
 
-      // If we used the category filter successfully, all results are already game-scoped
-      if (categoryFilterWorked) return true;
+      // Category-request results are already game-scoped.
+      if (usedCategoryRequest) return true;
 
-      // Falling back to all livestreams — verify the stream's category matches our target
+      // Fallback path — verify the stream's category matches our target.
       if (!isNaN(targetCategoryId) && stream.categoryId !== undefined) {
         if (stream.categoryId !== targetCategoryId) {
-          // Stream is in a different category — only allow if channel name matches a keyword
-          // (the channel itself is relevant, just streaming under a different category)
+          // Different category — allow only if the channel NAME matches a keyword
+          // (the channel itself is relevant, just streaming under a different category).
           const nameMatchesKeyword = keywords.some(
             (kw) => displayName.includes(kw.toLowerCase()),
           );
@@ -555,9 +570,10 @@ export class KickAdapter implements PlatformAdapter {
       return true;
     });
 
-    logger.debug(`Kick searchLiveStreams: ${allStreams.length} total, ${streams.length} matched keywords`, {
+    logger.debug(`Kick searchLiveStreams: ${allStreams.length} total, ${streams.length} matched`, {
       gameId,
       keywords,
+      usedCategoryRequest,
     });
     return streams;
   }
