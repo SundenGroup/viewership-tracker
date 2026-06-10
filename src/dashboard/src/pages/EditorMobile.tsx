@@ -14,6 +14,7 @@ import {
   AreaChart,
   Section,
   ChannelNameWithLink,
+  PublicLinkButton,
   IconBolt,
   IconCheck,
   IconDot,
@@ -88,6 +89,7 @@ export function EditorMobile({
   discoveryLoading,
 }: EditorMobileProps) {
   const navigate = useNavigate();
+  const { isEditor } = useAuth();
   const [tab, setTab] = useState<MobileTab>('live');
   const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
   const [viewGroup, setViewGroup] = useState<string>('all');
@@ -583,6 +585,21 @@ export function EditorMobile({
               >
                 <IconPlus size={13} /> Add channel
               </button>
+            </Section>
+
+            {/* Public link + series settings */}
+            <Section eyebrow="Share" title="Public & settings" compact>
+              <PublicLinkButton variant="menu-item" series={seriesDetail} canEdit={isEditor} />
+              {isEditor && (
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ width: '100%', justifyContent: 'center', marginTop: 6 }}
+                  onClick={() => navigate(`/${seriesId}/edit`)}
+                >
+                  <IconSettings size={13} /> Series settings
+                </button>
+              )}
             </Section>
 
             {liveDay ? (

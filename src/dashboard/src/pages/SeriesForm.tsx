@@ -359,6 +359,21 @@ export function SeriesFormPage({
     if (isEdit && seriesDetail) setForm(seriesDetailToForm(seriesDetail));
   }, [isEdit, seriesDetail]);
 
+  // Deep-link from PublicLinkButton's "Enable in Series settings →"
+  // (/:id/edit?focus=public): scroll to the public block and flash it.
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).get('focus')) return;
+    const el = document.getElementById('public-settings');
+    if (!el) return;
+    const t = setTimeout(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.style.transition = 'box-shadow 240ms ease';
+      el.style.boxShadow = '0 0 0 3px var(--red-wash)';
+      setTimeout(() => { el.style.boxShadow = 'none'; }, 1600);
+    }, 250);
+    return () => clearTimeout(t);
+  }, []);
+
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -556,6 +571,9 @@ export function SeriesFormPage({
         discovery_keywords: keywords,
         discovery_game_ids: gameIds,
         discovery_default_tier: form.discovery_default_tier,
+        discovery_interval_ms: form.discovery_interval_ms
+          ? parseInt(form.discovery_interval_ms, 10)
+          : null,
       };
 
       // Merge existing metadata on edit so we don't clobber autoReports/blocklist/etc.
@@ -918,6 +936,7 @@ export function SeriesFormPage({
 
             {/* Public dashboard sub-block */}
             <div
+              id="public-settings"
               style={{
                 marginTop: 4,
                 padding: 14,

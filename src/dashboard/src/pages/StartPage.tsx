@@ -12,6 +12,7 @@ import {
   IconPlus,
   IconSearch,
   IconBolt,
+  PublicLinkButton,
 } from '@/components/design';
 import { fmtDateLong, fmtRelative } from '@/design/format';
 import { useAuth } from '@/hooks/useAuth';
@@ -36,7 +37,7 @@ export function StartPage({
   onSeriesChange,
   onCreate,
 }: StartPageProps) {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, isEditor } = useAuth();
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [q, setQ] = useState('');
 
@@ -306,6 +307,7 @@ export function StartPage({
               key={s.id}
               series={s}
               onClick={() => onSeriesChange(s.id)}
+              canEdit={isEditor}
             />
           ))}
         </div>
@@ -319,16 +321,25 @@ export function StartPage({
 function SeriesCard({
   series,
   onClick,
+  canEdit,
 }: {
   series: TournamentSeries;
   onClick: () => void;
+  canEdit: boolean;
 }) {
   const dateLabel = dateRangeLabel(series.start_date, series.end_date);
   const hasShort = !!series.short_name && series.short_name !== series.name;
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       className="card"
       style={{
         padding: 16,
@@ -380,7 +391,10 @@ function SeriesCard({
             </div>
           )}
         </Col>
-        <StatusChip status={series.status} isPublic={series.is_public} />
+        <Row gap={6} align="center">
+          <PublicLinkButton variant="icon" series={series} canEdit={canEdit} />
+          <StatusChip status={series.status} />
+        </Row>
       </Row>
 
       <div
@@ -411,7 +425,7 @@ function SeriesCard({
           {dateLabel}
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -419,10 +433,8 @@ function SeriesCard({
 
 function StatusChip({
   status,
-  isPublic,
 }: {
   status: TournamentStatus;
-  isPublic: boolean;
 }) {
   const tone: Record<TournamentStatus, { bg: string; fg: string; dot: string; label: string }> = {
     active: {
@@ -472,18 +484,6 @@ function StatusChip({
         />
         {t.label.toUpperCase()}
       </span>
-      {isPublic && (
-        <span
-          style={{
-            fontSize: 9,
-            color: 'var(--fg-dim)',
-            letterSpacing: 0.3,
-            fontFamily: 'var(--font-mono)',
-          }}
-        >
-          PUBLIC
-        </span>
-      )}
     </Col>
   );
 }
