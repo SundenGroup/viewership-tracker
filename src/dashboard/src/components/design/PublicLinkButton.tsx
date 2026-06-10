@@ -187,13 +187,6 @@ export function PublicLinkButton({
                   {copied ? 'Link copied' : 'Copy link'}
                 </Row>
               </MenuRow>
-              <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
-              <MenuRow onClick={() => { setOpen(false); window.open(urls.detailed, '_blank', 'noopener'); }}>
-                Detailed report
-              </MenuRow>
-              <MenuRow onClick={() => { setOpen(false); window.open(urls.simple, '_blank', 'noopener'); }}>
-                Simple report
-              </MenuRow>
             </>
           ) : (
             <div style={{ padding: '8px 10px' }}>

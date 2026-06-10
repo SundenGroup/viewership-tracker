@@ -86,6 +86,9 @@ export function ExportDialog({
     Array<{ id: string; display_name: string; platform: string }>
   >([]);
   const [channelSearch, setChannelSearch] = useState('');
+  // Channel exclusion is collapsed by default — 99% of exports include every
+  // channel, so the chip wall shouldn't be on screen unless asked for.
+  const [excludeOpen, setExcludeOpen] = useState(false);
 
   // Reset copied indicator
   useEffect(() => {
@@ -108,6 +111,7 @@ export function ExportDialog({
       setViewGroupOverride(activeViewGroupName ?? null);
       setExcludeChannelIds([]);
       setChannelSearch('');
+      setExcludeOpen(false);
     }
   }, [open, activeViewGroupName]);
 
@@ -613,6 +617,36 @@ export function ExportDialog({
               <Field
                 label={`Exclude channels${excludeChannelIds.length ? ` (${excludeChannelIds.length})` : ''}`}
               >
+                {!excludeOpen ? (
+                  // Collapsed default — one row, no chip wall.
+                  <button
+                    type="button"
+                    onClick={() => setExcludeOpen(true)}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 11px',
+                      fontSize: 12,
+                      borderRadius: 6,
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border)',
+                      color: excludeChannelIds.length ? 'var(--fg)' : 'var(--fg-muted)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span>
+                      {excludeChannelIds.length
+                        ? `${excludeChannelIds.length} channel${excludeChannelIds.length > 1 ? 's' : ''} excluded`
+                        : 'All channels included'}
+                    </span>
+                    <span style={{ color: 'var(--red)', fontWeight: 600 }}>
+                      {excludeChannelIds.length ? 'Edit' : 'Exclude some…'}
+                    </span>
+                  </button>
+                ) : (
+                <>
                 <input
                   type="text"
                   placeholder="Search channels…"
@@ -680,22 +714,41 @@ export function ExportDialog({
                       );
                     })}
                 </div>
-                {excludeChannelIds.length > 0 && (
+                <Row align="center" gap={12} style={{ marginTop: 8 }}>
+                  {excludeChannelIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setExcludeChannelIds([])}
+                      style={{
+                        fontSize: 10.5,
+                        color: 'var(--fg-dim)',
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        textDecoration: 'underline',
+                      }}
+                    >
+                      Clear {excludeChannelIds.length} excluded
+                    </button>
+                  )}
+                  <div style={{ flex: 1 }} />
                   <button
                     type="button"
-                    onClick={() => setExcludeChannelIds([])}
+                    onClick={() => setExcludeOpen(false)}
                     style={{
-                      marginTop: 8,
-                      fontSize: 10.5,
-                      color: 'var(--fg-dim)',
+                      fontSize: 11,
+                      color: 'var(--fg-muted)',
                       background: 'transparent',
-                      border: 'none',
+                      border: '1px solid var(--border)',
+                      borderRadius: 5,
+                      padding: '3px 10px',
                       cursor: 'pointer',
-                      textDecoration: 'underline',
                     }}
                   >
-                    Clear {excludeChannelIds.length} excluded
+                    Done
                   </button>
+                </Row>
+                </>
                 )}
               </Field>
             )}
