@@ -13,7 +13,6 @@ import {
   Tab,
   PlatformPip,
   ChannelNameWithLink,
-  ThemeToggle,
   IconBolt,
   IconUsers,
   IconEye,
@@ -115,7 +114,6 @@ export function DiscoverDetailPage() {
         <BackLink />
         <Row gap={10} align="center" style={{ flex: 1, justifyContent: 'flex-end' }}>
           <DiscoverSearch slug={slug ?? ''} />
-          <ThemeToggle />
         </Row>
       </Row>
 
@@ -181,7 +179,7 @@ export function DiscoverDetailPage() {
               paddingBottom: 0,
               borderBottom: '1px solid var(--border)',
               position: 'sticky',
-              top: 0,
+              top: 'var(--topnav-h)',
               background: 'var(--bg)',
               zIndex: 4,
             }}

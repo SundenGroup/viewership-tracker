@@ -1126,166 +1126,55 @@ function ExploreShell({
   title,
   subtitle,
   seriesPicker,
-  logout,
   children,
 }: {
   title: string;
   subtitle?: string;
   seriesPicker?: React.ReactNode;
+  /** @deprecated TopNav owns sign-out now; kept for call-site compatibility. */
   logout?: () => void | Promise<void>;
   children: React.ReactNode;
 }) {
-  const navigate = useNavigate();
-  const { isAdmin } = useAuth();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenuOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [menuOpen]);
-
+  // Brand / theme / account / series-switcher all live in the global TopNav
+  // now; ExploreShell is just a page title strip + content frame.
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: 'var(--bg)',
-        color: 'var(--fg)',
-        display: 'flex',
-        flexDirection: 'column',
-      }}
-    >
-      {/* Top bar */}
-      <header
+    <div style={{ background: 'var(--bg)', color: 'var(--fg)' }}>
+      <div
         style={{
           position: 'sticky',
-          top: 0,
-          zIndex: 10,
+          top: 'var(--topnav-h)',
+          zIndex: 9,
           background: 'var(--bg-card)',
           borderBottom: '1px solid var(--border)',
-          padding: '10px 22px',
+          padding: '12px 22px',
         }}
       >
-        <Row justify="space-between" align="center" style={{ gap: 12 }}>
-          <Row gap={10} align="center">
-            <button
-              type="button"
-              onClick={() => navigate('/')}
-              style={{
-                background: 'transparent',
-                border: 0,
-                padding: 0,
-                cursor: 'pointer',
-                color: 'inherit',
-                display: 'flex',
-                alignItems: 'center',
-              }}
-              title="Back to series list"
-            >
-              <ClutchWordmark size={16} />
-            </button>
+        <Row justify="space-between" align="center" style={{ gap: 12, flexWrap: 'wrap' }}>
+          <Row gap={12} align="baseline" style={{ minWidth: 0 }}>
             <span
+              className="eyebrow"
               style={{
                 fontSize: 10,
                 color: 'var(--fg-dim)',
-                letterSpacing: 1.2,
+                letterSpacing: 1.4,
                 fontFamily: 'var(--font-mono)',
-                padding: '2px 8px',
-                borderLeft: '1px solid var(--border)',
               }}
             >
               EXPLORE
             </span>
-            {seriesPicker}
+            <h1 style={{ fontSize: 21, fontWeight: 600, margin: 0, letterSpacing: '-0.02em' }}>
+              {title}
+            </h1>
+            {subtitle && (
+              <span style={{ color: 'var(--fg-muted)', fontSize: 13 }}>{subtitle}</span>
+            )}
           </Row>
-          <Row gap={8} align="center">
-            <ThemeToggle />
-            <div ref={menuRef} style={{ position: 'relative' }}>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => setMenuOpen((o) => !o)}
-                style={{ padding: '6px 8px' }}
-                title="Account menu"
-              >
-                <IconMore size={14} />
-              </button>
-              {menuOpen && (
-                <div
-                  role="menu"
-                  style={{
-                    position: 'absolute',
-                    right: 0,
-                    top: 'calc(100% + 6px)',
-                    minWidth: 200,
-                    background: 'var(--bg-card)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 8,
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-                    padding: 4,
-                    zIndex: 20,
-                  }}
-                >
-                  <ExploreMenuItem onClick={() => { setMenuOpen(false); navigate('/'); }}>
-                    Series list
-                  </ExploreMenuItem>
-                  {isAdmin && (
-                    <>
-                      <ExploreMenuItem
-                        icon={<IconUsers size={13} />}
-                        onClick={() => { setMenuOpen(false); navigate('/users'); }}
-                      >
-                        Users
-                      </ExploreMenuItem>
-                      <ExploreMenuItem onClick={() => { setMenuOpen(false); navigate('/settings/youtube-keys'); }}>
-                        YouTube API keys
-                      </ExploreMenuItem>
-                    </>
-                  )}
-                  {logout && (
-                    <>
-                      <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
-                      <ExploreMenuItem onClick={() => { setMenuOpen(false); void logout(); }}>
-                        Sign out
-                      </ExploreMenuItem>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          </Row>
+          {seriesPicker}
         </Row>
-        <div
-          style={{
-            marginTop: 6,
-            display: 'flex',
-            alignItems: 'baseline',
-            gap: 12,
-          }}
-        >
-          <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, letterSpacing: '-0.02em' }}>
-            {title}
-          </h1>
-          {subtitle && (
-            <span style={{ color: 'var(--fg-muted)', fontSize: 13 }}>{subtitle}</span>
-          )}
-        </div>
-      </header>
+      </div>
 
       <div
         style={{
-          flex: 1,
           padding: '20px 22px 40px',
           maxWidth: 1400,
           margin: '0 auto',

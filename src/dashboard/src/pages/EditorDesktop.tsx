@@ -10,7 +10,6 @@ import {
   Row,
   Col,
   LogoMark,
-  ClutchWordmark,
   Pill,
   PlatformPip,
   ChannelNameWithLink,
@@ -22,22 +21,18 @@ import {
   RailCollapse,
   useSortable,
   SortHeader,
-  ThemeToggle,
   ScopeScrubber,
   InteractiveMainChart,
+  PublicLinkButton,
   IconChev,
   IconChevDown,
   IconSearch,
-  IconShare,
   IconDownload,
   IconPlus,
   IconBolt,
   IconPause,
   IconEdit,
-  IconMore,
-  IconUsers,
 } from '@/components/design';
-import { useAuth } from '@/hooks/useAuth';
 import { PLATFORMS, getPlatform } from '@/design/platforms';
 import {
   fmtCompact,
@@ -104,28 +99,6 @@ export function EditorDesktop({
   pollLoading,
 }: EditorDesktopProps) {
   const navigate = useNavigate();
-  const { isAdmin, logout } = useAuth();
-  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const accountMenuRef = useRef<HTMLDivElement | null>(null);
-
-  // Close account menu on outside click / Esc
-  useEffect(() => {
-    if (!accountMenuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (accountMenuRef.current && !accountMenuRef.current.contains(e.target as Node)) {
-        setAccountMenuOpen(false);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setAccountMenuOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [accountMenuOpen]);
 
   // Baseline series-level model — used only to detect liveDay (which
   // seeds the scope scrubber's default). The final scope-aware model is
@@ -424,7 +397,7 @@ export function EditorDesktop({
       style={{
         display: 'grid',
         gridTemplateColumns: `${leftCollapsed ? '44px' : '240px'} 1fr ${rightCollapsed ? '44px' : '320px'}`,
-        minHeight: '100vh',
+        minHeight: 'calc(100vh - var(--topnav-h))',
         background: 'var(--bg)',
         transition: 'grid-template-columns 200ms ease',
       }}
@@ -706,39 +679,17 @@ export function EditorDesktop({
         }}
       >
         <Row justify="space-between" align="center">
-          <Row gap={10}>
-            <button
-              type="button"
-              onClick={() => navigate('/')}
-              style={{
-                background: 'transparent',
-                border: 0,
-                padding: 0,
-                cursor: 'pointer',
-                color: 'inherit',
-                display: 'flex',
-                alignItems: 'center',
-              }}
-              title="Back to series list"
-              aria-label="Back to series list"
-            >
-              <ClutchWordmark size={16} />
-            </button>
-            <div style={{ width: 1, height: 18, background: 'var(--border)' }} />
-            <Row gap={6}>
-              <span style={{ fontSize: 12, color: 'var(--fg-dim)' }}>
-                {seriesName}
-              </span>
-              {activeDay && (
-                <>
-                  <IconChev size={12} />
-                  <span style={{ fontSize: 13, fontWeight: 500 }}>
-                    {activeDay.label}
-                  </span>
-                  {activeDay.status === 'live' && <Pill tone="live">● Live</Pill>}
-                </>
-              )}
-            </Row>
+          <Row gap={6}>
+            <span style={{ fontSize: 13, fontWeight: 500 }}>{seriesName}</span>
+            {activeDay && (
+              <>
+                <IconChev size={12} />
+                <span style={{ fontSize: 13, fontWeight: 500 }}>
+                  {activeDay.label}
+                </span>
+                {activeDay.status === 'live' && <Pill tone="live">● Live</Pill>}
+              </>
+            )}
           </Row>
           <Row gap={8}>
             <button
@@ -760,30 +711,7 @@ export function EditorDesktop({
               </Row>
               <span className="kbd">⌘K</span>
             </button>
-            <ThemeToggle />
-            <button
-              type="button"
-              className="btn"
-              onClick={() => {
-                if (navigator.share) {
-                  navigator
-                    .share({
-                      title: seriesName,
-                      url: `${window.location.origin}/public/${series?.short_name ?? seriesId}`,
-                    })
-                    .catch(() => {
-                      /* ignore */
-                    });
-                } else {
-                  const url = `${window.location.origin}/public/${series?.short_name ?? seriesId}`;
-                  navigator.clipboard.writeText(url).catch(() => {
-                    /* ignore */
-                  });
-                }
-              }}
-            >
-              <IconShare size={13} /> Share
-            </button>
+            <PublicLinkButton variant="button" canEdit series={series} />
             <button
               type="button"
               className="btn"
@@ -791,91 +719,6 @@ export function EditorDesktop({
             >
               <IconDownload size={13} /> Export
             </button>
-            <div ref={accountMenuRef} style={{ position: 'relative' }}>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => setAccountMenuOpen((o) => !o)}
-                title="Account menu"
-                aria-label="Account menu"
-                aria-expanded={accountMenuOpen}
-                style={{ padding: '6px 8px' }}
-              >
-                <IconMore size={14} />
-              </button>
-              {accountMenuOpen && (
-                <div
-                  role="menu"
-                  style={{
-                    position: 'absolute',
-                    right: 0,
-                    top: 'calc(100% + 6px)',
-                    minWidth: 200,
-                    background: 'var(--bg-card)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 8,
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-                    padding: 4,
-                    zIndex: 20,
-                  }}
-                >
-                  <DesktopMenuItem
-                    onClick={() => {
-                      setAccountMenuOpen(false);
-                      navigate('/');
-                    }}
-                  >
-                    Series list
-                  </DesktopMenuItem>
-                  <DesktopMenuItem
-                    onClick={() => {
-                      setAccountMenuOpen(false);
-                      navigate(`/explore/${seriesId}`);
-                    }}
-                  >
-                    Explore (post-event)
-                  </DesktopMenuItem>
-                  <DesktopMenuItem
-                    onClick={() => {
-                      setAccountMenuOpen(false);
-                      navigate('/settings/notifications');
-                    }}
-                  >
-                    Notifications
-                  </DesktopMenuItem>
-                  {isAdmin && (
-                    <>
-                      <DesktopMenuItem
-                        icon={<IconUsers size={13} />}
-                        onClick={() => {
-                          setAccountMenuOpen(false);
-                          navigate('/users');
-                        }}
-                      >
-                        Users
-                      </DesktopMenuItem>
-                      <DesktopMenuItem
-                        onClick={() => {
-                          setAccountMenuOpen(false);
-                          navigate('/settings/youtube-keys');
-                        }}
-                      >
-                        YouTube API keys
-                      </DesktopMenuItem>
-                    </>
-                  )}
-                  <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
-                  <DesktopMenuItem
-                    onClick={() => {
-                      setAccountMenuOpen(false);
-                      logout();
-                    }}
-                  >
-                    Sign out
-                  </DesktopMenuItem>
-                </div>
-              )}
-            </div>
           </Row>
         </Row>
 
@@ -2073,44 +1916,3 @@ function SeriesSelect({
   );
 }
 
-// ── Account/admin menu item ───────────────────────────────────────────────
-function DesktopMenuItem({
-  children,
-  onClick,
-  icon,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  icon?: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        width: '100%',
-        padding: '8px 10px',
-        background: 'transparent',
-        border: 0,
-        textAlign: 'left',
-        fontSize: 13,
-        color: 'var(--fg)',
-        cursor: 'pointer',
-        borderRadius: 4,
-      }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-sunken)';
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-      }}
-    >
-      {icon}
-      <span>{children}</span>
-    </button>
-  );
-}

@@ -18,3 +18,4 @@ export * from './InteractiveMainChart';
 export * from './ThemeToggle';
 export * from './ChannelNameWithLink';
 export * from './SettingsShell';
+export * from './PublicLinkButton';

@@ -1,14 +1,11 @@
 import { useState, useCallback, useMemo } from 'react';
-import { BrowserRouter, Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Header, Sidebar, MainLayout } from '@/components/layout';
+import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { EditorDesktop } from '@/pages/EditorDesktop';
 import { EditorMobile } from '@/pages/EditorMobile';
 import { useViewportBelow } from '@/hooks/useViewport';
 import { SurfaceThemeProvider } from '@/design/SurfaceTheme';
 import { PublicPage } from '@/pages/PublicPage';
 import { ReportPage } from '@/pages/ReportPage';
-import { SeriesSetupPage } from '@/pages/SeriesSetupPage';
-import { SeriesEditPage } from '@/pages/SeriesEditPage';
 import { SeriesFormPage } from '@/pages/SeriesForm';
 import { StartPage } from '@/pages/StartPage';
 import { LoginPage } from '@/pages/LoginPage';
@@ -21,6 +18,7 @@ import { DiscoverDetailPage } from '@/pages/discover/DiscoverDetailPage';
 import { DiscoverChannelPage } from '@/pages/discover/DiscoverChannelPage';
 import { DiscoverAdminNew } from '@/pages/discover/DiscoverAdminNew';
 import { NotFoundPage } from '@/pages/NotFoundPage';
+import { TopNav } from '@/components/nav';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Spinner } from '@/components/common/Loader';
 import { useApi, usePollingApi } from '@/hooks/useApi';
@@ -125,7 +123,10 @@ function AuthGate() {
     <ErrorBoundary>
       <Routes>
         <Route path="/new" element={<AppContent />} />
-        <Route path="/users" element={<AppContent />} />
+        {/* /users canonicalised under the Settings hub (P3) */}
+        <Route path="/users" element={<Navigate to="/settings/users" replace />} />
+        <Route path="/settings" element={<AppContent />} />
+        <Route path="/settings/users" element={<AppContent />} />
         <Route path="/settings/youtube-keys" element={<AppContent />} />
         <Route path="/settings/notifications" element={<AppContent />} />
         <Route path="/explore/:seriesId" element={<AppContent />} />
@@ -151,13 +152,15 @@ function AppContent() {
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useViewportBelow(900);
+  const { isAdmin } = useAuth();
 
   // Derive selected series and current view from URL
   const selectedSeriesId = urlSeriesId;
   const pathname = location.pathname;
   const isEditPage = pathname.endsWith('/edit');
   const isNewPage = pathname === '/new';
-  const isUsersPage = pathname === '/users';
+  const isSettingsHome = pathname === '/settings';
+  const isUsersPage = pathname === '/settings/users';
   const isYouTubeKeysPage = pathname === '/settings/youtube-keys';
   const isNotificationsPage = pathname === '/settings/notifications';
   const isExplorePage = pathname.startsWith('/explore');
@@ -178,7 +181,6 @@ function AppContent() {
   // Selected series detail (with stages/broadcast days)
   const {
     data: seriesDetail,
-    loading: seriesDetailLoading,
     refetch: refetchSeriesDetail,
   } = useApi<SeriesWithStages | null>(
     () => (selectedSeriesId ? api.getSeries(selectedSeriesId) : Promise.resolve(null)),
@@ -335,27 +337,25 @@ function AppContent() {
     navigate('/');
   }, [navigate, refetchSeriesList]);
 
-  // ── Mobile sidebar state ──────────────────────────────────────────────
-
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-
-  const handleToggleSidebar = useCallback(() => {
-    setMobileSidebarOpen((v) => !v);
-  }, []);
-
-  const handleCloseSidebar = useCallback(() => {
-    setMobileSidebarOpen(false);
-  }, []);
-
   // ── Render ─────────────────────────────────────────────────────────────
+  // Every authenticated surface renders below the single persistent TopNav.
+  // Public routes (/public/*) live outside AuthGate and never mount TopNav.
 
-  // SeriesFormPage is a self-contained surface with its own chrome — used
-  // for both /new and /:seriesId/edit on every viewport. The page collapses
-  // its multi-column grids and tightens padding when useViewportBelow(700)
-  // returns true, so the same form covers desktop and mobile without
-  // falling back to the legacy MainLayout shell.
+  const isEditorSurface =
+    !!selectedSeriesId &&
+    !isEditPage &&
+    !isNewPage &&
+    !isExplorePage &&
+    !isDiscoverList &&
+    !isDiscoverDetail &&
+    !isDiscoverChannel &&
+    !isDiscoverNew &&
+    !isDiscoverEdit;
+
+  let content: React.ReactNode;
+
   if (isNewPage) {
-    return (
+    content = (
       <SeriesFormPage
         mode="new"
         onSaved={(newId) => {
@@ -365,10 +365,8 @@ function AppContent() {
         onCancel={() => navigate(selectedSeriesId ? `/${selectedSeriesId}` : '/')}
       />
     );
-  }
-
-  if (isEditPage && selectedSeriesId && seriesDetail) {
-    return (
+  } else if (isEditPage && selectedSeriesId && seriesDetail) {
+    content = (
       <SeriesFormPage
         mode="edit"
         seriesId={selectedSeriesId}
@@ -378,28 +376,24 @@ function AppContent() {
         onDeleted={handleSeriesDeleted}
       />
     );
-  }
-
-  // Discover pages — live game tracker surface, separate from tournament
-  // dashboard. Phase 1: minimal read-only views + admin create form.
-  // Phase 3 will replace with publisher-friendly layout per the plan.
-  if (isDiscoverList) {
-    return <DiscoverListPage />;
-  }
-  if (isDiscoverChannel) {
-    return <DiscoverChannelPage />;
-  }
-  if (isDiscoverDetail) {
-    return <DiscoverDetailPage />;
-  }
-  if (isDiscoverNew || isDiscoverEdit) {
-    return <DiscoverAdminNew />;
-  }
-
-  // ExplorePage — post-event analysis surface (editor+ only). Self-contained
-  // chrome; no MainLayout shell. URL: /explore or /explore/:seriesId.
-  if (isExplorePage) {
-    return (
+  } else if (isEditPage) {
+    // Edit route, series detail still loading — show a spinner, not the
+    // legacy chrome flash.
+    content = (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0' }}>
+        <Spinner size="lg" />
+      </div>
+    );
+  } else if (isDiscoverList) {
+    content = <DiscoverListPage />;
+  } else if (isDiscoverChannel) {
+    content = <DiscoverChannelPage />;
+  } else if (isDiscoverDetail) {
+    content = <DiscoverDetailPage />;
+  } else if (isDiscoverNew || isDiscoverEdit) {
+    content = <DiscoverAdminNew />;
+  } else if (isExplorePage) {
+    content = (
       <ExplorePage
         seriesList={seriesList ?? []}
         seriesId={selectedSeriesId ?? null}
@@ -407,69 +401,40 @@ function AppContent() {
         onSeriesChange={handleSeriesChange}
       />
     );
-  }
-
-  // StartPage (no series selected) is self-contained — it brings its own
-  // top bar and doesn't need the legacy Sidebar's "select a series…"
-  // placeholder columns. We render it on both mobile and desktop so that
-  // the EditorMobile hamburger ("back to series list") lands on the new
-  // chrome instead of falling through to the legacy MainLayout shell.
-  if (!isUsersPage && !isYouTubeKeysPage && !isNotificationsPage && !isNewPage && !isEditPage && !selectedSeriesId) {
-    return (
-      <StartPage
+  } else if (isSettingsHome) {
+    // Settings hub landing arrives in P3; for now route to the first page
+    // the user is allowed to see.
+    content = <Navigate to={isAdmin ? '/settings/users' : '/settings/notifications'} replace />;
+  } else if (isUsersPage) {
+    content = <UserManagementPage />;
+  } else if (isYouTubeKeysPage) {
+    content = <YouTubeKeysPage />;
+  } else if (isNotificationsPage) {
+    content = <NotificationsSettingsPage />;
+  } else if (isEditorSurface) {
+    content = isMobile ? (
+      <EditorMobile
+        seriesId={selectedSeriesId!}
         seriesList={seriesList ?? []}
+        seriesDetail={seriesDetail}
+        pollingData={pollingData}
         pollingStatus={pollingStatus}
+        discoveryStatus={discoveryStatus}
         onSeriesChange={handleSeriesChange}
-        onCreate={() => navigate('/new')}
-        onOpenUsers={() => navigate('/users')}
-        onOpenYouTubeKeys={() => navigate('/settings/youtube-keys')}
-        onOpenNotifications={() => navigate('/settings/notifications')}
+        onExtendBroadcast={handleExtendBroadcast}
+        onBroadcastDayStatusChange={handleBroadcastDayStatusChange}
+        onTriggerPoll={handleTriggerPoll}
+        onStartPolling={handleStartPolling}
+        onStopPolling={handleStopPolling}
+        onTriggerDiscovery={handleTriggerDiscovery}
+        onStartDiscovery={handleStartDiscovery}
+        onStopDiscovery={handleStopDiscovery}
+        pollLoading={pollLoading}
+        discoveryLoading={discoveryLoading}
       />
-    );
-  }
-
-  // Settings pages now render with the redesigned SettingsShell (top bar
-  // matching StartPage / EditorDesktop) instead of the legacy MainLayout +
-  // Sidebar chrome. Each page brings its own SettingsShell wrapper.
-  if (isUsersPage) {
-    return <UserManagementPage />;
-  }
-  if (isYouTubeKeysPage) {
-    return <YouTubeKeysPage />;
-  }
-  if (isNotificationsPage) {
-    return <NotificationsSettingsPage />;
-  }
-
-  // Editor Desktop / Mobile are self-contained surfaces with their own shell.
-  // The legacy Header/Sidebar/MainLayout is only kept for the edit/setup/users routes.
-  if (!isUsersPage && !isYouTubeKeysPage && !isNotificationsPage && !isNewPage && !isEditPage && selectedSeriesId) {
-    if (isMobile) {
-      return (
-        <EditorMobile
-          seriesId={selectedSeriesId}
-          seriesList={seriesList ?? []}
-          seriesDetail={seriesDetail}
-          pollingData={pollingData}
-          pollingStatus={pollingStatus}
-          discoveryStatus={discoveryStatus}
-          onSeriesChange={handleSeriesChange}
-          onExtendBroadcast={handleExtendBroadcast}
-          onBroadcastDayStatusChange={handleBroadcastDayStatusChange}
-          onTriggerPoll={handleTriggerPoll}
-          onStartPolling={handleStartPolling}
-          onStopPolling={handleStopPolling}
-          onTriggerDiscovery={handleTriggerDiscovery}
-          onStartDiscovery={handleStartDiscovery}
-          onStopDiscovery={handleStopDiscovery}
-          pollLoading={pollLoading}
-          discoveryLoading={discoveryLoading}
-        />
-      );
-    }
-    return (
+    ) : (
       <EditorDesktop
-        seriesId={selectedSeriesId}
+        seriesId={selectedSeriesId!}
         seriesList={seriesList ?? []}
         seriesDetail={seriesDetail}
         pollingData={pollingData}
@@ -485,74 +450,35 @@ function AppContent() {
         onChannelAdded={handleChannelAdded}
       />
     );
+  } else {
+    content = (
+      <StartPage
+        seriesList={seriesList ?? []}
+        pollingStatus={pollingStatus}
+        onSeriesChange={handleSeriesChange}
+        onCreate={() => navigate('/new')}
+      />
+    );
   }
 
   return (
-    <MainLayout
-      header={
-        <Header
-          seriesList={seriesList ?? []}
-          selectedSeriesId={selectedSeriesId}
-          onSeriesChange={handleSeriesChange}
-          wsStatus={pollingData.wsStatus as ConnectionStatus}
-          onToggleSidebar={handleToggleSidebar}
-        />
-      }
-      sidebar={
-        <Sidebar
-          seriesId={selectedSeriesId}
-          seriesDetail={seriesDetail}
-          seriesDetailLoading={seriesDetailLoading}
-          pollingStatus={pollingStatus}
-          discoveryStatus={discoveryStatus}
-          onStartPolling={handleStartPolling}
-          onStopPolling={handleStopPolling}
-          onTriggerPoll={handleTriggerPoll}
-          onStartDiscovery={handleStartDiscovery}
-          onStopDiscovery={handleStopDiscovery}
-          onTriggerDiscovery={handleTriggerDiscovery}
-          onBroadcastDayStatusChange={handleBroadcastDayStatusChange}
-          onExtendBroadcast={handleExtendBroadcast}
-          onChannelAdded={handleChannelAdded}
-          pollLoading={pollLoading}
-          discoveryLoading={discoveryLoading}
-          broadcastDayStatusLoading={bdStatusLoading}
-          onClose={mobileSidebarOpen ? handleCloseSidebar : undefined}
-        />
-      }
-      sidebarOpen={mobileSidebarOpen}
-      onCloseSidebar={handleCloseSidebar}
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'var(--bg)',
+        color: 'var(--fg)',
+      }}
     >
-      {isUsersPage ? (
-        <UserManagementPage />
-      ) : isYouTubeKeysPage ? (
-        <YouTubeKeysPage />
-      ) : isNotificationsPage ? (
-        <NotificationsSettingsPage />
-      ) : isNewPage ? (
-        <SeriesSetupPage
-          onCreated={handleSeriesCreated}
-          onCancel={() => navigate(selectedSeriesId ? `/${selectedSeriesId}` : '/')}
-        />
-      ) : isEditPage && selectedSeriesId && seriesDetail ? (
-        <SeriesEditPage
-          seriesId={selectedSeriesId}
-          seriesDetail={seriesDetail}
-          onSaved={handleSeriesSaved}
-          onCancel={() => navigate(`/${selectedSeriesId}`)}
-          onDeleted={handleSeriesDeleted}
-        />
-      ) : (
-        // Fallback: no series selected → show the start page with greeting,
-        // operational stats, filterable series grid, and create CTA.
-        <StartPage
-          seriesList={seriesList ?? []}
-          pollingStatus={pollingStatus}
-          onSeriesChange={handleSeriesChange}
-          onCreate={() => navigate('/new')}
-        />
-      )}
-    </MainLayout>
+      <TopNav
+        seriesList={seriesList ?? []}
+        activeSeriesId={selectedSeriesId ?? null}
+        pollingStatus={pollingStatus}
+        wsStatus={isEditorSurface ? (pollingData.wsStatus as ConnectionStatus) : undefined}
+      />
+      <div style={{ flex: 1, minHeight: 0 }}>{content}</div>
+    </div>
   );
 }
 

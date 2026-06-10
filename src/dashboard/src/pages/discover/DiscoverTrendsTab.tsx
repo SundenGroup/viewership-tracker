@@ -485,8 +485,10 @@ function BreakdownPanel({
     );
   }
 
-  const platformTotal = breakdown.platform.reduce((sum, p) => sum + p.total_ccv_minutes, 0);
-  const languageTotal = breakdown.language.reduce((sum, p) => sum + p.total_ccv_minutes, 0);
+  // Number() guard: older backends serialize pg SUM() results as strings,
+  // which would string-concatenate here and zero out every share.
+  const platformTotal = breakdown.platform.reduce((sum, p) => sum + Number(p.total_ccv_minutes), 0);
+  const languageTotal = breakdown.language.reduce((sum, p) => sum + Number(p.total_ccv_minutes), 0);
 
   return (
     <Section title="Breakdown" eyebrow="DISTRIBUTION">
@@ -496,8 +498,8 @@ function BreakdownPanel({
           rows={breakdown.platform.map((p) => ({
             key: p.platform,
             label: <Row gap={6} align="center"><PlatformPip id={p.platform} size={11} /><span style={{ textTransform: 'capitalize' }}>{p.platform}</span></Row>,
-            value: p.total_ccv_minutes,
-            share: platformTotal > 0 ? p.total_ccv_minutes / platformTotal : 0,
+            value: Number(p.total_ccv_minutes),
+            share: platformTotal > 0 ? Number(p.total_ccv_minutes) / platformTotal : 0,
           }))}
         />
         <BreakdownGroup
@@ -505,8 +507,8 @@ function BreakdownPanel({
           rows={breakdown.language.slice(0, 6).map((p) => ({
             key: p.language ?? 'unknown',
             label: <span style={{ textTransform: 'uppercase', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{p.language ?? '—'}</span>,
-            value: p.total_ccv_minutes,
-            share: languageTotal > 0 ? p.total_ccv_minutes / languageTotal : 0,
+            value: Number(p.total_ccv_minutes),
+            share: languageTotal > 0 ? Number(p.total_ccv_minutes) / languageTotal : 0,
           }))}
         />
       </div>

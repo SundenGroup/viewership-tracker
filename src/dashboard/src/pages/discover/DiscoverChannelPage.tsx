@@ -22,7 +22,6 @@ import {
   Pill,
   PlatformPip,
   ChannelNameWithLink,
-  ThemeToggle,
   IconBolt,
   IconUsers,
   IconTrophy,
@@ -112,7 +111,6 @@ export function DiscoverChannelPage() {
     <div style={{ padding: '32px 24px 64px', maxWidth: 1280, margin: '0 auto' }}>
       <Row justify="space-between" align="center">
         <BackLink slug={slug} />
-        <ThemeToggle />
       </Row>
 
       {/* Hero */}

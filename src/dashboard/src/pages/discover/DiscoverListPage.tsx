@@ -8,7 +8,6 @@ import {
   Col,
   Pill,
   PlatformPip,
-  ThemeToggle,
   IconPlus,
   IconBolt,
 } from '@/components/design';
@@ -63,7 +62,6 @@ export function DiscoverListPage() {
           </p>
         </Col>
         <Row gap={8} align="center">
-          <ThemeToggle />
           {isAdmin && (
             <button
               type="button"
