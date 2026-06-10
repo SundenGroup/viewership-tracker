@@ -232,7 +232,9 @@ export async function languageBreakdown(
   fromTs: Date,
   toTs: Date,
 ): Promise<Array<{ language: string | null; total_ccv_minutes: number; peak: number }>> {
-  return db(TABLE)
+  // pg returns SUM()/MAX() of integer columns as strings — coerce, or JSON
+  // consumers end up string-concatenating totals (the 0.0% breakdown bug).
+  const rows = await db(TABLE)
     .select('language')
     .sum<{ total_ccv_minutes: string }[]>({ total_ccv_minutes: 'concurrent_viewers' })
     .max<{ peak: number }[]>({ peak: 'concurrent_viewers' })
@@ -240,9 +242,12 @@ export async function languageBreakdown(
     .where('timestamp', '>=', fromTs)
     .where('timestamp', '<', toTs)
     .groupBy('language')
-    .orderBy('total_ccv_minutes', 'desc') as unknown as Promise<
-    Array<{ language: string | null; total_ccv_minutes: number; peak: number }>
-  >;
+    .orderBy('total_ccv_minutes', 'desc');
+  return (rows as Array<{ language: string | null; total_ccv_minutes: unknown; peak: unknown }>).map((r) => ({
+    language: r.language,
+    total_ccv_minutes: Number(r.total_ccv_minutes),
+    peak: Number(r.peak),
+  }));
 }
 
 /**
@@ -443,7 +448,8 @@ export async function platformBreakdown(
   fromTs: Date,
   toTs: Date,
 ): Promise<Array<{ platform: string; total_ccv_minutes: number; peak: number }>> {
-  return db(TABLE)
+  // Same coercion as languageBreakdown — pg SUM()/MAX() arrive as strings.
+  const rows = await db(TABLE)
     .select('platform')
     .sum<{ total_ccv_minutes: string }[]>({ total_ccv_minutes: 'concurrent_viewers' })
     .max<{ peak: number }[]>({ peak: 'concurrent_viewers' })
@@ -451,9 +457,12 @@ export async function platformBreakdown(
     .where('timestamp', '>=', fromTs)
     .where('timestamp', '<', toTs)
     .groupBy('platform')
-    .orderBy('total_ccv_minutes', 'desc') as unknown as Promise<
-    Array<{ platform: string; total_ccv_minutes: number; peak: number }>
-  >;
+    .orderBy('total_ccv_minutes', 'desc');
+  return (rows as Array<{ platform: string; total_ccv_minutes: unknown; peak: unknown }>).map((r) => ({
+    platform: r.platform,
+    total_ccv_minutes: Number(r.total_ccv_minutes),
+    peak: Number(r.peak),
+  }));
 }
 
 export async function purgeOlderThan(daysOld: number): Promise<number> {
