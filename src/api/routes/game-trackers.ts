@@ -333,13 +333,16 @@ router.get('/:slug/range-leaderboard', async (req: Request, res: Response, next:
       res.status(400).json({ error: 'to must be after from' });
       return;
     }
-    const rows = await GameTrackerSnapshotModel.rangeLeaderboard(tracker.id, fromTs, toTs, limit, {
-      language,
-      platform,
-      offset,
-    });
+    const [rows, total] = await Promise.all([
+      GameTrackerSnapshotModel.rangeLeaderboard(tracker.id, fromTs, toTs, limit, {
+        language,
+        platform,
+        offset,
+      }),
+      GameTrackerSnapshotModel.countRangeLeaderboard(tracker.id, fromTs, toTs, { language, platform }),
+    ]);
     if (rows.length === 0) {
-      res.json({ from: fromTs, to: toTs, rows: [] });
+      res.json({ from: fromTs, to: toTs, total, rows: [] });
       return;
     }
     const channels = await ChannelModel.findByIds(rows.map((r) => r.channel_id));
@@ -347,6 +350,7 @@ router.get('/:slug/range-leaderboard', async (req: Request, res: Response, next:
     res.json({
       from: fromTs,
       to: toTs,
+      total,
       rows: rows.map((r) => ({ ...r, channel: channelMap.get(r.channel_id) ?? null })),
     });
   } catch (err) {

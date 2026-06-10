@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import * as TournamentSeriesModel from '../../models/tournament-series';
+import * as BroadcastDayModel from '../../models/broadcast-day';
 import { requireRole, hasMinRole, type UserRole } from '../middleware/auth';
 import { AdapterRegistry } from '../../adapters';
 import { TwitchAdapter } from '../../adapters/twitch';
@@ -102,6 +103,53 @@ router.get('/games/lookup', requireRole('admin', 'editor'), async (req: Request,
     }
 
     res.json(results);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/series/live-now — series with a broadcast day currently 'live'.
+// Powers the StartPage "Live now" hero. CCV is NOT aggregated here — the
+// client composes per-series via GET /api/viewership/live/:seriesId (cached).
+// Must be before /:id so "live-now" isn't captured as a series id.
+router.get('/live-now', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const liveDays = await BroadcastDayModel.findAll({ status: 'live' });
+    const userRole = (req.user?.role ?? 'viewer') as UserRole;
+    const out: Array<{
+      series: Pick<TournamentSeriesModel.TournamentSeries, 'id' | 'name' | 'short_name' | 'is_public' | 'game' | 'partner'>;
+      day: Pick<BroadcastDayModel.BroadcastDay, 'id' | 'label' | 'date' | 'broadcast_start' | 'broadcast_end' | 'stage_id'>;
+    }> = [];
+    const seen = new Set<string>();
+    for (const day of liveDays) {
+      if (seen.has(day.series_id)) continue; // one entry per series
+      const series = await TournamentSeriesModel.findById(day.series_id);
+      if (!series) continue;
+      // Same visibility rules as GET /api/series: min_role + hide stubs.
+      const minRole = ((series as unknown as Record<string, unknown>).min_role as UserRole) ?? 'viewer';
+      if (userRole !== 'admin' && !hasMinRole(userRole, minRole)) continue;
+      if ((series.metadata as Record<string, unknown>)?.is_game_tracker_stub === true) continue;
+      seen.add(day.series_id);
+      out.push({
+        series: {
+          id: series.id,
+          name: series.name,
+          short_name: series.short_name,
+          is_public: series.is_public,
+          game: series.game,
+          partner: series.partner,
+        },
+        day: {
+          id: day.id,
+          label: day.label,
+          date: day.date,
+          broadcast_start: day.broadcast_start,
+          broadcast_end: day.broadcast_end,
+          stage_id: day.stage_id,
+        },
+      });
+    }
+    res.json(out);
   } catch (err) {
     next(err);
   }

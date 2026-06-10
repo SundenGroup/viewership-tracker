@@ -227,6 +227,45 @@ export async function rangeLeaderboard(
   }));
 }
 
+/**
+ * Total distinct streamers in the range-leaderboard for a tracker — same
+ * streamer-identity grouping + filters as rangeLeaderboard(), so the UI can
+ * render "Page X of Y" instead of a bare Prev/Next heuristic.
+ */
+export async function countRangeLeaderboard(
+  gameTrackerId: string,
+  fromTs: Date,
+  toTs: Date,
+  opts: { language?: string | null; platform?: string | null } = {},
+): Promise<number> {
+  const params: unknown[] = [gameTrackerId, fromTs, toTs];
+  let filterSql = '';
+  if (opts.language) {
+    filterSql += ' AND LOWER(s.language) = LOWER(?)';
+    params.push(opts.language);
+  }
+  if (opts.platform) {
+    filterSql += ' AND c.platform = ?';
+    params.push(opts.platform);
+  }
+  const result = await db.raw<{ rows: Array<{ n: string }> }>(
+    `
+    SELECT COUNT(*) AS n FROM (
+      SELECT 1
+      FROM game_tracker_snapshots s
+      JOIN channels c ON c.id = s.channel_id
+      WHERE s.game_tracker_id = ?
+        AND s."timestamp" >= ?
+        AND s."timestamp" < ?
+        ${filterSql}
+      GROUP BY c.platform, LOWER(c.channel_identifier)
+    ) q
+    `,
+    params,
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
+
 export async function languageBreakdown(
   gameTrackerId: string,
   fromTs: Date,
