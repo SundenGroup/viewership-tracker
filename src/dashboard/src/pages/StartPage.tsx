@@ -16,6 +16,8 @@ import {
 } from '@/components/design';
 import { fmtDateLong, fmtRelative } from '@/design/format';
 import { useAuth } from '@/hooks/useAuth';
+import { LiveNowStrip } from './home/LiveNowStrip';
+import { QuickNavCards } from './home/QuickNavCards';
 import type {
   TournamentSeries,
   TournamentStatus,
@@ -180,6 +182,12 @@ export function StartPage({
           divided={false}
         />
       </div>
+
+      {/* Live now — series currently broadcasting */}
+      <LiveNowStrip canEdit={isEditor} />
+
+      {/* Quick nav into the app's other surfaces */}
+      <QuickNavCards canExplore={isEditor} />
 
       {/* Filters + search */}
       <Row

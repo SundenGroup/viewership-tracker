@@ -260,6 +260,16 @@ function appendFilterParams(
   if (excludeChannelIds?.length) params.set('exclude', excludeChannelIds.join(','));
 }
 
+export interface LiveNowEntry {
+  series: { id: string; name: string; short_name: string | null; is_public: boolean; game: string | null; partner: string | null };
+  day: { id: string; label: string; date: string; broadcast_start: string | null; broadcast_end: string | null; stage_id: string };
+}
+
+/** Series with a broadcast day currently live — for the StartPage hero. */
+export function getLiveNow() {
+  return request<LiveNowEntry[]>(`/api/series/live-now`);
+}
+
 export function getLiveCCV(seriesId: string, scope?: string, scopeId?: string, languages?: string[], platforms?: string[]) {
   const params = new URLSearchParams();
   if (scope && scopeId) {
@@ -1060,6 +1070,7 @@ export function getGameTrackerRangeLeaderboard(
   return request<{
     from: string;
     to: string;
+    total?: number;
     rows: GameTrackerRangeLeaderboardRow[];
   }>(`/api/game-trackers/${slug}/range-leaderboard?${params.toString()}`);
 }

@@ -29,12 +29,10 @@ import {
   ScopeScrubber,
   Section,
   Tab,
-  ThemeToggle,
+  FilterMultiSelect,
   useSortable,
   SortHeader,
   IconChev,
-  IconMore,
-  IconUsers,
   IconSearch,
   InteractiveMainChart,
   LineChart,
@@ -517,6 +515,25 @@ function ExploreScopedView({
     [regionFilter, updateUrl],
   );
 
+  // Set-style writers (for the searchable multi-select popovers) — same URL
+  // params the chip toggles write, so shared links round-trip unchanged.
+  const setLanguages = useCallback(
+    (next: string[]) =>
+      updateUrl((p) => {
+        if (next.length > 0) p.set('languages', next.join(','));
+        else p.delete('languages');
+      }),
+    [updateUrl],
+  );
+  const setRegions = useCallback(
+    (next: string[]) =>
+      updateUrl((p) => {
+        if (next.length > 0) p.set('regions', next.join(','));
+        else p.delete('regions');
+      }),
+    [updateUrl],
+  );
+
   const setAnchorTimestamp = useCallback(
     (iso: string | null) => {
       updateUrl((p) => {
@@ -841,31 +858,41 @@ function ExploreScopedView({
                   </FilterChipRow>
                 )}
                 {availableRegions.length > 0 && (
-                  <FilterChipRow label="Region">
-                    {availableRegions.map((reg) => (
-                      <button
-                        key={reg}
-                        type="button"
-                        onClick={() => toggleRegion(reg)}
-                        style={chipStyle(regionFilter.includes(reg))}
-                      >
-                        {reg}
-                      </button>
-                    ))}
-                  </FilterChipRow>
+                  availableRegions.length > 8 ? (
+                    <FilterChipRow label="Region">
+                      <FilterMultiSelect
+                        label="Region"
+                        options={availableRegions.map((r) => ({ value: r, label: r }))}
+                        selected={regionFilter}
+                        onChange={setRegions}
+                      />
+                    </FilterChipRow>
+                  ) : (
+                    <FilterChipRow label="Region">
+                      {availableRegions.map((reg) => (
+                        <button
+                          key={reg}
+                          type="button"
+                          onClick={() => toggleRegion(reg)}
+                          style={chipStyle(regionFilter.includes(reg))}
+                        >
+                          {reg}
+                        </button>
+                      ))}
+                    </FilterChipRow>
+                  )
                 )}
                 {availableLanguages.length > 0 && (
+                  // Languages are always a searchable popover — long tournaments
+                  // surface 30–50 codes, which used to render as an unscannable
+                  // wall of chips.
                   <FilterChipRow label="Language">
-                    {availableLanguages.map((lang) => (
-                      <button
-                        key={lang}
-                        type="button"
-                        onClick={() => toggleLanguage(lang)}
-                        style={chipStyle(languageFilter.includes(lang))}
-                      >
-                        {lang.toUpperCase()}
-                      </button>
-                    ))}
+                    <FilterMultiSelect
+                      label="Language"
+                      options={availableLanguages.map((l) => ({ value: l, label: l.toUpperCase() }))}
+                      selected={languageFilter}
+                      onChange={setLanguages}
+                    />
                   </FilterChipRow>
                 )}
                 {(platformFilter.length > 0 ||

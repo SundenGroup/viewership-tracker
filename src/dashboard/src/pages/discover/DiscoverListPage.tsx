@@ -81,6 +81,24 @@ export function DiscoverListPage() {
         </div>
       )}
 
+      {trackers === null && !error && (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+            gap: 16,
+          }}
+        >
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="card" style={{ padding: 20, opacity: 0.6 }}>
+              <div style={{ height: 18, width: '55%', borderRadius: 5, background: 'var(--bg-hover)' }} />
+              <div style={{ height: 12, width: '40%', borderRadius: 5, background: 'var(--bg-hover)', marginTop: 14 }} />
+              <div style={{ height: 12, width: '30%', borderRadius: 5, background: 'var(--bg-hover)', marginTop: 8 }} />
+            </div>
+          ))}
+        </div>
+      )}
+
       {trackers && trackers.length === 0 && (
         <div
           className="card"

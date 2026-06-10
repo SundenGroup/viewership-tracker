@@ -20,6 +20,7 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
   const [page, setPage] = useState(0);
+  const [total, setTotal] = useState<number | null>(null);
   const [rangeLangOptions, setRangeLangOptions] = useState<string[]>([]);
 
   // Resolve the [from, to] window for range modes. Returns null for 'now'
@@ -94,6 +95,7 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
       })
       .then((res) => {
         if (cancelled) return;
+        setTotal(typeof res.total === 'number' ? res.total : null);
         setRows(
           res.rows.map((r) => ({
             channel_id: r.channel_id,
@@ -146,7 +148,10 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
     return out;
   }, [rows, platform, lang, sort, range]);
 
-  const hasNextPage = !!range && (rows?.length ?? 0) === PAGE_SIZE;
+  // Prefer the server total ("Page X of Y"); fall back to the page-full
+  // heuristic when an older backend omits it.
+  const pageCount = total != null ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : null;
+  const hasNextPage = !!range && (pageCount != null ? page + 1 < pageCount : (rows?.length ?? 0) === PAGE_SIZE);
 
   return (
     <Section
@@ -259,7 +264,10 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
               ‹ Prev
             </Pill>
           )}
-          <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Page {page + 1}</span>
+          <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+            Page {page + 1}{pageCount != null ? ` of ${pageCount}` : ''}
+            {total != null ? ` · ${total} streamers` : ''}
+          </span>
           {hasNextPage && (
             <Pill active={false} onClick={() => setPage((p) => p + 1)}>
               Next ›
