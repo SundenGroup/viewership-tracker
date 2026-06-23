@@ -52,7 +52,7 @@ const PLATFORM_TONES: Record<string, 'red' | 'default'> = {
 };
 
 /** Column template — matches v4 spec. */
-const COLS = '1.4fr 90px 64px 110px 90px 90px 100px 110px 130px';
+const COLS = '1.4fr 90px 64px 64px 110px 90px 90px 100px 110px 130px';
 
 export interface ChannelsSectionProps {
   seriesId: string;
@@ -123,6 +123,7 @@ export function ChannelsSection({
         _status: c.is_active ? 1 : 0,
         _platform: (c.platform ?? '').toString(),
         _region: (c.region ?? '').toString(),
+        _language: (c.language ?? '').toString(),
         _source: (c.source ?? '').toString(),
         _tier: (c.tier ?? '').toString(),
         _name: (c.display_name ?? '').toString(),
@@ -222,6 +223,7 @@ export function ChannelsSection({
         <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_name">Channel</SortHeader>
         <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_platform">Platform</SortHeader>
         <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_region">Region</SortHeader>
+        <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_language">Language</SortHeader>
         <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_tier">Category</SortHeader>
         <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_days">Days</SortHeader>
         <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="_source">Source</SortHeader>
@@ -309,6 +311,19 @@ export function ChannelsSection({
                   }}
                 >
                   {c.region?.toUpperCase() || '—'}
+                </div>
+
+                {/* Language */}
+                <div
+                  className="mono"
+                  style={{
+                    fontSize: 10.5,
+                    color: c.language ? 'var(--fg-muted)' : 'var(--fg-dim)',
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {c.language?.toUpperCase() || '—'}
                 </div>
 
                 {/* Tier */}
@@ -524,8 +539,14 @@ function InlineRowEditor({
             value={language}
             onChange={(e) => setLanguage(e.target.value)}
             placeholder="en / tr / ko …"
+            list="lang-codes"
             style={fieldStyle}
           />
+          <datalist id="lang-codes">
+            {['en','ko','ja','zh','tw','th','vi','id','ms','fil','tl','mn','hi',
+              'tr','ru','uk','pt','es','fr','de','fi','sv','da','hu','ar','pl','it','nl','el']
+              .map((code) => <option key={code} value={code} />)}
+          </datalist>
         </Field>
         <Field label="Region">
           <input
