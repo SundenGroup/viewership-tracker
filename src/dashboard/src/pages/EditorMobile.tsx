@@ -33,6 +33,7 @@ import { useDashboardModel } from '@/design/useDashboardModel';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
 import { usePollingApi } from '@/hooks/useApi';
 import { useNow } from '@/hooks/useNow';
+import { useAuth } from '@/hooks/useAuth';
 import * as api from '@/services/api';
 import type {
   TournamentSeries,
