@@ -217,15 +217,51 @@ export class DiscoveryService {
       };
     }
 
-    // 2. Load existing ACTIVE channels for this series (for dedup check)
-    const existingChannels = await this.db<Channel>('channels')
+    // 2. Load existing ACTIVE channels for this series (for dedup check).
+    //
+    // Day-aware: a channel only counts as "already tracked today" (and is thus
+    // skipped by discovery) if it is all-days (no day tags) OR pinned to a
+    // currently-live broadcast day. An active channel pinned ONLY to other days
+    // (e.g. a PNC watch party confirmed for the final day) is "off-schedule
+    // eligible" — if it shows up streaming today and the title matches the
+    // discovery keywords, we extend it onto today's live day so it gets polled,
+    // rather than leaving it skipped. Falls back to the original "all active =
+    // tracked" behavior when no day is live.
+    const liveDayIds: string[] = await this.db('broadcast_days')
+      .where('series_id', seriesId)
+      .where('status', 'live')
+      .pluck('id');
+    const liveDaySet = new Set<string>(liveDayIds);
+
+    const activeChannels = await this.db<Channel>('channels')
       .where('series_id', seriesId)
       .where('is_active', true)
-      .select('platform', 'channel_identifier');
+      .select('id', 'platform', 'channel_identifier');
 
-    const trackedSet = new Set<string>(
-      existingChannels.map((ch) => `${ch.platform}:${ch.channel_identifier.toLowerCase()}`),
-    );
+    const activeTagRows = activeChannels.length
+      ? await this.db('channel_broadcast_days')
+          .whereIn('channel_id', activeChannels.map((c) => c.id))
+          .select('channel_id', 'broadcast_day_id')
+      : [];
+    const tagsByChannel = new Map<string, string[]>();
+    for (const t of activeTagRows) {
+      const arr = tagsByChannel.get(t.channel_id) ?? [];
+      arr.push(t.broadcast_day_id);
+      tagsByChannel.set(t.channel_id, arr);
+    }
+
+    const trackedSet = new Set<string>();
+    const offScheduleActive = new Map<string, string>(); // lookupKey -> channel id
+    for (const ch of activeChannels) {
+      const key = `${ch.platform}:${ch.channel_identifier.toLowerCase()}`;
+      const tags = tagsByChannel.get(ch.id);
+      const trackedToday = !tags || tags.length === 0 || tags.some((d) => liveDaySet.has(d));
+      if (trackedToday || liveDaySet.size === 0) {
+        trackedSet.add(key);
+      } else {
+        offScheduleActive.set(key, ch.id);
+      }
+    }
 
     // Also load disabled channels that can be re-surfaced:
     // - auto-discovered channels (original flow)
@@ -311,6 +347,41 @@ export class DiscoveryService {
         // Already tracked?
         if (trackedSet.has(lookupKey)) {
           alreadyTracked++;
+          continue;
+        }
+
+        // Active day-scoped channel streaming on a day it isn't pinned to.
+        // If the title matches the discovery keywords, extend it onto today's
+        // live day(s) so it's polled today (covers a roster streamer going live
+        // off-schedule). Keyword-gated to avoid attributing non-event streams.
+        const offScheduleId = offScheduleActive.get(lookupKey);
+        if (offScheduleId) {
+          if (!matchesKeywords(stream.title, stream.displayName)) {
+            alreadyTracked++;
+            continue;
+          }
+          try {
+            for (const dayId of liveDaySet) {
+              await this.db('channel_broadcast_days')
+                .insert({ channel_id: offScheduleId, broadcast_day_id: dayId })
+                .onConflict(['channel_id', 'broadcast_day_id'])
+                .ignore();
+            }
+            await this.db('channels').where('id', offScheduleId).update({
+              metadata: this.db.raw(
+                `COALESCE(metadata, '{}'::jsonb) || ?::jsonb`,
+                [JSON.stringify({ last_seen_at: new Date().toISOString(), off_schedule_extended_at: new Date().toISOString() })],
+              ),
+            });
+            trackedSet.add(lookupKey);
+            resurfaced++;
+            logger.info(
+              `[Discovery] Extended day-scoped channel ${stream.displayName} [${platform}] onto live day(s) — ` +
+              `off-schedule stream matched keywords (${stream.concurrentViewers < 0 ? 'CCV hidden' : `${stream.concurrentViewers} viewers`})`,
+            );
+          } catch (err) {
+            logger.warn(`[Discovery] Failed to extend day-scoped channel ${stream.channelIdentifier}`, { error: (err as Error).message });
+          }
           continue;
         }
 
