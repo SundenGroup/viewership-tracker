@@ -19,18 +19,44 @@ const CDP_PORT = 9224; // Different from TikTok (9222) and Instagram (9223)
 const CDP_FILE = path.join(SCRIPT_DIR, '.twitch-browser-cdp');
 
 function findChrome(): string {
-  const paths = [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
-    '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  ];
+  // Per-platform candidate list. We try absolute paths first (faster +
+  // no PATH dependency in launchd / Task Scheduler) before falling back
+  // to a PATH-based lookup.
+  const candidates: string[] =
+    process.platform === 'win32'
+      ? [
+          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+          process.env.LOCALAPPDATA
+            ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`
+            : '',
+        ].filter(Boolean)
+      : process.platform === 'darwin'
+        ? [
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
+            '/Applications/Chromium.app/Contents/MacOS/Chromium',
+          ]
+        : [
+            '/usr/bin/google-chrome',
+            '/usr/bin/google-chrome-stable',
+            '/usr/bin/chromium',
+            '/usr/bin/chromium-browser',
+          ];
 
-  for (const p of paths) {
+  for (const p of candidates) {
     if (fs.existsSync(p)) return p;
   }
 
   try {
-    return execSync('which google-chrome || which chromium', { encoding: 'utf-8' }).trim();
+    const lookup =
+      process.platform === 'win32'
+        ? 'where chrome.exe'
+        : 'which google-chrome || which chromium';
+    const out = execSync(lookup, { encoding: 'utf-8' }).trim();
+    // `where` can return multiple lines on Windows — take the first.
+    const first = out.split(/\r?\n/)[0]?.trim();
+    if (first) return first;
   } catch {}
 
   throw new Error('Chrome not found. Install Google Chrome.');

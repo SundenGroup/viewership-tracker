@@ -314,10 +314,19 @@ router.get('/twitch/channels', requireRelayToken, async (_req: Request, res: Res
  * GET /api/relay/twitch/browser-channels
  *
  * Returns the top Twitch channels for browser-based scraping.
- * Officials first, then top channels by historical avg CCV. Max 20.
+ * Officials first, then top channels by historical avg CCV.
+ *
+ * Capped at BROWSER_CHANNELS_LIMIT (default 20). Raise it via the env
+ * var on a higher-capacity relay host (e.g. the dedicated PC) to track
+ * more channels; keep it low for a thermally-constrained box (2019 MBP).
  */
 router.get('/twitch/browser-channels', requireRelayToken, async (_req: Request, res: Response, next: NextFunction) => {
   try {
+    const limit = Math.max(
+      1,
+      parseInt(process.env.BROWSER_CHANNELS_LIMIT || '20', 10) || 20,
+    );
+
     // Get all active Twitch channels from series with live broadcast days
     const activeChannels = await db('channels as c')
       .join('broadcast_days as bd', function () {
@@ -344,14 +353,14 @@ router.get('/twitch/browser-channels', requireRelayToken, async (_req: Request, 
         .where('vs.concurrent_viewers', '>', 0)
         .groupBy('c.channel_identifier')
         .orderByRaw('AVG(vs.concurrent_viewers) DESC')
-        .limit(20 - officials.length)
+        .limit(Math.max(0, limit - officials.length))
         .select('c.channel_identifier');
     }
 
     const result = [
       ...officials.map((c: { channel_identifier: string }) => c.channel_identifier),
       ...ranked.map((c) => c.channel_identifier),
-    ].slice(0, 20);
+    ].slice(0, limit);
 
     res.json({ channels: result });
   } catch (err) {

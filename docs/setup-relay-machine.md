@@ -19,8 +19,21 @@ You're adding:
 | **TikTok WS tracker** | `tiktok-ws-tracker.ts --loop` | Direct WebSocket connection per channel — adds real-time push events on top of the 60 s HTTP poll. Uses **Euler signing** when `EULER_API_KEY` is set in `.env` (it already is on your machine). |
 | **Twitch browser scraper** | `twitch-browser-server.ts` + `twitch-browser-scraper.ts --loop` | Reads the Twitch DOM viewer count every 60 s. More granular than the stepped 3–5 min Helix API cache, and the only Twitch path we currently rely on. |
 
-The server keeps `MAX(value)` per channel per minute across every
-relay source, so adding more is purely additive.
+The server keeps `MAX(value)` per channel per minute for **TikTok**, so
+adding more TikTok sources is purely additive.
+
+> ⚠️ **Twitch now runs on the dedicated PC**, not here. The Twitch relay
+> endpoint is last-writer-wins (REPLACE), not MAX, so two Twitch scrapers
+> on the same channels fight. Once the PC
+> ([setup-relay-pc.md](setup-relay-pc.md)) is live, **unload the two
+> `com.clutch.twitch-browser-*` plists on this Mac** and keep only the
+> TikTok services:
+> ```bash
+> launchctl unload ~/Library/LaunchAgents/com.clutch.twitch-browser-scraper.plist
+> launchctl unload ~/Library/LaunchAgents/com.clutch.twitch-browser-server.plist
+> launchctl list | grep clutch.twitch   # should print nothing
+> ```
+> Sections §3 below remain only as reference / fallback if the PC is down.
 
 > ⚠️ **`scripts/twitch-relay.ts` is deprecated** — that script polled
 > Twitch Helix from a remote POP. We've stopped relying on it; the
@@ -488,6 +501,6 @@ launchctl kickstart -k gui/$UID/com.clutch.twitch-browser-scraper
 Only paths and the username. The `.env` is identical (same `RELAY_URL`,
 same `RELAY_SECRET`). The `TIKTOK_CHANNELS` list is hardcoded in
 `tiktok-relay.ts` so both Macs poll the same three channels — that's
-fine, the server dedupes by `MAX` per minute. The Twitch browser
-scraper auto-fetches its channel list from the server, so it's
-truly zero-config beyond the launchd plist.
+fine, the server dedupes TikTok by `MAX` per minute. (Twitch is *not*
+MAX-deduped — it's last-writer-wins — which is why Twitch scraping lives
+on a single box, the PC, per the note at the top.)

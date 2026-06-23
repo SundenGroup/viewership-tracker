@@ -68,25 +68,30 @@ async function refreshChannelList(): Promise<void> {
     });
     if (!res.ok) throw new Error(`${res.status}`);
     const data = (await res.json()) as { channels: string[] };
-    // pubg_battlegrounds is excluded from browser scraping because of
-    // Twitch's cohost feature. During PAS / PEC broadcasts the
-    // pubg_battlegrounds channel is cohosted with pubg_br (and
-    // sometimes more), and Twitch's UI replaces the per-channel viewer
-    // count with the COMBINED total across all cohosts. Multiple
-    // attempts at DOM-scraping the per-cohost slice (v1–v4 of the
-    // cohost extractor) either failed to find the popover row or
-    // matched wrong elements (followers, etc.) and wrote garbage.
+    // pubg_battlegrounds is excluded from browser scraping BY DEFAULT
+    // because of Twitch's cohost feature ("Stream Together"): during
+    // PAS / PEC / PNC broadcasts its page badge shows the COMBINED total
+    // across all co-streamers, not its own slice. v1–v5 DOM extractors
+    // failed (matched localized display names against the login, gated
+    // on the obsolete "Main Broadcast" marker, picked Math.min). With no
+    // reliable extractor it defers to server-side Helix — stepped 3–5
+    // min but correct per-channel.
     //
-    // Until we have a reliable extraction path (likely a GraphQL
-    // query against gql.twitch.tv that returns user.stream.viewersCount
-    // per channel), we defer to the server-side Helix polling for this
-    // channel — it's stepped 3–5 min but correct per-channel.
-    //
-    // Reactivate by removing this filter once the cohost-extractor
-    // code path (readViewerCount + COHOST_CHANNELS env var) is proven
-    // to return correct slices in production.
+    // The v6 extractor (readViewerCount, Shared-Viewership popover via
+    // href) is now in place. To ACTIVATE it, add pubg_battlegrounds AND
+    // every co-streamer to COHOST_CHANNELS — that both lets the channel
+    // back into the scrape list here AND makes readViewerCount read the
+    // per-channel slice (or abstain to Helix), never the combined badge.
+    // With COHOST_CHANNELS unset, behaviour is identical to before.
+    // See docs/plans/2026-05-09-twitch-cohost-per-channel-graphql.md
+    const cohostAllow = (process.env.COHOST_CHANNELS ?? '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
     let channels = data.channels.filter(
-      (c) => c.toLowerCase() !== 'pubg_battlegrounds',
+      (c) =>
+        c.toLowerCase() !== 'pubg_battlegrounds' ||
+        cohostAllow.includes('pubg_battlegrounds'),
     );
     if (Number.isFinite(MAX_CHANNELS) && channels.length > MAX_CHANNELS) {
       log(`Capping channel list at MAX_CHANNELS=${MAX_CHANNELS} (server returned ${channels.length})`);
@@ -335,34 +340,31 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
 
     // Stream is confirmed live — extract viewer count from the DOM.
     //
-    // Cohost-aware extractor. The default Twitch player badge (the
-    // [data-a-target="animated-channel-viewers-count"] element) shows
-    // the COMBINED viewer count across all cohosts when a stream is
-    // cohosted (e.g. pubg_battlegrounds + pubg_br). We need just the
-    // page-owner streamer's slice — i.e. only the count for the
-    // channel whose URL we're on.
+    // ── Cohost-aware extractor (v6) ───────────────────────────────────
     //
-    // Strategy:
-    //   1. Read the combined badge (legacy single value, used as
-    //      fallback and for cohost detection).
-    //   2. Walk the DOM for an <a href="/{slug}"> matching the URL
-    //      channel slug, find a number-like sibling. If found and
-    //      different from the combined badge, that's the per-cohost
-    //      slice. Works whether the popover is open or not — Twitch
-    //      typically renders cohost rows in the DOM regardless.
-    //   3. If no match without clicking, programmatically click the
-    //      popover trigger near the badge, wait briefly, retry.
-    //   4. Return both numbers + a flag so we can log which path won.
+    // During Twitch "Stream Together", the player viewer badge shows the
+    // COMBINED total across all co-streamers. The per-channel breakdown
+    // lives in the "Shared Viewership" popover, opened by clicking the
+    // badge. v1–v5 failed because they matched the channel LOGIN as DOM
+    // text (e.g. "kr1stw") against the popover's LOCALIZED display names
+    // (e.g. "西南69"), gated on the obsolete "Main Broadcast" marker, and
+    // picked Math.min of row numbers (returning a co-streamer's count).
     //
-    // The eval returns a Promise (Runtime.evaluate is called with
-    // awaitPromise:true) so we can use setTimeout for the popover wait.
-    // Cohost slicing is OFF by default after v3 wrote bogus per-channel
-    // numbers (random page metrics) for non-cohost channels. Only enable
-    // for an explicit allowlist of channels via COHOST_CHANNELS env var:
-    //   COHOST_CHANNELS=pubg_battlegrounds,pubg_br
-    // The official PUBG channels cohost during PAS / PEC broadcasts; the
-    // rest are normal single-stream channels and shouldn't run any
-    // cohost-detection code at all.
+    // v6 fixes all three:
+    //   • detect cohost by whether a "Total Viewers" / "Shared
+    //     Viewership" popover actually opens (not a text marker);
+    //   • map each popover row by its <a href="/{login}"> anchor — the
+    //     canonical login, independent of localized glyphs — never text;
+    //   • for the page-owner's slug, derive an exact value as
+    //     total − Σ(other rows) ONLY when every other row is exact
+    //     (a rounded "4.6K" other would inject its own ±50 error);
+    //   • NEVER write the combined badge for a cohosting channel. If we
+    //     can't extract a confident per-channel slice, return 0 so the
+    //     server-side Helix base row (correct, stepped) carries the tick.
+    //
+    // Only allowlisted channels (COHOST_CHANNELS / the is_cohosted
+    // roster) run this path; every other channel uses the plain badge.
+    //   COHOST_CHANNELS=pubg_battlegrounds,kr1stw,pubg_taiwan,pubgjapan
     const cohostAllowList = (process.env.COHOST_CHANNELS ?? '')
       .split(',')
       .map((s) => s.trim().toLowerCase())
@@ -371,237 +373,163 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
 
     const result = (await session.evaluate(`
       (async () => {
+        const SLUG = ${JSON.stringify(tab.channel.toLowerCase())};
         const COHOST_ENABLED = ${cohostEnabled};
-        function parseViewerText(text) {
-          if (text == null) return 0;
-          // Strip everything that isn't a digit / dot / K / M.
-          let cleaned = String(text).replace(/[^0-9.KMkm]/g, '').trim();
-          if (!cleaned) return 0;
-          const kMatch = cleaned.match(/^([\\d.]+)[Kk]$/);
-          if (kMatch) return Math.round(parseFloat(kMatch[1]) * 1000);
-          const mMatch = cleaned.match(/^([\\d.]+)[Mm]$/);
-          if (mMatch) return Math.round(parseFloat(mMatch[1]) * 1000000);
-          const num = parseInt(cleaned, 10);
-          return isNaN(num) ? 0 : num;
+
+        // Parse a viewer-count string → { value, rounded }. A plain
+        // integer ("501", "1,234") is exact; a K/M-suffixed value
+        // ("4.6K") is rounded to 0.1K (±50) / 0.1M.
+        function parseCount(text) {
+          if (text == null) return { value: 0, rounded: false };
+          const s = String(text).trim().replace(/[,\\s]/g, '');
+          const m = s.match(/^([0-9]*\\.?[0-9]+)([KkMm]?)/);
+          if (!m) return { value: 0, rounded: false };
+          const num = parseFloat(m[1]);
+          if (isNaN(num)) return { value: 0, rounded: false };
+          const unit = m[2].toUpperCase();
+          if (unit === 'K') return { value: Math.round(num * 1000), rounded: true };
+          if (unit === 'M') return { value: Math.round(num * 1000000), rounded: true };
+          return { value: Math.round(num), rounded: false };
         }
-        // Liberal number-shape recognizer — accepts "1.7K", "639", "1,234"
-        // etc. anywhere in the text after stripping leading dots/dashes.
-        function looksLikeNumber(text) {
-          if (!text) return false;
-          const cleaned = String(text).trim().replace(/^[^\\d]+/, '').replace(/[^\\d.,KMkm]/g, '');
-          if (!cleaned || cleaned.length > 12) return false;
-          return /^[\\d,]+(\\.[\\d]+)?[KMkm]?$/.test(cleaned);
+
+        // Extract a channel login from an href like "/kr1stw" or
+        // "/kr1stw/". Rejects multi-segment paths (/directory/, /p/...).
+        function loginFromHref(href) {
+          if (!href) return null;
+          let h = href;
+          try { h = decodeURIComponent(h); } catch (e) {}
+          const m = h.match(/^\\/([a-zA-Z0-9_]{2,25})\\/?$/);
+          return m ? m[1].toLowerCase() : null;
         }
+
         function readBadge() {
           const el = document.querySelector('[data-a-target="animated-channel-viewers-count"]')
                   || document.querySelector('[data-a-target="player-info-viewer-count"]');
-          if (el) return { el: el, value: parseViewerText(el.textContent) };
-          const aria = document.querySelector('[aria-label*="viewer" i]');
-          if (aria) {
-            const m = (aria.getAttribute('aria-label') || '').match(/([\\d,]+)/);
-            if (m) return { el: aria, value: parseInt(m[1].replace(/,/g, ''), 10) };
-          }
-          return { el: null, value: 0 };
+          return el ? parseCount(el.textContent).value : 0;
         }
-        // Find a clickable popover trigger. Conservative — only accept
-        // buttons/elements that have aria-haspopup. The fallback "any
-        // clickable parent" path was finding the share-button on
-        // every page, which isn't what we want.
-        function findPopoverTrigger(badgeEl) {
-          if (!badgeEl) return { el: null, where: 'no-badge' };
-          const tryAncestors = ['button[aria-haspopup]', 'button[aria-expanded]', '[role="button"][aria-haspopup]'];
-          for (const sel of tryAncestors) {
-            const ancestor = badgeEl.closest(sel);
-            if (ancestor) return { el: ancestor, where: 'ancestor:' + sel };
-          }
-          // Walk up a few levels looking for a sibling button — but
-          // ONLY accept ones with aria-haspopup, never share-button etc.
-          let p = badgeEl.parentElement;
-          for (let depth = 1; depth <= 5 && p; depth++, p = p.parentElement) {
-            const sibling = p.querySelector('button[aria-haspopup], [role="button"][aria-haspopup]');
-            if (sibling && sibling !== badgeEl && !sibling.contains(badgeEl)) {
-              return { el: sibling, where: 'sibling-depth-' + depth };
-            }
-          }
-          return { el: null, where: 'none' };
-        }
-        // Find the per-cohost row matching the URL slug.
-        //
-        // Three matching strategies, all subject to the same accept
-        // criteria (short ancestor text, contains slug, has a numeric
-        // child that's not equal to the combined badge):
-        //   1. Exact-text element match (any tag) whose textContent IS
-        //      the slug (case-insensitive). Cohost rows always have a
-        //      short element with the channel name as its only text.
-        //   2. <a href="/{slug}"> match.
-        //   3. textContent contains the slug as a whole word.
-        function findSlugRow(slug, combined) {
-          if (!slug) return { value: null, debug: { reason: 'no-slug' } };
-          const slugLc = slug.toLowerCase();
-          const slugPattern = new RegExp('(^|[^a-z0-9_])' + slug.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&') + '($|[^a-z0-9_])', 'i');
-          const tries = [];
 
-          function evaluateAncestor(node) {
-            const ancestorText = (node.textContent || '').trim();
-            if (ancestorText.length === 0 || ancestorText.length > 100) return null;
-            if (!ancestorText.toLowerCase().includes(slugLc)) return null;
-            const childNumbers = Array.from(node.querySelectorAll('*'))
-              .map(e => (e.textContent || '').trim())
-              .filter(looksLikeNumber);
-            if (childNumbers.length === 0) return null;
-            const parsed = childNumbers.map(parseViewerText).filter(n => n > 0);
-            if (parsed.length === 0) return null;
-            const candidates = parsed.filter(n => n !== combined);
-            const pick = candidates.length > 0 ? Math.min(...candidates) : parsed[0];
-            return {
-              text: ancestorText.slice(0, 120),
-              numbers: childNumbers,
-              parsed: parsed,
-              pick: pick,
-              isCandidate: candidates.length > 0,
-            };
-          }
-          function trySeed(seed, label) {
-            let p = seed.parentElement;
-            for (let depth = 1; depth <= 5 && p; depth++, p = p.parentElement) {
-              const r = evaluateAncestor(p);
-              if (r) {
-                tries.push({ source: label, depth: depth, ...r });
-                if (r.isCandidate) return r.pick;
+        // Locate the Shared Viewership popover: a short "Total Viewers" /
+        // "Shared Viewership" header label, then climb to the nearest
+        // container holding 2–12 channel-link rows. The row-count ceiling
+        // keeps us from matching the left sidebar (which lists many
+        // channels with their own viewer counts).
+        function findPopover() {
+          const els = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,strong,div'));
+          for (const el of els) {
+            const t = (el.textContent || '').trim();
+            if (t.length > 40) continue;
+            if (!/^Total Viewers/i.test(t) && !/^Shared Viewership/i.test(t)) continue;
+            let node = el.parentElement;
+            for (let d = 0; d < 6 && node; d++, node = node.parentElement) {
+              let chCount = 0;
+              for (const a of node.querySelectorAll('a[href]')) {
+                if (loginFromHref(a.getAttribute('href'))) chCount++;
               }
+              if (chCount >= 2 && chCount <= 12) return node;
             }
-            return null;
           }
-
-          // Strategy 1: text-equals-slug (most specific)
-          const allEls = Array.from(document.querySelectorAll('p, span, div, h1, h2, h3, h4, h5, h6'));
-          const textMatches = allEls.filter(el => {
-            const t = (el.textContent || '').trim().toLowerCase();
-            return t === slugLc;
-          });
-          for (const m of textMatches) {
-            const got = trySeed(m, 'text-eq');
-            if (got !== null) return { value: got, debug: { tries: tries, strategy: 'text-eq' } };
-          }
-
-          // Strategy 2: anchor href matches
-          const links = Array.from(document.querySelectorAll(
-            \`a[href="/\${slug}" i], a[href="/\${slug}/" i]\`,
-          ));
-          for (const a of links) {
-            const got = trySeed(a, 'href');
-            if (got !== null) return { value: got, debug: { tries: tries, strategy: 'href' } };
-          }
-
-          // text-includes strategy was removed in v4 — it matched too
-          // much (random page metrics that happened to mention the slug)
-          // and produced bogus values like 4M viewers.
-          return { value: null, debug: { tries: tries, linkCount: links.length, textMatchCount: textMatches.length } };
+          return null;
         }
 
-        const slug = (location.pathname.split('/').filter(Boolean)[0] || '').toLowerCase();
-        const badge = readBadge();
-        const combined = badge.value;
+        // Collect participant rows scoped to the popover: each
+        // <a href="/{login}"> whose nearby container shows a number.
+        function parseRows(root) {
+          const rows = [];
+          const seen = new Set();
+          for (const a of Array.from(root.querySelectorAll('a[href]'))) {
+            const login = loginFromHref(a.getAttribute('href'));
+            if (!login || seen.has(login)) continue;
+            let node = a;
+            for (let d = 0; d < 4 && node; d++, node = node.parentElement) {
+              const txt = (node.textContent || '').trim();
+              if (!txt || txt.length > 80) continue;
+              const m = txt.match(/([0-9][0-9.,]*\\s*[KkMm]?)\\s*$/);
+              if (!m) continue;
+              const c = parseCount(m[1]);
+              if (c.value <= 0) continue;
+              seen.add(login);
+              rows.push({ login: login, value: c.value, rounded: c.rounded });
+              break;
+            }
+          }
+          return rows;
+        }
 
-        // Hard short-circuit when cohost slicing is disabled for this
-        // channel. Just return the combined badge — same as the
-        // pre-cohost behaviour. No DOM walking, no clicking.
+        const combined = readBadge();
+
         if (!COHOST_ENABLED) {
-          return {
-            viewers: combined,
-            combined: combined,
-            perCohost: null,
-            isCohost: false,
-            slug: slug,
-            path: 'cohost-disabled',
-            debug: { trigger: null, tries: [], cohostEnabled: false },
-          };
+          return { mode: 'disabled', viewers: combined, combined: combined, confident: true, rows: [] };
         }
 
-        // Cohost slicing only runs when there's positive evidence we're
-        // on a cohost page. Twitch's cohost popover always contains the
-        // text "Main Broadcast" and "Co-Streamers" — neither appears on
-        // a single-stream page. Without one of these markers we won't
-        // try any heuristics; just use the combined badge.
-        const bodyText = document.body.innerText || '';
-        const cohostMarkerPresent =
-          /Main Broadcast/i.test(bodyText) ||
-          /Co-?Streamers?/i.test(bodyText) ||
-          /co-streaming/i.test(bodyText);
-
-        // Strategy 1: try without clicking — many Twitch UIs render
-        // cohost rows in the DOM even when the popover is collapsed.
-        let attempt = cohostMarkerPresent
-          ? findSlugRow(slug, combined)
-          : { value: null, debug: { reason: 'no-cohost-marker' } };
-        let path = attempt.value !== null ? 'dom-direct:' + (attempt.debug?.strategy || '?') : null;
-
-        // Strategy 2: click the popover trigger and retry.
-        const triggerInfo = findPopoverTrigger(badge.el);
-        if (attempt.value === null && cohostMarkerPresent && triggerInfo.el) {
-          try { triggerInfo.el.click(); } catch (_e) {}
+        // Open the popover by clicking the badge's interactive ancestor
+        // (or the badge itself), read it, then close it.
+        const badgeEl = document.querySelector('[data-a-target="animated-channel-viewers-count"]')
+                     || document.querySelector('[data-a-target="player-info-viewer-count"]');
+        const clickable = badgeEl ? (badgeEl.closest('button,[role="button"]') || badgeEl) : null;
+        let popover = null;
+        if (clickable) {
+          try { clickable.click(); } catch (e) {}
           await new Promise(r => setTimeout(r, 700));
-          attempt = findSlugRow(slug, combined);
-          if (attempt.value !== null) path = 'dom-after-click:' + (attempt.debug?.strategy || '?');
-          try { triggerInfo.el.click(); } catch (_e) {} // close popover
+          popover = findPopover();
+          try { clickable.click(); } catch (e) {}
         }
 
-        // Sanity guards. The slice MUST be (a) > 0, (b) ≤ combined,
-        // (c) under a sane upper bound. If any fail, fall back to the
-        // combined badge — better to overcount slightly on a cohost
-        // page than to write bogus data like "4 million viewers" from
-        // a stray follower count we accidentally matched.
-        let perCohost = attempt.value;
-        if (perCohost !== null) {
-          const sane = perCohost > 0 && perCohost <= combined && perCohost < 500000;
-          if (!sane) {
-            path = (path || 'unknown') + '+REJECTED-sanity';
-            perCohost = null;
-          }
+        // No Shared Viewership popover → solo stream right now → the
+        // badge is the correct per-channel value.
+        if (!popover) {
+          return { mode: 'solo', viewers: combined, combined: combined, confident: true, rows: [] };
         }
-        const isCohost = perCohost !== null && perCohost !== combined;
-        const viewers = isCohost ? perCohost : combined;
-        return {
-          viewers: viewers,
-          combined: combined,
-          perCohost: perCohost,
-          isCohost: isCohost,
-          slug: slug,
-          path: path,
-          debug: {
-            trigger: { found: !!triggerInfo.el, where: triggerInfo.where, tag: triggerInfo.el?.tagName, target: triggerInfo.el?.getAttribute?.('data-a-target'), haspopup: triggerInfo.el?.getAttribute?.('aria-haspopup') },
-            tries: attempt.debug?.tries || [],
-            linkCount: attempt.debug?.linkCount,
-            textMatchCount: attempt.debug?.textMatchCount,
-          },
-        };
+
+        const rows = parseRows(popover);
+        const mine = rows.find((r) => r.login === SLUG);
+        const others = rows.filter((r) => r.login !== SLUG);
+
+        // Cohosting but we couldn't resolve our own row → abstain (0) so
+        // Helix carries this tick. NEVER return the combined badge.
+        if (!mine || rows.length < 2) {
+          return { mode: 'cohost-unresolved', viewers: 0, combined: combined, confident: false, rows: rows };
+        }
+
+        let value = mine.value;
+        let method = mine.rounded ? 'rounded-direct' : 'exact-direct';
+        const roundedOthers = others.filter((o) => o.rounded).length;
+        const sumOthers = others.reduce((s, o) => s + o.value, 0);
+
+        // Refine a rounded slice via total − Σ(others) ONLY when every
+        // other row is exact; otherwise a rounded other would inject more
+        // error than just trusting the rounded display value.
+        if (mine.rounded && combined > 0 && roundedOthers === 0) {
+          value = combined - sumOthers;
+          method = 'subtraction-exact';
+        }
+
+        const sane = value > 0 && (combined === 0 || value <= combined) && value < 500000;
+        if (!sane) {
+          return { mode: 'cohost-insane', viewers: 0, combined: combined, confident: false, rows: rows, method: method, computed: value };
+        }
+
+        return { mode: 'cohost', viewers: value, combined: combined, confident: true, rows: rows, method: method };
       })()
     `)) as {
+      mode: string;
       viewers: number;
       combined: number;
-      perCohost: number | null;
-      isCohost: boolean;
-      slug: string;
-      path: string | null;
-      debug: {
-        trigger: { found: boolean; tag?: string; target?: string; haspopup?: string } | null;
-        tries: Array<{ depth: number; text: string; numbers: string[]; pick: number }>;
-        linkCount?: number;
-      };
+      confident: boolean;
+      rows: Array<{ login: string; value: number; rounded: boolean }>;
+      method?: string;
+      computed?: number;
     };
 
     const viewers = typeof result?.viewers === 'number' ? result.viewers : 0;
-    if (result?.isCohost) {
-      log(`  ${tab.channel}: cohost detected — combined=${result.combined}, slice=${result.perCohost} (path: ${result.path})`);
-    } else if (process.env.COHOST_DEBUG === '1' && result?.combined > 0) {
-      // Verbose path when the user is iterating. Logs every cycle so
-      // we can see why the slug match isn't hitting on a cohost page.
-      log(`  ${tab.channel}: cohost-debug combined=${result.combined} perCohost=${result.perCohost} path=${result.path} linkCount=${result.debug?.linkCount} textMatchCount=${result.debug?.textMatchCount}`);
-      log(`    trigger=${JSON.stringify(result.debug?.trigger)}`);
-      for (const t of (result.debug?.tries ?? []).slice(0, 6)) {
-        const tt = t as { source?: string; depth: number; pick: number; numbers: string[]; text: string };
-        log(`    try ${tt.source}@${tt.depth} pick=${tt.pick} nums=${JSON.stringify(tt.numbers)} text=${JSON.stringify(tt.text)}`);
-      }
+    const rowsStr = (result?.rows ?? [])
+      .map((r) => `${r.login}:${r.value}${r.rounded ? '~' : ''}`)
+      .join(',');
+    if (result?.mode === 'cohost') {
+      log(`  ${tab.channel}: cohost slice=${result.viewers} (combined=${result.combined}, method=${result.method}, rows=${rowsStr})`);
+    } else if (result?.mode === 'cohost-unresolved' || result?.mode === 'cohost-insane') {
+      log(`  ${tab.channel}: cohost extract FAILED (${result.mode}) — abstaining, Helix carries. combined=${result.combined} rows=${rowsStr || 'none'}`);
+    } else if (process.env.COHOST_DEBUG === '1' && cohostEnabled) {
+      log(`  ${tab.channel}: cohost-debug mode=${result.mode} viewers=${result.viewers} combined=${result.combined} rows=${rowsStr || 'none'}`);
     }
 
     // Tame the tab — pause any <video>, force the lowest quality preset,

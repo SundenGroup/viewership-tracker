@@ -9,3 +9,4 @@ src/dashboard/dist/
 .youtube-quota.json
 .youtube-pool-quota.json
 scripts/twitch-browser-profile/
+scripts/.twitch-browser-cdp
