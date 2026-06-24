@@ -475,14 +475,37 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
         const combined = readBadge();
         const el = document.querySelector('[data-a-target="animated-channel-viewers-count"]')
                 || document.querySelector('[data-a-target="player-info-viewer-count"]');
-        let coords = null;
-        if (el) {
-          const r = el.getBoundingClientRect();
-          coords = { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+        if (!el) return { combined: combined, coords: null, chain: [] };
+        // Ancestor chain — to find the real dropdown trigger.
+        const chain = [];
+        let n = el;
+        for (let d = 0; d < 8 && n; d++, n = n.parentElement) {
+          chain.push({
+            tag: n.tagName,
+            role: n.getAttribute('role'),
+            haspopup: n.getAttribute('aria-haspopup'),
+            expanded: n.getAttribute('aria-expanded'),
+            target: n.getAttribute('data-a-target'),
+          });
         }
-        return { combined: combined, coords: coords };
+        // Click the nearest interactive dropdown trigger, not just the number.
+        const trig = el.closest('[aria-haspopup],[aria-expanded],button,[role="button"]') || el;
+        const r = trig.getBoundingClientRect();
+        return {
+          combined: combined,
+          coords: { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) },
+          chain: chain,
+          triggerTag: trig.tagName,
+          triggerHaspopup: trig.getAttribute('aria-haspopup'),
+        };
       })()
-    `)) as { combined: number; coords: { x: number; y: number } | null };
+    `)) as {
+      combined: number;
+      coords: { x: number; y: number } | null;
+      chain?: unknown[];
+      triggerTag?: string;
+      triggerHaspopup?: string | null;
+    };
 
     const combined = badgeInfo?.combined ?? 0;
 
@@ -496,6 +519,7 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
       diag?: unknown;
     }
     let result: CohostResult;
+    let elementAtClick: unknown = null;
 
     if (!cohostEnabled) {
       // Non-cohost channel: the badge IS its correct per-channel value.
@@ -503,22 +527,26 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
     } else if (!badgeInfo?.coords) {
       result = { mode: 'cohost-no-badge', viewers: 0, combined, rows: [] };
     } else {
-      // Step 2: open the popover with a REAL trusted click. CDP clicks
-      // don't reliably reach Twitch's React handler on a BACKGROUNDED tab
-      // (the scraper keeps every tab in the background), so bring the tab
-      // forward and hover the badge first, then click.
+      const coords = badgeInfo.coords;
+      // Step 2: bring the tab forward + hover + REAL trusted click on the
+      // dropdown trigger. CDP clicks don't reliably reach Twitch's React
+      // handler on a BACKGROUNDED tab, so foreground it first.
       await session.send('Page.bringToFront').catch(() => {});
       await sleep(300);
       await session
-        .send('Input.dispatchMouseEvent', {
-          type: 'mouseMoved',
-          x: badgeInfo.coords.x,
-          y: badgeInfo.coords.y,
-        })
+        .send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: coords.x, y: coords.y })
         .catch(() => {});
       await sleep(250);
-      await session.realClick(badgeInfo.coords.x, badgeInfo.coords.y);
+      await session.realClick(coords.x, coords.y);
       await sleep(900);
+
+      // What's actually under the click point — confirms we hit the trigger.
+      elementAtClick = await session.evaluate(`
+        (function () {
+          const e = document.elementFromPoint(${coords.x}, ${coords.y});
+          return e ? { tag: e.tagName, target: e.getAttribute('data-a-target'), role: e.getAttribute('role'), cls: (e.className || '').toString().slice(0, 70) } : null;
+        })()
+      `);
 
       // Step 3: parse the popover and compute this channel's slice.
       result = (await session.evaluate(`
@@ -598,6 +626,10 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
         viewers: result.viewers,
         method: result.method,
         diag: result.diag,
+        chain: badgeInfo?.chain,
+        triggerTag: badgeInfo?.triggerTag,
+        triggerHaspopup: badgeInfo?.triggerHaspopup,
+        elementAtClick,
       });
     }
 
