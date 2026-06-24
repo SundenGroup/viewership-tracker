@@ -21,7 +21,26 @@
  * It only READS — no data is written anywhere.
  */
 import * as http from 'http';
+import * as fs from 'fs';
+import * as path from 'path';
 
+// Load .env so we can POST the capture straight to the server (read it
+// there via SSH — no copy-paste from the PC console).
+const envPath = path.resolve(__dirname, '..', '.env');
+if (fs.existsSync(envPath)) {
+  for (const line of fs.readFileSync(envPath, 'utf-8').split('\n')) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const eq = t.indexOf('=');
+    if (eq === -1) continue;
+    const k = t.slice(0, eq).trim();
+    let v = t.slice(eq + 1).trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    if (!process.env[k]) process.env[k] = v;
+  }
+}
+const RELAY_URL = process.env.RELAY_URL || 'https://tracker.clutch.game';
+const RELAY_SECRET = process.env.RELAY_SECRET || '';
 const CDP_PORT = 9224;
 const CHANNEL = (process.argv[2] || 'pubg_battlegrounds').toLowerCase();
 
@@ -286,6 +305,35 @@ async function main() {
   } else {
     console.log('  popover did NOT open via either click — the trigger/selector is wrong,');
     console.log('  or the popover is in a shadow root / needs a different gesture.');
+  }
+
+  // Ship the whole capture to the server so it can be read via SSH —
+  // no copy-paste from the PC.
+  const report = {
+    channel: CHANNEL,
+    badge,
+    before,
+    afterSynthetic,
+    afterReal,
+    verdict: {
+      syntheticOpened: opened(afterSynthetic),
+      realOpened: opened(afterReal),
+      rows: best ? (best as { anchorsWithNumbers?: unknown[] }).anchorsWithNumbers ?? [] : [],
+    },
+  };
+  if (RELAY_SECRET) {
+    try {
+      const resp = await fetch(`${RELAY_URL}/api/relay/twitch/debug?label=cohost`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${RELAY_SECRET}` },
+        body: JSON.stringify(report),
+      });
+      console.log(`\n✓ Posted capture to server (HTTP ${resp.status}) — readable server-side.`);
+    } catch (e) {
+      console.log(`\n✗ Could not POST capture: ${(e as Error).message} (the console output above still has it)`);
+    }
+  } else {
+    console.log('\n(No RELAY_SECRET in .env — capture not posted.)');
   }
 
   cdp.close();

@@ -10,6 +10,8 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import db from '../../utils/db';
 import logger from '../../utils/logger';
 
@@ -282,6 +284,30 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
 
     logger.info(`[Relay] Twitch: ${matched} matched, ${updated} replaced with browser data`);
     res.json({ matched, updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/relay/twitch/debug?label=xxx
+ *
+ * Diagnostic sink — accepts an arbitrary JSON body from a relay machine
+ * and writes it to /tmp/cvt-debug/<label>.json so it can be inspected
+ * server-side (e.g. live cohost DOM captures pushed from the PC scraper,
+ * which can't be read directly). Token-gated; overwrites the previous
+ * capture for that label.
+ */
+router.post('/twitch/debug', requireRelayToken, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const rawLabel = (req.query.label ?? 'capture').toString();
+    const label = rawLabel.replace(/[^a-z0-9_-]/gi, '').slice(0, 40) || 'capture';
+    const dir = '/tmp/cvt-debug';
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${label}.json`);
+    fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), body: req.body }, null, 2));
+    logger.info(`[Relay] debug capture saved → ${file}`);
+    res.json({ ok: true, file });
   } catch (err) {
     next(err);
   }
