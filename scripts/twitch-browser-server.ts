@@ -12,8 +12,13 @@
 import { execSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 
-const SCRIPT_DIR = path.dirname(new URL(import.meta.url).pathname);
+// Use fileURLToPath, NOT new URL(import.meta.url).pathname — on Windows
+// the latter yields an invalid "/C:/Users/..." path (leading slash before
+// the drive letter), which breaks the profile dir + Chrome --user-data-dir
+// and surfaces as "ENOENT: no such file or directory".
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_DIR = path.join(SCRIPT_DIR, 'twitch-browser-profile');
 const CDP_PORT = 9224; // Different from TikTok (9222) and Instagram (9223)
 const CDP_FILE = path.join(SCRIPT_DIR, '.twitch-browser-cdp');
