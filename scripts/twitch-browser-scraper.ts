@@ -475,10 +475,15 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
           try { clickable.click(); } catch (e) {}
         }
 
-        // No Shared Viewership popover → solo stream right now → the
-        // badge is the correct per-channel value.
+        // No Shared Viewership popover parsed. For a cohost-enabled
+        // channel we must NOT fall back to the badge: during Stream
+        // Together that badge is the COMBINED total and writing it
+        // inflates this channel (the 4k-vs-10k flapping bug). Abstain
+        // (0) so the server-side per-channel poll carries this tick;
+        // real-time per-channel resumes only once the popover actually
+        // parses. NEVER write the combined badge for a cohost channel.
         if (!popover) {
-          return { mode: 'solo', viewers: combined, combined: combined, confident: true, rows: [] };
+          return { mode: 'cohost-no-popover', viewers: 0, combined: combined, confident: false, rows: [] };
         }
 
         const rows = parseRows(popover);
@@ -527,8 +532,12 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
       .join(',');
     if (result?.mode === 'cohost') {
       log(`  ${tab.channel}: cohost slice=${result.viewers} (combined=${result.combined}, method=${result.method}, rows=${rowsStr})`);
-    } else if (result?.mode === 'cohost-unresolved' || result?.mode === 'cohost-insane') {
-      log(`  ${tab.channel}: cohost extract FAILED (${result.mode}) — abstaining, Helix carries. combined=${result.combined} rows=${rowsStr || 'none'}`);
+    } else if (
+      result?.mode === 'cohost-unresolved' ||
+      result?.mode === 'cohost-insane' ||
+      result?.mode === 'cohost-no-popover'
+    ) {
+      log(`  ${tab.channel}: cohost extract FAILED (${result.mode}) — abstaining, server poll carries. combined=${result.combined} rows=${rowsStr || 'none'}`);
     } else if (process.env.COHOST_DEBUG === '1' && cohostEnabled) {
       log(`  ${tab.channel}: cohost-debug mode=${result.mode} viewers=${result.viewers} combined=${result.combined} rows=${rowsStr || 'none'}`);
     }
