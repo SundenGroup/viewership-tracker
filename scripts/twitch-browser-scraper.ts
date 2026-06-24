@@ -503,9 +503,22 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
     } else if (!badgeInfo?.coords) {
       result = { mode: 'cohost-no-badge', viewers: 0, combined, rows: [] };
     } else {
-      // Step 2: open the popover with a REAL CDP click (trusted event).
+      // Step 2: open the popover with a REAL trusted click. CDP clicks
+      // don't reliably reach Twitch's React handler on a BACKGROUNDED tab
+      // (the scraper keeps every tab in the background), so bring the tab
+      // forward and hover the badge first, then click.
+      await session.send('Page.bringToFront').catch(() => {});
+      await sleep(300);
+      await session
+        .send('Input.dispatchMouseEvent', {
+          type: 'mouseMoved',
+          x: badgeInfo.coords.x,
+          y: badgeInfo.coords.y,
+        })
+        .catch(() => {});
+      await sleep(250);
       await session.realClick(badgeInfo.coords.x, badgeInfo.coords.y);
-      await sleep(800);
+      await sleep(900);
 
       // Step 3: parse the popover and compute this channel's slice.
       result = (await session.evaluate(`
