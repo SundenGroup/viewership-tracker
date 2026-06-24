@@ -211,6 +211,21 @@ class CDPSession {
     return result?.result?.value;
   }
 
+  // Dispatch a REAL (trusted) left click at viewport coords. Twitch
+  // ignores a synthetic element.click() for the Shared Viewership popover,
+  // so the cohost extractor opens it this way instead.
+  async realClick(x: number, y: number): Promise<void> {
+    await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    await this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+    await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+  }
+
+  // Press Escape — closes the popover after we've read it.
+  async pressEscape(): Promise<void> {
+    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  }
+
   close(): void {
     this.ws?.close();
     this.ws = null;
@@ -371,160 +386,152 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
     const cohostEnabled = cohostAllowList.includes(tab.channel.toLowerCase());
+    const slug = tab.channel.toLowerCase();
 
-    const result = (await session.evaluate(`
-      (async () => {
-        const SLUG = ${JSON.stringify(tab.channel.toLowerCase())};
-        const COHOST_ENABLED = ${cohostEnabled};
+    // ── Cohost-aware extractor (v7) ───────────────────────────────────
+    //
+    // Stream Together shows the COMBINED total in the player badge; the
+    // per-channel breakdown lives in the "Shared Viewership" popover.
+    // CONFIRMED against the live DOM: that popover only opens on a REAL
+    // (trusted) mouse click — Twitch ignores a synthetic element.click()
+    // — which is why v6 (synthetic click) never opened it and always
+    // abstained. v7 opens it with a CDP Input.dispatchMouseEvent at the
+    // badge's coordinates, then maps each row by its <a href="/{login}">
+    // anchor and takes the page-owner's slug row. If anything is off it
+    // ABSTAINS (returns 0) so the server poll carries — it NEVER writes
+    // the combined badge for a cohost channel. Only COHOST_CHANNELS run
+    // this path; everything else uses the plain badge.
 
-        // Parse a viewer-count string → { value, rounded }. A plain
-        // integer ("501", "1,234") is exact; a K/M-suffixed value
-        // ("4.6K") is rounded to 0.1K (±50) / 0.1M.
-        function parseCount(text) {
-          if (text == null) return { value: 0, rounded: false };
-          const s = String(text).trim().replace(/[,\\s]/g, '');
-          const m = s.match(/^([0-9]*\\.?[0-9]+)([KkMm]?)/);
-          if (!m) return { value: 0, rounded: false };
-          const num = parseFloat(m[1]);
-          if (isNaN(num)) return { value: 0, rounded: false };
-          const unit = m[2].toUpperCase();
-          if (unit === 'K') return { value: Math.round(num * 1000), rounded: true };
-          if (unit === 'M') return { value: Math.round(num * 1000000), rounded: true };
-          return { value: Math.round(num), rounded: false };
-        }
-
-        // Extract a channel login from an href like "/kr1stw" or
-        // "/kr1stw/". Rejects multi-segment paths (/directory/, /p/...).
-        function loginFromHref(href) {
-          if (!href) return null;
-          let h = href;
-          try { h = decodeURIComponent(h); } catch (e) {}
-          const m = h.match(/^\\/([a-zA-Z0-9_]{2,25})\\/?$/);
-          return m ? m[1].toLowerCase() : null;
-        }
-
-        function readBadge() {
-          const el = document.querySelector('[data-a-target="animated-channel-viewers-count"]')
-                  || document.querySelector('[data-a-target="player-info-viewer-count"]');
-          return el ? parseCount(el.textContent).value : 0;
-        }
-
-        // Locate the Shared Viewership popover: a short "Total Viewers" /
-        // "Shared Viewership" header label, then climb to the nearest
-        // container holding 2–12 channel-link rows. The row-count ceiling
-        // keeps us from matching the left sidebar (which lists many
-        // channels with their own viewer counts).
-        function findPopover() {
-          const els = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,strong,div'));
-          for (const el of els) {
-            const t = (el.textContent || '').trim();
-            if (t.length > 40) continue;
-            if (!/^Total Viewers/i.test(t) && !/^Shared Viewership/i.test(t)) continue;
-            let node = el.parentElement;
-            for (let d = 0; d < 6 && node; d++, node = node.parentElement) {
-              let chCount = 0;
-              for (const a of node.querySelectorAll('a[href]')) {
-                if (loginFromHref(a.getAttribute('href'))) chCount++;
-              }
-              if (chCount >= 2 && chCount <= 12) return node;
+    // Shared in-page helpers for both extraction steps.
+    const PRELUDE = `
+      function parseCount(text) {
+        if (text == null) return { value: 0, rounded: false };
+        const s = String(text).trim().replace(/[,\\s]/g, '');
+        const m = s.match(/^([0-9]*\\.?[0-9]+)([KkMm]?)/);
+        if (!m) return { value: 0, rounded: false };
+        const num = parseFloat(m[1]);
+        if (isNaN(num)) return { value: 0, rounded: false };
+        const unit = m[2].toUpperCase();
+        if (unit === 'K') return { value: Math.round(num * 1000), rounded: true };
+        if (unit === 'M') return { value: Math.round(num * 1000000), rounded: true };
+        return { value: Math.round(num), rounded: false };
+      }
+      function loginFromHref(href) {
+        if (!href) return null;
+        let h = href;
+        try { h = decodeURIComponent(h); } catch (e) {}
+        const m = h.match(/^\\/([a-zA-Z0-9_]{2,25})\\/?$/);
+        return m ? m[1].toLowerCase() : null;
+      }
+      function readBadge() {
+        const el = document.querySelector('[data-a-target="animated-channel-viewers-count"]')
+                || document.querySelector('[data-a-target="player-info-viewer-count"]');
+        return el ? parseCount(el.textContent).value : 0;
+      }
+      function findPopover() {
+        const els = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,strong,div'));
+        for (const el of els) {
+          const t = (el.textContent || '').trim();
+          if (t.length > 40) continue;
+          if (!/^Total Viewers/i.test(t) && !/^Shared Viewership/i.test(t)) continue;
+          let node = el.parentElement;
+          for (let d = 0; d < 6 && node; d++, node = node.parentElement) {
+            let chCount = 0;
+            for (const a of node.querySelectorAll('a[href]')) {
+              if (loginFromHref(a.getAttribute('href'))) chCount++;
             }
+            if (chCount >= 2 && chCount <= 12) return node;
           }
-          return null;
         }
-
-        // Collect participant rows scoped to the popover: each
-        // <a href="/{login}"> whose nearby container shows a number.
-        function parseRows(root) {
-          const rows = [];
-          const seen = new Set();
-          for (const a of Array.from(root.querySelectorAll('a[href]'))) {
-            const login = loginFromHref(a.getAttribute('href'));
-            if (!login || seen.has(login)) continue;
-            let node = a;
-            for (let d = 0; d < 4 && node; d++, node = node.parentElement) {
-              const txt = (node.textContent || '').trim();
-              if (!txt || txt.length > 80) continue;
-              const m = txt.match(/([0-9][0-9.,]*\\s*[KkMm]?)\\s*$/);
-              if (!m) continue;
-              const c = parseCount(m[1]);
-              if (c.value <= 0) continue;
-              seen.add(login);
-              rows.push({ login: login, value: c.value, rounded: c.rounded });
-              break;
-            }
+        return null;
+      }
+      function parseRows(root) {
+        const rows = [];
+        const seen = new Set();
+        for (const a of Array.from(root.querySelectorAll('a[href]'))) {
+          const login = loginFromHref(a.getAttribute('href'));
+          if (!login || seen.has(login)) continue;
+          let node = a;
+          for (let d = 0; d < 4 && node; d++, node = node.parentElement) {
+            const txt = (node.textContent || '').trim();
+            if (!txt || txt.length > 80) continue;
+            const m = txt.match(/([0-9][0-9.,]*\\s*[KkMm]?)\\s*$/);
+            if (!m) continue;
+            const c = parseCount(m[1]);
+            if (c.value <= 0) continue;
+            seen.add(login);
+            rows.push({ login: login, value: c.value, rounded: c.rounded });
+            break;
           }
-          return rows;
         }
+        return rows;
+      }
+    `;
 
+    // Step 1: read the badge value + the badge's centre coordinates.
+    const badgeInfo = (await session.evaluate(`
+      (function () {
+        ${PRELUDE}
         const combined = readBadge();
-
-        if (!COHOST_ENABLED) {
-          return { mode: 'disabled', viewers: combined, combined: combined, confident: true, rows: [] };
+        const el = document.querySelector('[data-a-target="animated-channel-viewers-count"]')
+                || document.querySelector('[data-a-target="player-info-viewer-count"]');
+        let coords = null;
+        if (el) {
+          const r = el.getBoundingClientRect();
+          coords = { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
         }
-
-        // Open the popover by clicking the badge's interactive ancestor
-        // (or the badge itself), read it, then close it.
-        const badgeEl = document.querySelector('[data-a-target="animated-channel-viewers-count"]')
-                     || document.querySelector('[data-a-target="player-info-viewer-count"]');
-        const clickable = badgeEl ? (badgeEl.closest('button,[role="button"]') || badgeEl) : null;
-        let popover = null;
-        if (clickable) {
-          try { clickable.click(); } catch (e) {}
-          await new Promise(r => setTimeout(r, 700));
-          popover = findPopover();
-          try { clickable.click(); } catch (e) {}
-        }
-
-        // No Shared Viewership popover parsed. For a cohost-enabled
-        // channel we must NOT fall back to the badge: during Stream
-        // Together that badge is the COMBINED total and writing it
-        // inflates this channel (the 4k-vs-10k flapping bug). Abstain
-        // (0) so the server-side per-channel poll carries this tick;
-        // real-time per-channel resumes only once the popover actually
-        // parses. NEVER write the combined badge for a cohost channel.
-        if (!popover) {
-          return { mode: 'cohost-no-popover', viewers: 0, combined: combined, confident: false, rows: [] };
-        }
-
-        const rows = parseRows(popover);
-        const mine = rows.find((r) => r.login === SLUG);
-        const others = rows.filter((r) => r.login !== SLUG);
-
-        // Cohosting but we couldn't resolve our own row → abstain (0) so
-        // Helix carries this tick. NEVER return the combined badge.
-        if (!mine || rows.length < 2) {
-          return { mode: 'cohost-unresolved', viewers: 0, combined: combined, confident: false, rows: rows };
-        }
-
-        let value = mine.value;
-        let method = mine.rounded ? 'rounded-direct' : 'exact-direct';
-        const roundedOthers = others.filter((o) => o.rounded).length;
-        const sumOthers = others.reduce((s, o) => s + o.value, 0);
-
-        // Refine a rounded slice via total − Σ(others) ONLY when every
-        // other row is exact; otherwise a rounded other would inject more
-        // error than just trusting the rounded display value.
-        if (mine.rounded && combined > 0 && roundedOthers === 0) {
-          value = combined - sumOthers;
-          method = 'subtraction-exact';
-        }
-
-        const sane = value > 0 && (combined === 0 || value <= combined) && value < 500000;
-        if (!sane) {
-          return { mode: 'cohost-insane', viewers: 0, combined: combined, confident: false, rows: rows, method: method, computed: value };
-        }
-
-        return { mode: 'cohost', viewers: value, combined: combined, confident: true, rows: rows, method: method };
+        return { combined: combined, coords: coords };
       })()
-    `)) as {
+    `)) as { combined: number; coords: { x: number; y: number } | null };
+
+    const combined = badgeInfo?.combined ?? 0;
+
+    interface CohostResult {
       mode: string;
       viewers: number;
       combined: number;
-      confident: boolean;
       rows: Array<{ login: string; value: number; rounded: boolean }>;
       method?: string;
       computed?: number;
-    };
+    }
+    let result: CohostResult;
+
+    if (!cohostEnabled) {
+      // Non-cohost channel: the badge IS its correct per-channel value.
+      result = { mode: 'disabled', viewers: combined, combined, rows: [] };
+    } else if (!badgeInfo?.coords) {
+      result = { mode: 'cohost-no-badge', viewers: 0, combined, rows: [] };
+    } else {
+      // Step 2: open the popover with a REAL CDP click (trusted event).
+      await session.realClick(badgeInfo.coords.x, badgeInfo.coords.y);
+      await sleep(800);
+
+      // Step 3: parse the popover and compute this channel's slice.
+      result = (await session.evaluate(`
+        (function () {
+          ${PRELUDE}
+          const SLUG = ${JSON.stringify(slug)};
+          const combined = readBadge();
+          const popover = findPopover();
+          if (!popover) return { mode: 'cohost-no-popover', viewers: 0, combined: combined, rows: [] };
+          const rows = parseRows(popover);
+          const mine = rows.find((r) => r.login === SLUG);
+          const others = rows.filter((r) => r.login !== SLUG);
+          if (!mine || rows.length < 2) return { mode: 'cohost-unresolved', viewers: 0, combined: combined, rows: rows };
+          let value = mine.value;
+          let method = mine.rounded ? 'rounded-direct' : 'exact-direct';
+          const roundedOthers = others.filter((o) => o.rounded).length;
+          const sumOthers = others.reduce((s, o) => s + o.value, 0);
+          if (mine.rounded && combined > 0 && roundedOthers === 0) { value = combined - sumOthers; method = 'subtraction-exact'; }
+          const sane = value > 0 && (combined === 0 || value <= combined) && value < 500000;
+          if (!sane) return { mode: 'cohost-insane', viewers: 0, combined: combined, rows: rows, method: method, computed: value };
+          return { mode: 'cohost', viewers: value, combined: combined, rows: rows, method: method };
+        })()
+      `)) as CohostResult;
+
+      // Step 4: close the popover so it doesn't linger over the player.
+      await session.pressEscape();
+    }
 
     const viewers = typeof result?.viewers === 'number' ? result.viewers : 0;
     const rowsStr = (result?.rows ?? [])
