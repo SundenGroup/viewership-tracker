@@ -546,6 +546,8 @@ export function getStreamUrl(platform: string | null, channelIdentifier: string)
       return `https://chzzk.naver.com/live/${channelIdentifier}`;
     case 'soop':
       return `https://play.sooplive.co.kr/${channelIdentifier}`;
+    case 'nimotv':
+      return `https://www.nimo.tv/${channelIdentifier}`;
     default:
       return null;
   }

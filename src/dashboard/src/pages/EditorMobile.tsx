@@ -1481,6 +1481,8 @@ function channelUrlMobile(platform: string | null, id: string): string {
       return `https://chzzk.naver.com/${id}`;
     case 'trovo':
       return `https://trovo.live/${id}`;
+    case 'nimotv':
+      return `https://www.nimo.tv/${id}`;
     default:
       return '#';
   }
