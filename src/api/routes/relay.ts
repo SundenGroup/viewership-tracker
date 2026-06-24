@@ -327,13 +327,30 @@ router.get('/twitch/browser-channels', requireRelayToken, async (_req: Request, 
       parseInt(process.env.BROWSER_CHANNELS_LIMIT || '20', 10) || 20,
     );
 
-    // Get all active Twitch channels from series with live broadcast days
+    // Get all active Twitch channels from series with live broadcast days.
+    //
+    // Day-aware: a channel with NO channel_broadcast_days rows is
+    // series-wide (tracked every day its series is live); a channel WITH
+    // day-tags is tracked ONLY on its tagged days. Mirrors the orchestrator
+    // convention. Without this filter the scraper opens a Chrome tab for
+    // every official / top-CCV channel in a live series even when that
+    // channel isn't scheduled to broadcast today.
     const activeChannels = await db('channels as c')
       .join('broadcast_days as bd', function () {
         this.on('bd.series_id', 'c.series_id').andOn('bd.status', db.raw("'live'"));
       })
       .where('c.platform', 'twitch')
       .where('c.is_active', true)
+      .where(function () {
+        this.whereNotExists(
+          db('channel_broadcast_days as cbd').whereRaw('cbd.channel_id = c.id'),
+        ).orWhereExists(
+          db('channel_broadcast_days as cbd2')
+            .join('broadcast_days as bd2', 'bd2.id', 'cbd2.broadcast_day_id')
+            .whereRaw('cbd2.channel_id = c.id')
+            .where('bd2.status', 'live'),
+        );
+      })
       .distinct('c.channel_identifier', 'c.tier')
       .select('c.channel_identifier', 'c.tier');
 
