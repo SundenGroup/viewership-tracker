@@ -53,7 +53,8 @@ const CDP_FILE = path.join(__dirname, '.twitch-browser-cdp');
 // MAX_CHANNELS=8 in .env to take only the top 8 from the server's list.
 const MAX_CHANNELS = parseInt(process.env.MAX_CHANNELS || '0', 10) || Infinity;
 
-// Channel list is fetched from the server API (officials + top CCV, max 20).
+// Channel list is fetched from the server API (officials + top CCV,
+// capped server-side by BROWSER_CHANNELS_LIMIT, default 20).
 // Refreshes every 5 minutes. No local config needed — just add channels in the tool.
 let CHANNELS: string[] = [];
 const CHANNEL_REFRESH_MS = 5 * 60_000;
@@ -99,7 +100,7 @@ async function refreshChannelList(): Promise<void> {
     }
     CHANNELS = channels;
     lastChannelFetch = Date.now();
-    log(`Channel list refreshed: ${CHANNELS.length} channels (officials + top CCV, max 20${Number.isFinite(MAX_CHANNELS) ? `, cap ${MAX_CHANNELS}` : ''})`);
+    log(`Channel list refreshed: ${CHANNELS.length} channels (officials + top CCV, server-capped via BROWSER_CHANNELS_LIMIT${Number.isFinite(MAX_CHANNELS) ? `, local cap ${MAX_CHANNELS}` : ''})${CHANNELS.length === 0 ? ' — 0 is normal when no broadcast is live' : ''}`);
   } catch (err) {
     log(`Could not fetch channel list: ${(err as Error).message}`);
     // Keep existing list if refresh fails
