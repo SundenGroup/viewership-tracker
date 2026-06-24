@@ -493,6 +493,7 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
       rows: Array<{ login: string; value: number; rounded: boolean }>;
       method?: string;
       computed?: number;
+      diag?: unknown;
     }
     let result: CohostResult;
 
@@ -512,20 +513,44 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
           ${PRELUDE}
           const SLUG = ${JSON.stringify(slug)};
           const combined = readBadge();
+
+          // ── diagnostics (always computed, so failures are explainable) ──
+          const bodyText = document.body.innerText || '';
+          const allAnchors = [];
+          for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+            const login = loginFromHref(a.getAttribute('href'));
+            if (!login) continue;
+            let node = a, num = null;
+            for (let d = 0; d < 4 && node; d++, node = node.parentElement) {
+              const txt = (node.textContent || '').trim();
+              const nm = txt.match(/([0-9][0-9.,]*\\s*[KkMm]?)\\s*$/);
+              if (nm) { num = nm[1]; break; }
+            }
+            allAnchors.push({ login: login, num: num });
+          }
+          const diag = {
+            bodyHasShared: /Shared Viewership|Total Viewers/i.test(bodyText),
+            globalAnchorCount: allAnchors.length,
+            anchorsWithNum: allAnchors.filter((a) => a.num != null).slice(0, 12),
+            slugInAnchors: allAnchors.some((a) => a.login === SLUG),
+          };
+
           const popover = findPopover();
-          if (!popover) return { mode: 'cohost-no-popover', viewers: 0, combined: combined, rows: [] };
+          diag.popoverFound = !!popover;
+          if (!popover) return { mode: 'cohost-no-popover', viewers: 0, combined: combined, rows: [], diag: diag };
           const rows = parseRows(popover);
+          diag.popoverRows = rows.map((r) => ({ login: r.login, value: r.value, rounded: r.rounded }));
           const mine = rows.find((r) => r.login === SLUG);
           const others = rows.filter((r) => r.login !== SLUG);
-          if (!mine || rows.length < 2) return { mode: 'cohost-unresolved', viewers: 0, combined: combined, rows: rows };
+          if (!mine || rows.length < 2) return { mode: 'cohost-unresolved', viewers: 0, combined: combined, rows: rows, diag: diag };
           let value = mine.value;
           let method = mine.rounded ? 'rounded-direct' : 'exact-direct';
           const roundedOthers = others.filter((o) => o.rounded).length;
           const sumOthers = others.reduce((s, o) => s + o.value, 0);
           if (mine.rounded && combined > 0 && roundedOthers === 0) { value = combined - sumOthers; method = 'subtraction-exact'; }
           const sane = value > 0 && (combined === 0 || value <= combined) && value < 500000;
-          if (!sane) return { mode: 'cohost-insane', viewers: 0, combined: combined, rows: rows, method: method, computed: value };
-          return { mode: 'cohost', viewers: value, combined: combined, rows: rows, method: method };
+          if (!sane) return { mode: 'cohost-insane', viewers: 0, combined: combined, rows: rows, method: method, computed: value, diag: diag };
+          return { mode: 'cohost', viewers: value, combined: combined, rows: rows, method: method, diag: diag };
         })()
       `)) as CohostResult;
 
@@ -547,6 +572,20 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
       log(`  ${tab.channel}: cohost extract FAILED (${result.mode}) — abstaining, server poll carries. combined=${result.combined} rows=${rowsStr || 'none'}`);
     } else if (process.env.COHOST_DEBUG === '1' && cohostEnabled) {
       log(`  ${tab.channel}: cohost-debug mode=${result.mode} viewers=${result.viewers} combined=${result.combined} rows=${rowsStr || 'none'}`);
+    }
+
+    // Ship cohost diagnostics to the server — one file per channel,
+    // overwritten each cycle, so the current state is readable via SSH
+    // (/tmp/cvt-debug/cohost-<channel>.json) without the PC console.
+    if (cohostEnabled) {
+      void postCohostDebug(tab.channel, {
+        mode: result.mode,
+        coords: badgeInfo?.coords ?? null,
+        combined,
+        viewers: result.viewers,
+        method: result.method,
+        diag: result.diag,
+      });
     }
 
     // Tame the tab — pause any <video>, force the lowest quality preset,
@@ -591,6 +630,27 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
 interface ChannelResult {
   identifier: string;
   viewers: number;
+}
+
+// Best-effort diagnostic push for cohost channels. Writes one file per
+// channel on the server (label=cohost-<channel>), overwritten each cycle,
+// so the latest extraction state is readable via SSH while we tune the
+// extractor. Never throws — diagnostics must not affect scraping.
+async function postCohostDebug(channel: string, payload: unknown): Promise<void> {
+  if (!RELAY_SECRET) return;
+  const label = `cohost-${channel.toLowerCase().replace(/[^a-z0-9_-]/g, '')}`;
+  try {
+    await fetch(`${RELAY_URL}/api/relay/twitch/debug?label=${label}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${RELAY_SECRET}`,
+      },
+      body: JSON.stringify({ channel, at: new Date().toISOString(), ...(payload as object) }),
+    });
+  } catch {
+    /* ignore — diagnostics are best-effort */
+  }
 }
 
 async function pushToServer(results: ChannelResult[]): Promise<void> {
