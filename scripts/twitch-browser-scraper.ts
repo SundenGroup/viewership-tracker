@@ -428,19 +428,28 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
                 || document.querySelector('[data-a-target="player-info-viewer-count"]');
         return el ? parseCount(el.textContent).value : 0;
       }
-      function findPopover() {
-        const els = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,strong,div'));
-        for (const el of els) {
-          const t = (el.textContent || '').trim();
-          if (t.length > 40) continue;
-          if (!/^Total Viewers/i.test(t) && !/^Shared Viewership/i.test(t)) continue;
-          let node = el.parentElement;
+      function findPopover(slug) {
+        // Language-agnostic: the Shared Viewership popover is a small
+        // container of 2-12 channel rows (each <a href="/login"> + number)
+        // that INCLUDES the page-owner's own row (slug). The sidebar lists
+        // OTHER channels, not the current one, so requiring the slug be
+        // present distinguishes the popover — and avoids depending on the
+        // localized "Total Viewers" header (the relay UI may be in Swedish
+        // etc.). Climb from the slug's own anchor to the smallest
+        // container that holds the participant list.
+        const slugAnchors = Array.from(document.querySelectorAll('a[href]'))
+          .filter((a) => loginFromHref(a.getAttribute('href')) === slug);
+        for (const sa of slugAnchors) {
+          let node = sa.parentElement;
           for (let d = 0; d < 6 && node; d++, node = node.parentElement) {
             let chCount = 0;
             for (const a of node.querySelectorAll('a[href]')) {
               if (loginFromHref(a.getAttribute('href'))) chCount++;
             }
-            if (chCount >= 2 && chCount <= 12) return node;
+            if (chCount >= 2 && chCount <= 12) {
+              const rows = parseRows(node);
+              if (rows.length >= 2 && rows.some((r) => r.login === slug)) return node;
+            }
           }
         }
         return null;
@@ -578,7 +587,7 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
             viewerTargets: Array.from(document.querySelectorAll('[data-a-target]')).map((e) => e.getAttribute('data-a-target')).filter((t) => t && /view|shared|together|multi|cohost/i.test(t)).slice(0, 15),
           };
 
-          const popover = findPopover();
+          const popover = findPopover(SLUG);
           diag.popoverFound = !!popover;
           if (!popover) return { mode: 'cohost-no-popover', viewers: 0, combined: combined, rows: [], diag: diag };
           const rows = parseRows(popover);

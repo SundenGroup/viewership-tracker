@@ -83,10 +83,13 @@ async function main() {
     '--disable-blink-features=AutomationControlled',
     '--no-first-run',
     '--no-default-browser-check',
-    // Smaller window → Twitch picks a smaller stream variant by default,
-    // less video work for the CPU/GPU. We hide playback entirely from JS
-    // (see scraper's tameTab) but the smaller default helps on first paint.
-    '--window-size=800,600',
+    // Desktop-width window so Twitch renders its normal layout. At narrow
+    // widths (e.g. 800px) the layout cramps and the Stream Together
+    // viewer-count dropdown ends up overlapping the chat input, so the
+    // cohost extractor's click lands on chat instead of the badge. Video
+    // work is bounded by tameTab (paused + 160p) regardless of window size.
+    '--window-size=1600,900',
+    '--lang=en-US',
     // Resource hardening — important on older Intel Macs (e.g. 2019 MBP)
     // where 10-20 simultaneous Twitch tabs would otherwise melt the
     // chassis. Audio is muted at the Chrome level so OS audio decode
