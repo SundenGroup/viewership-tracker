@@ -574,6 +574,8 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
             globalAnchorCount: allAnchors.length,
             anchorsWithNum: allAnchors.filter((a) => a.num != null).slice(0, 12),
             slugInAnchors: allAnchors.some((a) => a.login === SLUG),
+            haspopupEls: Array.from(document.querySelectorAll('[aria-haspopup]')).slice(0, 12).map((e) => ({ tag: e.tagName, target: e.getAttribute('data-a-target'), text: (e.textContent || '').trim().slice(0, 24) })),
+            viewerTargets: Array.from(document.querySelectorAll('[data-a-target]')).map((e) => e.getAttribute('data-a-target')).filter((t) => t && /view|shared|together|multi|cohost/i.test(t)).slice(0, 15),
           };
 
           const popover = findPopover();
@@ -594,6 +596,15 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
           return { mode: 'cohost', viewers: value, combined: combined, rows: rows, method: method, diag: diag };
         })()
       `)) as CohostResult;
+
+      // Debug: screenshot the post-click state so we can SEE the layout
+      // and where the real Stream Together dropdown actually is.
+      try {
+        const shot = (await session.send('Page.captureScreenshot', { format: 'png' })) as { data?: string };
+        if (shot?.data) void postCohostDebug(`shot-${tab.channel}`, { png_base64: shot.data });
+      } catch {
+        /* ignore */
+      }
 
       // Step 4: close the popover so it doesn't linger over the player.
       await session.pressEscape();
