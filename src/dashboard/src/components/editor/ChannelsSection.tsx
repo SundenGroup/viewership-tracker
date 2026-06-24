@@ -13,6 +13,7 @@ import { useMemo, useState } from 'react';
 import type { BroadcastDay, Channel, ChannelTier, SeriesWithStages } from '@/types/api';
 import {
   CollapsibleSection,
+  ExpandableScroll,
   Col,
   Row,
   Pill,
@@ -232,7 +233,7 @@ export function ChannelsSection({
         <ColHead align="right">Actions</ColHead>
       </div>
 
-      <div style={{ maxHeight: 480, overflowY: 'auto' }}>
+      <ExpandableScroll storageKey="ct-channels-rows">
         {sorted.map((c) => {
           const isEditing = editingId === c.id;
           const tone = PLATFORM_TONES[c.platform ?? ''] ?? 'default';
@@ -429,7 +430,7 @@ export function ChannelsSection({
             No channels match this filter
           </div>
         )}
-      </div>
+      </ExpandableScroll>
 
       <AddChannelDialog
         open={addOpen}

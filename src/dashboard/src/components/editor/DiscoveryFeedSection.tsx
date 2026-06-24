@@ -25,6 +25,7 @@ import { useCallback, useMemo, useState } from 'react';
 import type { Channel } from '@/types/api';
 import {
   CollapsibleSection,
+  ExpandableScroll,
   Col,
   Row,
   PlatformPip,
@@ -326,7 +327,7 @@ export function DiscoveryFeedSection({
       </Row>
 
       {/* Rows */}
-      <div style={{ maxHeight: 480, overflowY: 'auto' }}>
+      <ExpandableScroll storageKey="ct-discovery-rows">
         {sorted.map((r) => {
           const isBusy = !!busy[r.id];
           const error = rowError[r.id];
@@ -476,7 +477,7 @@ export function DiscoveryFeedSection({
             No auto-discovered channels
           </div>
         )}
-      </div>
+      </ExpandableScroll>
     </CollapsibleSection>
   );
 }

@@ -20,3 +20,4 @@ export * from './ChannelNameWithLink';
 export * from './SettingsShell';
 export * from './PublicLinkButton';
 export * from './FilterMultiSelect';
+export * from './ExpandableScroll';
