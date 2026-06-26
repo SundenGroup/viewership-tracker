@@ -585,6 +585,30 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
             slugInAnchors: allAnchors.some((a) => a.login === SLUG),
             haspopupEls: Array.from(document.querySelectorAll('[aria-haspopup]')).slice(0, 12).map((e) => ({ tag: e.tagName, target: e.getAttribute('data-a-target'), text: (e.textContent || '').trim().slice(0, 24) })),
             viewerTargets: Array.from(document.querySelectorAll('[data-a-target]')).map((e) => e.getAttribute('data-a-target')).filter((t) => t && /view|shared|together|multi|cohost/i.test(t)).slice(0, 15),
+            countTree: (function () {
+              // Dump the viewer-count badge's container subtree to locate the
+              // real Stream Together dropdown trigger (chevron / button).
+              var vc = document.querySelector('[data-a-target="animated-channel-viewers-count"]');
+              if (!vc) return null;
+              var box = vc;
+              for (var k = 0; k < 4 && box.parentElement; k++) box = box.parentElement;
+              return Array.from(box.querySelectorAll('*')).slice(0, 60).map(function (e) {
+                var r = e.getBoundingClientRect();
+                return {
+                  tag: e.tagName,
+                  cls: (e.className || '').toString().slice(0, 36),
+                  tgt: e.getAttribute('data-a-target'),
+                  role: e.getAttribute('role'),
+                  hp: e.getAttribute('aria-haspopup'),
+                  exp: e.getAttribute('aria-expanded'),
+                  lbl: (e.getAttribute('aria-label') || '').slice(0, 28),
+                  svg: !!e.querySelector(':scope > svg'),
+                  txt: (e.textContent || '').trim().slice(0, 16),
+                  x: Math.round(r.x + r.width / 2),
+                  y: Math.round(r.y + r.height / 2),
+                };
+              });
+            })(),
           };
 
           const popover = findPopover(SLUG);
@@ -609,10 +633,14 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
       // Debug: screenshot the post-click state so we can SEE the layout
       // and where the real Stream Together dropdown actually is.
       try {
-        const shot = (await session.send('Page.captureScreenshot', { format: 'png' })) as { data?: string };
-        if (shot?.data) void postCohostDebug(`shot-${tab.channel}`, { png_base64: shot.data });
-      } catch {
-        /* ignore */
+        // jpeg (not png): a 1600x900 png base64 is ~1-2MB and was silently
+        // failing the CDP send; jpeg q55 is ~200KB and reliable. Report the
+        // error into the debug sink instead of swallowing it.
+        const shot = (await session.send('Page.captureScreenshot', { format: 'jpeg', quality: 55 })) as { data?: string };
+        if (shot?.data) void postCohostDebug(`shot-${tab.channel}`, { jpeg_base64: shot.data });
+        else void postCohostDebug(`shot-${tab.channel}`, { screenshot_error: 'no data field in result' });
+      } catch (e) {
+        void postCohostDebug(`shot-${tab.channel}`, { screenshot_error: (e as Error)?.message || String(e) });
       }
 
       // Step 4: close the popover so it doesn't linger over the player.
