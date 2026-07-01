@@ -326,6 +326,18 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     { intervalMs: 300_000, enabled: !!shortName },
   );
 
+  // Belt & braces: even if a fetch raced ahead of the view-group resolving,
+  // never RENDER languages outside the active view.
+  const filteredLanguagePeaks = useMemo(() => {
+    const rows = languagePeaksData?.languages ?? null;
+    if (!rows) return null;
+    if (viewFilter.languages?.length) {
+      const allow = new Set(viewFilter.languages.map((l) => l.toLowerCase()));
+      return rows.filter((r) => r.language && allow.has(r.language.toLowerCase()));
+    }
+    return rows;
+  }, [languagePeaksData, viewFilter.languages]);
+
   const { data: scopedLiveCCV } = usePollingApi<LiveCCVResponse>(
     () => {
       if (!needsScopedFetch || !shortName || !resolvedScope) {
@@ -628,7 +640,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       trend={trend}
       dayBoundaries={dayBoundaries}
       viewLabel={viewLabel}
-      languagePeaks={languagePeaksData?.languages ?? null}
+      languagePeaks={filteredLanguagePeaks}
     />
   );
 }
@@ -1487,7 +1499,7 @@ function DetailedReport({
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'minmax(120px, 1.2fr) 110px 90px 1fr',
+                  gridTemplateColumns: 'minmax(120px, 1fr) 120px 80px 110px 120px',
                   padding: '0 4px 6px',
                   fontSize: 10,
                   fontFamily: 'var(--font-mono)',
@@ -1500,19 +1512,13 @@ function DetailedReport({
                 <div>Language</div>
                 <div style={{ textAlign: 'right' }}>Peak</div>
                 <div style={{ textAlign: 'right' }}>At</div>
-                <div style={{ textAlign: 'right' }}>Across days</div>
+                <div style={{ textAlign: 'right' }}>Avg viewers</div>
+                <div style={{ textAlign: 'right' }}>Viewed hours</div>
               </div>
               {languagePeaks
                 .filter((l) => l.peakCCV > 0)
                 .slice(0, 14)
                 .map((l) => {
-                  const daysWithData = l.days.filter((d) => d.peakCCV > 0);
-                  const first = daysWithData[0];
-                  const last = daysWithData[daysWithData.length - 1];
-                  const growth =
-                    daysWithData.length >= 2 && first && last && first.peakCCV > 0
-                      ? ((last.peakCCV - first.peakCCV) / first.peakCCV) * 100
-                      : null;
                   const peakTime = new Intl.DateTimeFormat('sv-SE', {
                     timeZone: seriesInfo.timezone,
                     hour: '2-digit',
@@ -1523,7 +1529,7 @@ function DetailedReport({
                       key={l.language ?? '—'}
                       style={{
                         display: 'grid',
-                        gridTemplateColumns: 'minmax(120px, 1.2fr) 110px 90px 1fr',
+                        gridTemplateColumns: 'minmax(120px, 1fr) 120px 80px 110px 120px',
                         padding: '7px 4px',
                         borderBottom: '1px solid var(--border-faint)',
                         fontSize: 12.5,
@@ -1537,28 +1543,11 @@ function DetailedReport({
                       <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
                         {peakTime}
                       </div>
-                      <div
-                        className="tabular"
-                        style={{ textAlign: 'right', fontSize: 11, color: 'var(--fg-muted)' }}
-                      >
-                        {daysWithData.length >= 2 ? (
-                          <>
-                            {fmtCompact(first!.peakCCV)} → {fmtCompact(last!.peakCCV)}{' '}
-                            <span
-                              style={{
-                                fontWeight: 600,
-                                color:
-                                  (growth ?? 0) >= 0 ? 'var(--live)' : 'var(--danger)',
-                              }}
-                            >
-                              {growth !== null
-                                ? `${growth >= 0 ? '+' : ''}${growth.toFixed(0)}%`
-                                : ''}
-                            </span>
-                          </>
-                        ) : (
-                          <span style={{ color: 'var(--fg-dim)' }}>single day</span>
-                        )}
+                      <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+                        {fmtN(l.avgCCV)}
+                      </div>
+                      <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+                        {fmtN(l.viewedHours)}
                       </div>
                     </div>
                   );

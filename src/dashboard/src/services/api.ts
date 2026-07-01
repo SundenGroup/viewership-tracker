@@ -887,7 +887,8 @@ export interface PublicLanguagePeak {
   language: string | null;
   peakCCV: number;
   peakAt: string;
-  days: Array<{ dayId: string; label: string; date: string; peakCCV: number }>;
+  avgCCV: number;
+  viewedHours: number;
 }
 
 /** Per-language peak moments (+ per-day peaks for growth) for a scope. */
