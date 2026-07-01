@@ -21,6 +21,7 @@ import authRouter from './routes/auth';
 import publicRouter from './routes/public';
 import relayRouter, { relayHealthRouter } from './routes/relay';
 import gameTrackersRouter from './routes/game-trackers';
+import askRouter from './routes/ask';
 import { authenticate, requireRole } from './middleware/auth';
 
 export function createApp() {
@@ -118,6 +119,7 @@ export function createApp() {
   app.use('/api/import', requireRole('admin', 'editor'), viewershipImportRouter);
   app.use('/api/reports', requireRole('admin', 'editor'), reportsRouter);
   app.use('/api/push', requireRole('admin', 'editor'), pushRouter);
+  app.use('/api/ask', requireRole('admin', 'editor'), askRouter);
 
   // Admin-only routes
   app.use('/api/polling', requireRole('admin'), pollingRouter);
