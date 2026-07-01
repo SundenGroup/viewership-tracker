@@ -171,8 +171,9 @@ export function RegionDistPanel({ data, loading, liveCCV }: RegionDistPanelProps
           />
           <Tooltip
             content={({ active, payload }) => {
-              if (!active || !payload?.length) return null;
-              const d = payload[0].payload as { name: string; value: number; pct: number };
+              const first = payload?.[0];
+              if (!active || !first) return null;
+              const d = first.payload as { name: string; value: number; pct: number };
               return (
                 <div style={{ backgroundColor: '#141820', border: '1px solid #2A2F36', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
                   <div style={{ color: '#e5e7eb', fontWeight: 600 }}>{d.name}: {formatValue(d.value, metric)}</div>

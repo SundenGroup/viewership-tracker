@@ -438,7 +438,7 @@ function PlatformChart({ data, keys, dayMarkers, tickFormatter }: { data: Array<
         keys={keys}
         hidden={hidden}
         toggle={toggle}
-        colorFn={(key, i) => platformColor(key) || GROUP_COLORS[i % GROUP_COLORS.length]}
+        colorFn={(key, i) => platformColor(key) || GROUP_COLORS[i % GROUP_COLORS.length]!}
         labelFn={platformLabel}
       />
       <ResponsiveContainer width="100%" height={320}>
@@ -518,7 +518,7 @@ function StackedLanguageChart({ data, keys, dayMarkers, tickFormatter }: { data:
         keys={keys}
         hidden={hidden}
         toggle={toggle}
-        colorFn={(_key, i) => GROUP_COLORS[i % GROUP_COLORS.length]}
+        colorFn={(_key, i) => GROUP_COLORS[i % GROUP_COLORS.length]!}
         labelFn={(key) => (key || 'Unknown').toUpperCase()}
       />
       <ResponsiveContainer width="100%" height={320}>

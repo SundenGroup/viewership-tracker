@@ -65,7 +65,7 @@ export function ExportPanel({ seriesId, seriesDetail }: ExportPanelProps) {
   // Fetch channels for exclusion picker
   useEffect(() => {
     if (!seriesId || !showExclusions) return;
-    api.listChannels(seriesId, { is_active: true }).then(setAllChannels).catch(() => {});
+    api.listChannels(seriesId, { is_active: 'true' }).then(setAllChannels).catch(() => {});
   }, [seriesId, showExclusions]);
 
   // Reset "Copied!" feedback after 2 seconds

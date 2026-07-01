@@ -475,6 +475,166 @@ export function clearDiscoveryFeed(seriesId: string) {
   );
 }
 
+// ── Import (official CSV replace) ───────────────────────────────────────────
+
+export interface CsvImportResult {
+  dryRun: boolean;
+  channel: { id: string; identifier: string; displayName: string; platform: string };
+  day: { id: string; label: string };
+  parsed: number;
+  skipped: number;
+  warnings: string[];
+  timezone: string;
+  range: { fromUtc: string; toUtc: string; fromLocal: string; toLocal: string };
+  existingRowsInRange: number;
+  sample: {
+    first: Array<{ t: string; v: number }>;
+    last: Array<{ t: string; v: number }>;
+  };
+  /** Present on commit (dryRun=false) responses. */
+  deleted?: number;
+  inserted?: number;
+}
+
+export function importViewershipCsv(payload: {
+  channelId: string;
+  broadcastDayId: string;
+  csvText: string;
+  date?: string;
+  timezone?: string;
+  startTime?: string;
+  endTime?: string;
+  dryRun: boolean;
+}) {
+  return request<CsvImportResult>('/api/import/csv', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface DiscoverBackfillResult {
+  dryRun: boolean;
+  channel: { id: string; identifier: string; displayName: string; platform: string };
+  day: { id: string; label: string };
+  mode: 'replace' | 'fill-gaps';
+  source: string;
+  timezone: string;
+  range: { fromUtc: string; toUtc: string; fromLocal: string; toLocal: string };
+  trackerPoints: number;
+  existingRowsInRange: number;
+  gapMinutes: number;
+  willDelete: number;
+  willInsert: number;
+  sample: {
+    first: Array<{ t: string; v: number }>;
+    last: Array<{ t: string; v: number }>;
+  };
+  deleted?: number;
+  inserted?: number;
+}
+
+export interface RelayHealth {
+  twitch: {
+    lastPushAt: string | null;
+    lastMatched: number;
+    lastWritten: number;
+    lastSuspected: number;
+    totalPushes: number;
+    secondsSincePush: number | null;
+  };
+  tiktok: {
+    lastPushAt: string | null;
+    lastMatched: number;
+    lastWritten: number;
+    lastSuspected: number;
+    totalPushes: number;
+    secondsSincePush: number | null;
+  };
+  cohostSuspects: string[];
+}
+
+export function getRelayHealth() {
+  return request<RelayHealth>('/api/relay-health');
+}
+
+export interface RosterLivenessRow {
+  channelId: string;
+  seriesId: string;
+  platform: string;
+  identifier: string;
+  displayName: string;
+  live: boolean;
+  viewers: number;
+  title: string;
+  pinnedDayIds: string[];
+  pinnedToday: boolean;
+}
+
+export interface RosterLivenessResult {
+  liveDays: Array<{ id: string; series_id: string; label: string }>;
+  probed: number;
+  liveNotPinnedToday: RosterLivenessRow[];
+  pinnedTodayOffline: RosterLivenessRow[];
+}
+
+/** Probe day-pinned channels against the platforms; flags live-but-unpinned-today. */
+export function checkRosterLiveness(seriesId: string) {
+  return request<RosterLivenessResult>('/api/polling/roster-liveness', {
+    method: 'POST',
+    body: JSON.stringify({ seriesId }),
+  });
+}
+
+export interface DayQAResult {
+  day: {
+    id: string;
+    label: string;
+    status: string;
+    broadcastStart: string;
+    broadcastEnd: string;
+  };
+  totalRows: number;
+  minutesWithData: number;
+  gaps: Array<{ from: string; to: string; minutes: number }>;
+  zeroDataChannels: Array<{
+    id: string;
+    platform: string;
+    channel_identifier: string;
+    display_name: string;
+    tier: string;
+  }>;
+  outsideScheduleRows: number;
+  cohostSuspectPairs: Array<{ a: string; b: string; shared_minutes: string }>;
+  blankLanguageChannels: Array<{
+    id: string;
+    platform: string;
+    channel_identifier: string;
+    display_name: string;
+  }>;
+}
+
+/** Post-event data QA checklist for one broadcast day. */
+export function getDayQA(dayId: string) {
+  return request<DayQAResult>(`/api/viewership/day-qa/${dayId}`);
+}
+
+/** Replace or gap-fill a Twitch/Kick channel's day from the Discover game-tracker. */
+export function backfillFromDiscover(payload: {
+  channelId: string;
+  broadcastDayId: string;
+  date?: string;
+  timezone?: string;
+  startTime?: string;
+  endTime?: string;
+  mode: 'replace' | 'fill-gaps';
+  dryRun: boolean;
+}) {
+  return request<DiscoverBackfillResult>('/api/import/discover-backfill', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 // ── Export ──────────────────────────────────────────────────────────────────
 
 export function getExportCsvUrl(scope: ScopeLevel, id: string) {

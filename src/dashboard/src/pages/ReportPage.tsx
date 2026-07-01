@@ -683,14 +683,16 @@ function SimpleReport({
   return (
     <div
       style={{
-        padding: '48px 56px',
+        // clamp(): full 48/56px gutters on desktop, tight on phones —
+        // external reports are shared with partners who open them on mobile.
+        padding: 'clamp(20px, 4vw, 48px) clamp(14px, 6vw, 56px)',
         maxWidth: 900,
         margin: '0 auto',
         background: 'var(--bg)',
         minHeight: '100vh',
       }}
     >
-      <Row justify="space-between" style={{ marginBottom: 32 }}>
+      <Row justify="space-between" style={{ marginBottom: 32, flexWrap: 'wrap', rowGap: 8 }}>
         <ClutchWordmark size={20} />
         <Row gap={8}>
           {viewLabel && <Pill>View: {viewLabel}</Pill>}
@@ -705,7 +707,7 @@ function SimpleReport({
       </div>
       <h1
         style={{
-          fontSize: 42,
+          fontSize: 'clamp(26px, 6vw, 42px)',
           lineHeight: 1.06,
           marginBottom: 6,
           fontWeight: 600,
@@ -779,7 +781,9 @@ function SimpleReport({
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: `repeat(${visibleTiers.length}, 1fr)`,
+                // auto-fit: same N-across on desktop, wraps to fewer
+                // columns on narrow screens instead of crushing the cards.
+                gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
                 gap: 10,
                 marginBottom: 28,
               }}
@@ -1089,16 +1093,17 @@ function DetailedReport({
   return (
     <div
       style={{
-        padding: '48px 56px',
+        // Responsive gutters — partners open these reports on phones.
+        padding: 'clamp(20px, 4vw, 48px) clamp(14px, 6vw, 56px)',
         maxWidth: 1160,
         margin: '0 auto',
         background: 'var(--bg)',
         minHeight: '100vh',
       }}
     >
-      <Row justify="space-between" style={{ marginBottom: 32 }}>
+      <Row justify="space-between" style={{ marginBottom: 32, flexWrap: 'wrap', rowGap: 8 }}>
         <ClutchWordmark size={22} />
-        <Row gap={6}>
+        <Row gap={6} style={{ flexWrap: 'wrap' }}>
           <Pill>Detailed report</Pill>
           <Pill>{totalDayCount} days</Pill>
           {viewLabel && <Pill>View: {viewLabel}</Pill>}
@@ -1111,7 +1116,7 @@ function DetailedReport({
       </div>
       <h1
         style={{
-          fontSize: 46,
+          fontSize: 'clamp(28px, 6.5vw, 46px)',
           lineHeight: 1.04,
           marginBottom: 8,
           letterSpacing: '-0.03em',
@@ -1179,7 +1184,8 @@ function DetailedReport({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
+          // 3-across on desktop; stacks on phones instead of crushing.
+          gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
           gap: 10,
           marginBottom: 32,
         }}
@@ -1261,7 +1267,8 @@ function DetailedReport({
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: `repeat(${visibleTiers.length}, 1fr)`,
+                  // Same N-across on desktop; wraps on narrow screens.
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
                   gap: 10,
                 }}
               >
@@ -1325,8 +1332,14 @@ function DetailedReport({
         );
       })()}
 
-      {/* Section 03 + 04 — platforms + languages side-by-side */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      {/* Section 03 + 04 — platforms + languages side-by-side (stack on mobile) */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+          gap: 16,
+        }}
+      >
         <Section
           eyebrow="03 · Platforms"
           title={
@@ -1459,19 +1472,22 @@ function DetailedReport({
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
+                // 4-across on desktop, 2×2 (or single column) on phones.
+                gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
                 gap: 0,
                 border: '1px solid var(--border)',
                 borderRadius: 'var(--r-md)',
+                overflow: 'hidden',
               }}
             >
-              {cells.map(([l, v, sub], i, a) => (
+              {cells.map(([l, v, sub]) => (
                 <div
                   key={l}
                   style={{
                     padding: '16px 18px',
-                    borderRight:
-                      i < a.length - 1 ? '1px solid var(--border)' : 'none',
+                    // Uniform hairlines that work at any wrap count —
+                    // a fixed borderRight breaks when the grid wraps.
+                    boxShadow: '-1px -1px 0 0 var(--border)',
                   }}
                 >
                   <Kpi size="sm" label={l} value={v} sub={sub} />
@@ -1513,9 +1529,28 @@ function DetailedReport({
 
 // ── Detailed-report sortable leaderboard ───────────────────────────────────
 
+/** True below the given viewport width; tracks live resizes/rotations. */
+function useIsNarrow(maxWidth = 640): boolean {
+  const [narrow, setNarrow] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      window.matchMedia(`(max-width: ${maxWidth}px)`).matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${maxWidth}px)`);
+    const onChange = () => setNarrow(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [maxWidth]);
+  return narrow;
+}
+
 function Leaderboard({ channels }: { channels: ChannelRow[] }) {
   const [sort, setSort] = useState<keyof ChannelRow>('peak');
   const [dir, setDir] = useState<'asc' | 'desc'>('desc');
+  // On phones the full 8-column grid needs ~700px — collapse to the four
+  // essential columns (rank, channel, peak, viewed hours) instead.
+  const narrow = useIsNarrow(640);
 
   const sorted = [...channels].sort((a, b) => {
     const av = a[sort] ?? 0;
@@ -1568,7 +1603,9 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
     </button>
   );
 
-  const cols = '28px 1.4fr 95px 110px 100px 90px 90px 110px';
+  const cols = narrow
+    ? '24px minmax(0, 1.6fr) 78px 84px'
+    : '28px 1.4fr 95px 110px 100px 90px 90px 110px';
 
   return (
     <div>
@@ -1582,17 +1619,19 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
       >
         <div />
         <H k="name">Channel</H>
-        <H k="platform">Platform</H>
-        <H k="tier">Category</H>
-        <H k="language">Language</H>
+        {!narrow && <H k="platform">Platform</H>}
+        {!narrow && <H k="tier">Category</H>}
+        {!narrow && <H k="language">Language</H>}
         <H k="peak" align="right">
           Peak
         </H>
-        <H k="avg" align="right">
-          Avg
-        </H>
+        {!narrow && (
+          <H k="avg" align="right">
+            Avg
+          </H>
+        )}
         <H k="hours" align="right">
-          Viewed Hours
+          {narrow ? 'Hours' : 'Viewed Hours'}
         </H>
       </div>
       {sorted.map((c, i) => {
@@ -1619,21 +1658,29 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
                 channelIdentifier={c.channelIdentifier}
               />
             </Row>
-            <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
-              {getPlatform(c.platform ?? '')?.name ?? c.platform ?? '—'}
-            </div>
-            <div>
-              <TierBadge tier={c.tier} />
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
-              {languageFullName(c.language)}
-            </div>
+            {!narrow && (
+              <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+                {getPlatform(c.platform ?? '')?.name ?? c.platform ?? '—'}
+              </div>
+            )}
+            {!narrow && (
+              <div>
+                <TierBadge tier={c.tier} />
+              </div>
+            )}
+            {!narrow && (
+              <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+                {languageFullName(c.language)}
+              </div>
+            )}
             <div className="tabular" style={{ textAlign: 'right' }}>
               {fmtN(c.peak)}
             </div>
-            <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
-              {fmtN(c.avg)}
-            </div>
+            {!narrow && (
+              <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+                {fmtN(c.avg)}
+              </div>
+            )}
             <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
               {fmtN(c.hours)}
             </div>
@@ -1693,7 +1740,8 @@ function MetricToggle({
             aria-selected={active}
             onClick={() => onChange(o.id)}
             style={{
-              padding: '3px 10px',
+              // Big enough to tap on touch screens.
+              padding: '6px 12px',
               borderRadius: 4,
               fontSize: 10.5,
               fontWeight: active ? 600 : 500,

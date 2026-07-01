@@ -28,6 +28,7 @@ import {
   IconChevDown,
   IconSearch,
   IconDownload,
+  IconArrowUp,
   IconPlus,
   IconBolt,
   IconPause,
@@ -52,6 +53,7 @@ import * as api from '@/services/api';
 import { ChannelsSection } from '@/components/editor/ChannelsSection';
 import { DiscoveryFeedSection } from '@/components/editor/DiscoveryFeedSection';
 import { ExportDialog } from '@/components/editor/ExportDialog';
+import { ImportCsvDialog } from '@/components/editor/ImportCsvDialog';
 import { AddChannelDialog } from '@/components/editor/AddChannelDialog';
 import type {
   TournamentSeries,
@@ -145,6 +147,7 @@ export function EditorDesktop({
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
   const [viewGroup, setViewGroup] = useState<string>('all');
   const [exportOpen, setExportOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [sidebarAddOpen, setSidebarAddOpen] = useState(false);
 
   const stageOptions = useMemo(() => {
@@ -250,6 +253,13 @@ export function EditorDesktop({
         : Promise.resolve(null as unknown as LiveCCVResponse),
     [seriesId, scopeCacheKey],
     { intervalMs: 30_000, enabled: needsScopedFetch && !!seriesId },
+  );
+
+  // Live relay telemetry for the Adapter-health rail (push ages, suspects).
+  const { data: relayHealth } = usePollingApi<api.RelayHealth>(
+    () => api.getRelayHealth(),
+    [],
+    { intervalMs: 30_000 },
   );
 
   // Final model — scoped when the user has drilled in, series-level otherwise.
@@ -712,6 +722,14 @@ export function EditorDesktop({
               <span className="kbd">⌘K</span>
             </button>
             <PublicLinkButton variant="button" canEdit series={series} />
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setImportOpen(true)}
+              title="Replace a channel's data from an official platform CSV"
+            >
+              <IconArrowUp size={13} /> Import
+            </button>
             <button
               type="button"
               className="btn"
@@ -1470,14 +1488,16 @@ export function EditorDesktop({
               <Col gap={4}>
                 {[
                   { name: 'Twitch', status: 'ok', lat: '—' },
-                  { name: 'Twitch browser', status: 'ok', lat: '60s' },
+                  // Live relay telemetry — real push ages, not assumptions.
+                  // "DB freshness ≠ relay healthy."
+                  relayRow('Twitch browser', relayHealth?.twitch),
                   {
                     name: 'YouTube',
                     status: ytQuota && ytQuota.percentage > 75 ? 'warn' : 'ok',
                     lat: ytQuota ? `quota ${ytQuota.percentage.toFixed(0)}%` : '—',
                   },
                   { name: 'Kick', status: 'ok', lat: '—' },
-                  { name: 'TikTok relay', status: 'ok', lat: '60s' },
+                  relayRow('TikTok relay', relayHealth?.tiktok),
                   { name: 'Steam', status: 'ok', lat: '—' },
                   { name: 'Chzzk', status: 'ok', lat: '—' },
                   { name: 'Soop', status: 'ok', lat: '—' },
@@ -1497,7 +1517,11 @@ export function EditorDesktop({
                         className="dot"
                         style={{
                           background:
-                            a.status === 'ok' ? 'var(--live)' : 'var(--warn)',
+                            a.status === 'ok'
+                              ? 'var(--live)'
+                              : a.status === 'warn'
+                                ? 'var(--warn)'
+                                : 'var(--fg-dim)',
                         }}
                       />
                       <span>{a.name}</span>
@@ -1510,6 +1534,22 @@ export function EditorDesktop({
                     </span>
                   </Row>
                 ))}
+                {relayHealth && relayHealth.cohostSuspects.length > 0 && (
+                  <div
+                    style={{
+                      padding: '6px 8px',
+                      background:
+                        'color-mix(in oklab, var(--warn) 12%, var(--bg-sunken))',
+                      borderRadius: 4,
+                      fontSize: 10.5,
+                      lineHeight: 1.5,
+                    }}
+                    title="Relay pushes for these channels were far above their Helix slice — the scraper switches them to the per-channel popover extractor automatically."
+                  >
+                    <span style={{ fontWeight: 600 }}>Cohost suspects:</span>{' '}
+                    {relayHealth.cohostSuspects.join(', ')}
+                  </div>
+                )}
               </Col>
             </RailCollapse>
 
@@ -1634,6 +1674,12 @@ export function EditorDesktop({
                 </Row>
               </div>
             </RailCollapse>
+
+            {/* Roster check — live-but-pinned-elsewhere probe (v7) */}
+            <RosterCheckRail seriesId={seriesId} />
+
+            {/* Data QA — post-event checklist for the selected day (v7) */}
+            <DayQARail dayId={activeDay?.id ?? null} dayLabel={activeDay?.label ?? null} />
           </>
         )}
       </aside>
@@ -1652,6 +1698,13 @@ export function EditorDesktop({
         viewGroups={viewGroups as ViewGroup[]}
       />
 
+      <ImportCsvDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        seriesId={seriesId}
+        seriesDetail={seriesDetail}
+      />
+
       <AddChannelDialog
         open={sidebarAddOpen}
         onClose={() => setSidebarAddOpen(false)}
@@ -1663,7 +1716,277 @@ export function EditorDesktop({
   );
 }
 
+// ── Roster check rail ───────────────────────────────────────────────────
+//
+// Probes every day-pinned channel of this series directly against the
+// platform APIs and lists the ones that are LIVE right now but NOT pinned
+// to today's broadcast day — the orchestrator silently drops their
+// snapshots, so without this probe they lose the whole day (it happened
+// to six GeoGuessr casters during PNC2026 week). One click extends the
+// pin to today.
+function RosterCheckRail({ seriesId }: { seriesId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<api.RosterLivenessResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(await api.checkRosterLiveness(seriesId));
+      setPinnedIds(new Set());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Probe failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pinToToday = async (row: api.RosterLivenessRow) => {
+    if (!result) return;
+    const todayIds = result.liveDays
+      .filter((d) => d.series_id === row.seriesId)
+      .map((d) => d.id);
+    const merged = [...new Set([...row.pinnedDayIds, ...todayIds])];
+    try {
+      await api.updateChannelDays(row.channelId, merged);
+      setPinnedIds((prev) => new Set(prev).add(row.channelId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Pin failed');
+    }
+  };
+
+  return (
+    <RailCollapse eyebrow="Roster check" storageKey="ct-rail-roster">
+      <Col gap={8}>
+        <div style={{ fontSize: 10.5, color: 'var(--fg-dim)', lineHeight: 1.5 }}>
+          Probes all day-pinned channels against the platforms and flags any
+          that are live now but not pinned to today (their data is being
+          dropped).
+        </div>
+        <button
+          type="button"
+          className="btn btn-xs"
+          onClick={run}
+          disabled={busy}
+          style={{ width: '100%' }}
+        >
+          {busy ? 'Probing platforms…' : 'Run roster check'}
+        </button>
+        {error && (
+          <div style={{ fontSize: 10.5, color: 'var(--danger)' }}>{error}</div>
+        )}
+        {result && (
+          <>
+            <div style={{ fontSize: 10.5, color: 'var(--fg-muted)' }}>
+              {result.probed} probed ·{' '}
+              <b
+                style={{
+                  color:
+                    result.liveNotPinnedToday.length > 0
+                      ? 'var(--warn)'
+                      : 'var(--fg-muted)',
+                }}
+              >
+                {result.liveNotPinnedToday.length} live but unpinned today
+              </b>{' '}
+              · {result.pinnedTodayOffline.length} pinned-today offline
+            </div>
+            {result.liveNotPinnedToday.slice(0, 15).map((r) => {
+              const done = pinnedIds.has(r.channelId);
+              return (
+                <Row
+                  key={r.channelId}
+                  justify="space-between"
+                  gap={6}
+                  style={{
+                    padding: '5px 8px',
+                    background: 'var(--bg-sunken)',
+                    borderRadius: 4,
+                    fontSize: 11,
+                  }}
+                >
+                  <Col gap={1} style={{ minWidth: 0 }}>
+                    <span
+                      title={r.title}
+                      style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        fontWeight: 500,
+                      }}
+                    >
+                      {r.displayName}
+                    </span>
+                    <span
+                      className="mono"
+                      style={{ fontSize: 9.5, color: 'var(--fg-dim)' }}
+                    >
+                      {r.platform}/{r.identifier} · {fmtCompact(r.viewers)} live
+                    </span>
+                  </Col>
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    disabled={done}
+                    onClick={() => pinToToday(r)}
+                  >
+                    {done ? 'Pinned ✓' : 'Pin to today'}
+                  </button>
+                </Row>
+              );
+            })}
+          </>
+        )}
+      </Col>
+    </RailCollapse>
+  );
+}
+
+// ── Data QA rail ────────────────────────────────────────────────────────
+//
+// Runs the post-event checklist for the selected broadcast day — the
+// checks that were performed by hand after every PNC2026 day: coverage
+// gaps, pinned channels with zero data, off-schedule tails, cohost
+// leftovers, blank languages.
+function DayQARail({ dayId, dayLabel }: { dayId: string | null; dayLabel: string | null }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<api.DayQAResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async () => {
+    if (!dayId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(await api.getDayQA(dayId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'QA check failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const fmtT = (iso: string) =>
+    new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  const checkRow = (ok: boolean, label: string, detail?: string) => (
+    <Row gap={6} align="flex-start" style={{ fontSize: 10.5 }}>
+      <span style={{ color: ok ? 'var(--live)' : 'var(--warn)', lineHeight: 1.4 }}>
+        {ok ? '✓' : '⚠'}
+      </span>
+      <Col gap={1} style={{ minWidth: 0 }}>
+        <span style={{ color: ok ? 'var(--fg-muted)' : 'var(--fg)' }}>{label}</span>
+        {detail && !ok && (
+          <span className="mono" style={{ fontSize: 9.5, color: 'var(--fg-dim)' }}>
+            {detail}
+          </span>
+        )}
+      </Col>
+    </Row>
+  );
+
+  return (
+    <RailCollapse eyebrow="Data QA" storageKey="ct-rail-dayqa">
+      <Col gap={8}>
+        <button
+          type="button"
+          className="btn btn-xs"
+          onClick={run}
+          disabled={busy || !dayId}
+          style={{ width: '100%' }}
+          title={dayId ? `Run QA on ${dayLabel}` : 'Select a broadcast day first'}
+        >
+          {busy ? 'Checking…' : dayId ? `Run QA — ${dayLabel}` : 'Select a day first'}
+        </button>
+        {error && <div style={{ fontSize: 10.5, color: 'var(--danger)' }}>{error}</div>}
+        {result && (
+          <Col gap={6}>
+            <div className="mono" style={{ fontSize: 9.5, color: 'var(--fg-dim)' }}>
+              {result.totalRows.toLocaleString()} rows · {result.minutesWithData} min covered
+            </div>
+            {checkRow(
+              result.gaps.length === 0,
+              result.gaps.length === 0
+                ? 'No coverage gaps'
+                : `${result.gaps.length} coverage gap(s)`,
+              result.gaps
+                .slice(0, 4)
+                .map((g) => `${fmtT(g.from)}–${fmtT(g.to)} (${g.minutes}m)`)
+                .join(', '),
+            )}
+            {checkRow(
+              result.zeroDataChannels.length === 0,
+              result.zeroDataChannels.length === 0
+                ? 'All pinned channels produced data'
+                : `${result.zeroDataChannels.length} pinned channel(s) with zero data`,
+              result.zeroDataChannels
+                .slice(0, 6)
+                .map((c) => c.channel_identifier)
+                .join(', '),
+            )}
+            {checkRow(
+              result.outsideScheduleRows === 0,
+              result.outsideScheduleRows === 0
+                ? 'No data outside the scheduled window'
+                : `${result.outsideScheduleRows} rows outside schedule (±15m)`,
+              'Possible post-stream tail — consider trimming',
+            )}
+            {checkRow(
+              result.cohostSuspectPairs.length === 0,
+              result.cohostSuspectPairs.length === 0
+                ? 'No cohost-inflation signatures'
+                : `${result.cohostSuspectPairs.length} channel pair(s) share identical values`,
+              result.cohostSuspectPairs
+                .slice(0, 3)
+                .map((p) => `${p.a}+${p.b} (${p.shared_minutes}m)`)
+                .join(', '),
+            )}
+            {checkRow(
+              result.blankLanguageChannels.length === 0,
+              result.blankLanguageChannels.length === 0
+                ? 'All channels have a language'
+                : `${result.blankLanguageChannels.length} channel(s) missing language`,
+              result.blankLanguageChannels
+                .slice(0, 6)
+                .map((c) => c.channel_identifier)
+                .join(', '),
+            )}
+          </Col>
+        )}
+      </Col>
+    </RailCollapse>
+  );
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Adapter-health row for a relay source, from live /api/relay-health data.
+ * Relays only push during live broadcasts, so "no pushes yet"/stale is
+ * rendered as idle (dim) rather than an alarm — the age is shown so an
+ * operator watching a live event spots a stalled relay immediately.
+ */
+function relayRow(
+  name: string,
+  s?: {
+    secondsSincePush: number | null;
+    lastMatched: number;
+    lastSuspected: number;
+  } | null,
+): { name: string; status: string; lat: string } {
+  if (!s || s.secondsSincePush === null) {
+    return { name, status: 'idle', lat: 'no pushes yet' };
+  }
+  const age = s.secondsSincePush;
+  const status = age < 150 ? 'ok' : age < 600 ? 'warn' : 'idle';
+  const ageStr = age < 90 ? `${age}s ago` : `${Math.round(age / 60)}m ago`;
+  const lat =
+    `${ageStr} · ${s.lastMatched} ch` +
+    (s.lastSuspected > 0 ? ` · ${s.lastSuspected} suspect` : '');
+  return { name, status, lat };
+}
 
 function shortenLabel(label: string): string {
   // "Day 3" → "D3", "Grand Finals" → "GF"

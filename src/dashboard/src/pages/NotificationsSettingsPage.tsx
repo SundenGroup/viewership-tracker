@@ -51,6 +51,12 @@ const EVENT_DESCRIPTORS: EventDescriptor[] = [
     label: 'New discovery candidate',
     description: 'Auto-discovery found a channel waiting for approval.',
   },
+  {
+    key: 'data_anomaly',
+    label: 'Data anomaly',
+    description:
+      'Stream Together inflation detected, scraper tab-bleed signature, an official channel flatlining, or a sharp total-CCV collapse.',
+  },
 ];
 
 const DEFAULT_PREFS: PushPreferences = {
@@ -59,6 +65,7 @@ const DEFAULT_PREFS: PushPreferences = {
   polling_stalled: true,
   quota_exhausted: true,
   discovery_candidate: true,
+  data_anomaly: true,
 };
 
 export function NotificationsSettingsPage() {

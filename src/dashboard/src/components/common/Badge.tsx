@@ -132,7 +132,6 @@ export function PlatformIcon({ platform, size = 16 }: { platform: string; size?:
       height={size}
       viewBox="0 0 20 16"
       fill={color}
-      title={label}
       className="inline-block"
     >
       <title>{label}</title>

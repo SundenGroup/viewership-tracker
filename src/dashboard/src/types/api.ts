@@ -24,7 +24,7 @@ export interface ViewGroup {
 
 export type TournamentStatus = 'draft' | 'active' | 'completed';
 export type BroadcastStatus = 'scheduled' | 'live' | 'completed';
-export type Platform = 'twitch' | 'youtube' | 'kick' | 'tiktok' | 'steam' | 'trovo' | 'chzzk' | 'soop';
+export type Platform = 'twitch' | 'youtube' | 'kick' | 'tiktok' | 'steam' | 'trovo' | 'chzzk' | 'soop' | 'nimotv';
 export type ChannelTier = 'official' | 'partner' | 'community' | 'player' | 'watch_party';
 export type ChannelSource = 'manual' | 'auto_discovered';
 export type ScopeLevel = 'day' | 'stage' | 'series';
@@ -47,6 +47,7 @@ export interface TournamentSeries {
   discovery_keywords: string[];
   discovery_game_ids: Record<string, string>;
   discovery_default_tier: string;
+  discovery_interval_ms: number | null;
   is_public: boolean;
   metadata: Record<string, unknown>;
   created_at: string;
@@ -67,6 +68,7 @@ export interface CreateTournamentSeries {
   discovery_keywords?: string[];
   discovery_game_ids?: Record<string, string>;
   discovery_default_tier?: string;
+  discovery_interval_ms?: number | null;
   is_public?: boolean;
   metadata?: Record<string, unknown>;
 }
@@ -553,7 +555,8 @@ export type PushEventType =
   | 'broadcast_ending'
   | 'polling_stalled'
   | 'quota_exhausted'
-  | 'discovery_candidate';
+  | 'discovery_candidate'
+  | 'data_anomaly';
 
 export type PushPreferences = Record<PushEventType, boolean>;
 
