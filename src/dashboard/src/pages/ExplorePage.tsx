@@ -42,6 +42,7 @@ import { useTimelineSeries } from '@/design/useTimelineSeries';
 import type { ScopeOption } from '@/components/design/ScopeScrubber';
 import { fmtCompact, fmtN, fmtDateMD, fmtDateLong } from '@/design/format';
 import { formatChartTimeInTz } from '@/utils/formatters';
+import { downloadCsv, csvStamp } from '@/utils/csv';
 import { useAuth } from '@/hooks/useAuth';
 import { useApi, usePollingApi } from '@/hooks/useApi';
 import * as api from '@/services/api';
@@ -57,14 +58,18 @@ import type {
   RangeLeaderboardResponse,
 } from '@/types/api';
 
-const MAX_OVERLAY_CHANNELS = 4;
+const MAX_OVERLAY_CHANNELS = 8;
 
-// Distinct line colours for overlay mode (max 4)
+// Distinct line colours for overlay mode (max 8)
 const OVERLAY_COLORS = [
   'var(--red)',
   'var(--info)',
   'var(--warn)',
   'var(--live)',
+  '#a78bfa', // violet
+  '#f472b6', // pink
+  '#2dd4bf', // teal
+  '#fb923c', // orange
 ];
 
 interface ExplorePageProps {
@@ -166,6 +171,11 @@ function ExploreScopedView({
     () => seriesList.find((s) => s.id === seriesId) ?? null,
     [seriesList, seriesId],
   );
+  // Transient "overlay limit reached" message (auto-clears).
+  const [capNotice, setCapNotice] = useState<string | null>(null);
+  // Curve-shape metrics (std dev / minutes at #1 / % of time above half-peak)
+  // are opt-in — they need the per-channel time-series for the whole scope.
+  const [shapeMetricsOn, setShapeMetricsOn] = useState(false);
 
   // ── URL state parsing ───────────────────────────────────────────────
   const stageIdFromUrl = searchParams.get('stage') ?? undefined;
@@ -320,6 +330,24 @@ function ExploreScopedView({
     [seriesId, fromParam, toParam],
   );
 
+  // ── Compare mode ────────────────────────────────────────────────────
+  // Overlay another scope of the SAME level (day vs day, stage vs stage),
+  // aligned by minutes-from-start so different wall-clock days line up.
+  const compareId = searchParams.get('compare');
+  const compareOptions = useMemo<ScopeOption[]>(() => {
+    if (scopeLevel === 'day') return dayOptions.filter((d) => d.id !== dayIdFromUrl);
+    if (scopeLevel === 'stage') return stageOptions.filter((s) => s.id !== stageIdFromUrl);
+    return [];
+  }, [scopeLevel, dayOptions, stageOptions, dayIdFromUrl, stageIdFromUrl]);
+  const compareLabel = compareOptions.find((o) => o.id === compareId)?.label ?? null;
+  const { data: compareTs } = useApi<TimeSeriesResponse>(
+    () =>
+      compareId
+        ? api.getTimeSeries({ scope: scopeLevel, id: compareId, interval: 60 })
+        : Promise.resolve(null as unknown as TimeSeriesResponse),
+    [seriesId, scopeLevel, compareId],
+  );
+
   // ── Filter + search the leaderboard ────────────────────────────────
   const channels = useMemo(() => {
     const list = leaderboard ?? [];
@@ -360,7 +388,111 @@ function ExploreScopedView({
       }));
   }, [leaderboard, platformFilter, languageFilter, tierFilter, regionFilter, search]);
 
-  const lb = useSortable(channels, 'peak', 'desc');
+  const filtersActive =
+    platformFilter.length > 0 ||
+    languageFilter.length > 0 ||
+    tierFilter.length > 0 ||
+    regionFilter.length > 0 ||
+    search.trim() !== '';
+
+  const clearAllFilters = useCallback(() => {
+    updateUrl((p) => {
+      p.delete('platforms');
+      p.delete('languages');
+      p.delete('tiers');
+      p.delete('regions');
+      p.delete('q');
+    });
+  }, [updateUrl]);
+
+  // ── Curve-shape metrics (opt-in) ───────────────────────────────────
+  // Per-channel per-minute series for the whole scope: stability (std dev
+  // as % of the channel's own avg), minutes ranked #1 across all channels,
+  // and consistency (% of live minutes above half its own peak).
+  const { data: shapeTs } = useApi<TimeSeriesResponse>(
+    () =>
+      shapeMetricsOn
+        ? api.getTimeSeries({ scope: scopeLevel, id: scopeId, interval: 60, groupBy: 'channel' })
+        : Promise.resolve(null as unknown as TimeSeriesResponse),
+    [seriesId, scopeLevel, scopeId, shapeMetricsOn],
+  );
+
+  interface ShapeStats {
+    stability: number; // coefficient of variation, lower = steadier
+    minutesAt1: number;
+    consistency: number; // % of live minutes >= 50% of own peak
+  }
+  const shapeByChannel = useMemo<Map<string, ShapeStats>>(() => {
+    const out = new Map<string, ShapeStats>();
+    if (!shapeMetricsOn || !shapeTs?.data) return out;
+    const grouped = shapeTs.data as GroupedTimeSeriesBucket[];
+    // channel -> minute-ms -> ccv
+    const perChan = new Map<string, number[]>();
+    const byMinuteMax = new Map<number, { max: number; cid: string }>();
+    for (const row of grouped) {
+      const cid = row.groupKey;
+      if (!cid) continue;
+      const ms = new Date(row.timestamp ?? row.bucket ?? '').getTime();
+      const v = Number(row.totalCCV ?? row.total_ccv ?? 0);
+      if (v <= 0) continue;
+      const arr = perChan.get(cid) ?? [];
+      arr.push(v);
+      perChan.set(cid, arr);
+      const cur = byMinuteMax.get(ms);
+      if (!cur || v > cur.max) byMinuteMax.set(ms, { max: v, cid });
+    }
+    const at1 = new Map<string, number>();
+    for (const { cid } of byMinuteMax.values()) at1.set(cid, (at1.get(cid) ?? 0) + 1);
+    for (const [cid, vals] of perChan) {
+      const n = vals.length;
+      const mean = vals.reduce((s, v) => s + v, 0) / n;
+      const variance = vals.reduce((s, v) => s + (v - mean) ** 2, 0) / n;
+      const peak = Math.max(...vals);
+      out.set(cid, {
+        stability: mean > 0 ? Math.round((Math.sqrt(variance) / mean) * 100) : 0,
+        minutesAt1: at1.get(cid) ?? 0,
+        consistency: Math.round((vals.filter((v) => v >= peak / 2).length / n) * 100),
+      });
+    }
+    return out;
+  }, [shapeMetricsOn, shapeTs]);
+
+  // Table rows, with shape columns merged in when enabled.
+  const tableRows = useMemo(
+    () =>
+      channels.map((c) => ({
+        ...c,
+        stability: shapeByChannel.get(c.id)?.stability ?? null,
+        minutesAt1: shapeByChannel.get(c.id)?.minutesAt1 ?? null,
+        consistency: shapeByChannel.get(c.id)?.consistency ?? null,
+      })),
+    [channels, shapeByChannel],
+  );
+
+  const lb = useSortable(tableRows, 'peak', 'desc');
+
+  // Grid template grows three columns when shape metrics are on.
+  const tableGridColumns = shapeMetricsOn
+    ? '40px 1fr 90px 100px 70px 90px 90px 100px 70px 70px 70px'
+    : '40px 1fr 100px 110px 90px 100px 100px 110px';
+
+  const exportTableCsv = useCallback(() => {
+    downloadCsv(
+      `explore-${series?.short_name || seriesId}-${scopeLevel}-${csvStamp()}`,
+      ['Channel', 'Identifier', 'Platform', 'Category', 'Language', 'Region', 'Peak CCV', 'Avg CCV', 'Viewed Hours'],
+      lb.sorted.map((c) => [
+        c.name,
+        c.channelIdentifier,
+        c.platform,
+        c.tier,
+        c.language,
+        c.region,
+        c.peak,
+        c.avg,
+        c.hours,
+      ]),
+    );
+  }, [lb.sorted, series?.short_name, seriesId, scopeLevel]);
 
   // ── Build chart series (parallel to timeline.timestamps) ──────────
   // Three rendering modes:
@@ -415,6 +547,7 @@ function ExploreScopedView({
         p.delete('stage');
         p.delete('day');
         p.delete('at');
+        p.delete('compare');
         if (level === 'stage' && stageOptions[0]) p.set('stage', stageOptions[0].id);
         if (level === 'day' && dayOptions[0]) p.set('day', dayOptions[0].id);
       });
@@ -428,6 +561,7 @@ function ExploreScopedView({
         p.set('stage', id);
         p.delete('day');
         p.delete('at');
+        p.delete('compare');
       });
     },
     [updateUrl],
@@ -439,6 +573,7 @@ function ExploreScopedView({
         p.set('day', id);
         p.delete('stage');
         p.delete('at');
+        p.delete('compare');
       });
     },
     [updateUrl],
@@ -450,7 +585,12 @@ function ExploreScopedView({
       const i = cur.indexOf(cid);
       if (i >= 0) cur.splice(i, 1);
       else if (cur.length < MAX_OVERLAY_CHANNELS) cur.push(cid);
-      else return;
+      else {
+        // Say WHY nothing happened instead of silently ignoring the click.
+        setCapNotice(`Overlay limit reached (${MAX_OVERLAY_CHANNELS}) — deselect a channel first.`);
+        window.setTimeout(() => setCapNotice(null), 3500);
+        return;
+      }
       updateUrl((p) => {
         if (cur.length > 0) p.set('channels', cur.join(','));
         else p.delete('channels');
@@ -637,6 +777,43 @@ function ExploreScopedView({
             viewGroups={[]}
             showShowingLabel={true}
           />
+          <Row justify="space-between" align="center" style={{ marginTop: 8, flexWrap: 'wrap', gap: 8 }}>
+            <Row gap={6} align="center">
+              {compareOptions.length > 0 && (
+                <>
+                  <span className="eyebrow" style={{ fontSize: 9.5 }}>
+                    Compare vs
+                  </span>
+                  <select
+                    value={compareId ?? ''}
+                    onChange={(e) =>
+                      updateUrl((p) => {
+                        if (e.target.value) p.set('compare', e.target.value);
+                        else p.delete('compare');
+                      })
+                    }
+                    style={{
+                      padding: '4px 8px',
+                      fontSize: 11.5,
+                      background: 'var(--bg-card)',
+                      color: 'var(--fg)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 5,
+                    }}
+                  >
+                    <option value="">— none —</option>
+                    {compareOptions.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.label}
+                        {o.sub ? ` · ${o.sub}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+            </Row>
+            <SavedViewsMenu />
+          </Row>
         </div>
 
         {/* Chart — uses InteractiveMainChart (the same component the exported
@@ -730,6 +907,21 @@ function ExploreScopedView({
           </div>
         </Section>
 
+        {/* Compare overlay — current scope vs a sibling scope, aligned by
+            minutes-from-start so different days line up on one axis */}
+        {compareId && compareLabel && (
+          <CompareSection
+            currentLabel={
+              scopeLevel === 'day'
+                ? allDays.find((d) => d.id === dayIdFromUrl)?.label ?? 'Current'
+                : activeStage?.name ?? series?.name ?? 'Current'
+            }
+            currentValues={timeline.total}
+            compareLabel={compareLabel}
+            compareBuckets={(compareTs?.data as TimeSeriesBucket[] | undefined) ?? null}
+          />
+        )}
+
         {/* "All channels at T" panel — shown when a single timestamp is pinned */}
         {atParam && !fromParam && (
           <AllChannelsAtTimestampPanel
@@ -763,7 +955,28 @@ function ExploreScopedView({
                   Channels
                 </span>
                 <span style={{ fontSize: 13 }}>
-                  {channels.length} channel{channels.length === 1 ? '' : 's'}
+                  {filtersActive
+                    ? `${channels.length} of ${(leaderboard ?? []).length} channels`
+                    : `${channels.length} channel${channels.length === 1 ? '' : 's'}`}
+                  {filtersActive && (
+                    <>
+                      {' '}
+                      <button
+                        type="button"
+                        onClick={clearAllFilters}
+                        style={{
+                          background: 'transparent',
+                          border: 0,
+                          color: 'var(--fg-dim)',
+                          cursor: 'pointer',
+                          fontSize: 11,
+                          textDecoration: 'underline',
+                        }}
+                      >
+                        clear filters
+                      </button>
+                    </>
+                  )}
                   {selectedChannelIds.length > 0 && (
                     <>
                       {' · '}
@@ -788,8 +1001,27 @@ function ExploreScopedView({
                     </>
                   )}
                 </span>
+                {capNotice && (
+                  <span style={{ fontSize: 11, color: 'var(--warn)' }}>{capNotice}</span>
+                )}
               </Col>
               <Row gap={6} style={{ alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className="btn btn-xs"
+                  onClick={() => setShapeMetricsOn((v) => !v)}
+                  title="Add per-channel curve-shape columns (stability, minutes ranked #1, consistency) — loads the full per-channel time-series for this scope"
+                >
+                  {shapeMetricsOn ? 'Shape ✓' : 'Shape'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-xs"
+                  onClick={exportTableCsv}
+                  title="Download the current (filtered) table as CSV"
+                >
+                  CSV
+                </button>
                 <IconSearch size={12} />
                 <input
                   value={search}
@@ -936,7 +1168,7 @@ function ExploreScopedView({
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '40px 1fr 100px 110px 90px 100px 100px 110px',
+              gridTemplateColumns: tableGridColumns,
               padding: '8px 12px',
               fontSize: 10,
               fontFamily: 'var(--font-mono)',
@@ -969,6 +1201,19 @@ function ExploreScopedView({
             <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="hours" align="right">
               Viewed Hours
             </SortHeader>
+            {shapeMetricsOn && (
+              <>
+                <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="stability" align="right">
+                  <span title="Coefficient of variation — lower = steadier curve">Var%</span>
+                </SortHeader>
+                <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="minutesAt1" align="right">
+                  <span title="Minutes this channel was the single biggest in the scope">Min @#1</span>
+                </SortHeader>
+                <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="consistency" align="right">
+                  <span title="% of live minutes at or above half the channel's own peak">≥½ peak</span>
+                </SortHeader>
+              </>
+            )}
           </div>
           <div>
             {lbLoading && channels.length === 0 ? (
@@ -989,7 +1234,7 @@ function ExploreScopedView({
                     onClick={() => toggleChannel(c.id)}
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: '40px 1fr 100px 110px 90px 100px 100px 110px',
+                      gridTemplateColumns: tableGridColumns,
                       padding: '8px 12px',
                       borderBottom: '1px solid var(--border-faint)',
                       fontSize: 12.5,
@@ -1040,6 +1285,19 @@ function ExploreScopedView({
                     <div className="tabular" style={{ textAlign: 'right' }}>
                       {fmtN(c.hours)}
                     </div>
+                    {shapeMetricsOn && (
+                      <>
+                        <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+                          {c.stability != null ? `${c.stability}%` : '…'}
+                        </div>
+                        <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+                          {c.minutesAt1 != null ? fmtN(c.minutesAt1) : '…'}
+                        </div>
+                        <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+                          {c.consistency != null ? `${c.consistency}%` : '…'}
+                        </div>
+                      </>
+                    )}
                   </div>
                 );
               })
@@ -2082,6 +2340,315 @@ function buildChartDescription({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// ── Compare section — current scope vs sibling scope ─────────────────────
+//
+// Two total-CCV curves aligned by MINUTE INDEX from each scope's own start
+// (not wall clock), so "Day 1 vs Day 3" overlays broadcast-hour over
+// broadcast-hour. Includes a peak/avg/hours delta strip.
+
+function CompareSection({
+  currentLabel,
+  currentValues,
+  compareLabel,
+  compareBuckets,
+}: {
+  currentLabel: string;
+  currentValues: number[];
+  compareLabel: string;
+  compareBuckets: TimeSeriesBucket[] | null;
+}) {
+  const compareValues = useMemo(
+    () =>
+      (compareBuckets ?? [])
+        .slice()
+        .sort((a, b) =>
+          String(a.timestamp ?? a.bucket ?? '').localeCompare(String(b.timestamp ?? b.bucket ?? '')),
+        )
+        .map((b) => Number(b.totalCCV ?? b.total_ccv ?? 0)),
+    [compareBuckets],
+  );
+
+  const stats = (vals: number[]) => {
+    const live = vals.filter((v) => v > 0);
+    const peak = live.length ? Math.max(...live) : 0;
+    const avg = live.length ? Math.round(live.reduce((s, v) => s + v, 0) / live.length) : 0;
+    const hours = Math.round(vals.reduce((s, v) => s + v, 0) / 60);
+    return { peak, avg, hours };
+  };
+  const cur = stats(currentValues);
+  const cmp = stats(compareValues);
+  const delta = (a: number, b: number) =>
+    b > 0 ? `${a >= b ? '+' : ''}${(((a - b) / b) * 100).toFixed(0)}%` : '—';
+
+  const N = Math.max(currentValues.length, compareValues.length);
+  const maxY = Math.max(cur.peak, cmp.peak, 1);
+  const W = 960;
+  const H = 200;
+  const PAD = 6;
+  const toPoints = (vals: number[]) =>
+    vals
+      .map((v, i) => {
+        const x = PAD + (i / Math.max(N - 1, 1)) * (W - PAD * 2);
+        const y = H - PAD - (v / maxY) * (H - PAD * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(' ');
+
+  const hourTicks = useMemo(() => {
+    const ticks: Array<{ x: number; label: string }> = [];
+    for (let m = 0; m < N; m += 60) {
+      ticks.push({
+        x: PAD + (m / Math.max(N - 1, 1)) * (W - PAD * 2),
+        label: `+${m / 60}h`,
+      });
+    }
+    return ticks;
+  }, [N]);
+
+  if (compareBuckets === null) {
+    return (
+      <div className="card" style={{ padding: 14 }}>
+        <div className="placeholder" style={{ height: 80 }}>
+          Loading comparison…
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <Row justify="space-between" align="center" style={{ marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+        <Col gap={2}>
+          <span className="eyebrow" style={{ fontSize: 10 }}>
+            Compare · aligned by minutes from start
+          </span>
+          <Row gap={12} style={{ fontSize: 12 }}>
+            <Row gap={5} align="center">
+              <span style={{ width: 14, height: 3, background: 'var(--red)', display: 'inline-block' }} />
+              <span style={{ fontWeight: 600 }}>{currentLabel}</span>
+            </Row>
+            <Row gap={5} align="center">
+              <span
+                style={{
+                  width: 14,
+                  height: 0,
+                  borderTop: '3px dashed var(--info)',
+                  display: 'inline-block',
+                }}
+              />
+              <span style={{ fontWeight: 600 }}>{compareLabel}</span>
+            </Row>
+          </Row>
+        </Col>
+        <Row gap={14} style={{ fontSize: 11.5 }}>
+          {[
+            { label: 'Peak', a: cur.peak, b: cmp.peak },
+            { label: 'Avg', a: cur.avg, b: cmp.avg },
+            { label: 'Viewed hours', a: cur.hours, b: cmp.hours },
+          ].map((m) => (
+            <Col key={m.label} gap={1} style={{ textAlign: 'right' }}>
+              <span className="eyebrow" style={{ fontSize: 9 }}>
+                {m.label}
+              </span>
+              <span className="tabular">
+                {fmtCompact(m.a)} vs {fmtCompact(m.b)}{' '}
+                <span
+                  style={{
+                    color: m.a >= m.b ? 'var(--live)' : 'var(--danger)',
+                    fontWeight: 600,
+                  }}
+                >
+                  {delta(m.a, m.b)}
+                </span>
+              </span>
+            </Col>
+          ))}
+        </Row>
+      </Row>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        width="100%"
+        height={H}
+        preserveAspectRatio="none"
+        style={{ display: 'block' }}
+      >
+        {hourTicks.map((t) => (
+          <line
+            key={t.x}
+            x1={t.x}
+            y1={PAD}
+            x2={t.x}
+            y2={H - PAD}
+            stroke="var(--border-faint)"
+            strokeWidth={1}
+          />
+        ))}
+        {compareValues.length > 1 && (
+          <polyline
+            points={toPoints(compareValues)}
+            fill="none"
+            stroke="var(--info)"
+            strokeWidth={1.6}
+            strokeDasharray="5 4"
+          />
+        )}
+        {currentValues.length > 1 && (
+          <polyline
+            points={toPoints(currentValues)}
+            fill="none"
+            stroke="var(--red)"
+            strokeWidth={1.8}
+          />
+        )}
+      </svg>
+      <Row justify="space-between" style={{ fontSize: 9.5, color: 'var(--fg-dim)', marginTop: 2 }}>
+        {hourTicks.slice(0, 12).map((t) => (
+          <span key={t.x} className="mono">
+            {t.label}
+          </span>
+        ))}
+      </Row>
+    </div>
+  );
+}
+
+// ── Saved views — named bookmarks of the full Explore URL state ──────────
+//
+// A filtered + scoped + overlaid Explore view is entirely URL-encoded, so a
+// "view" is just a named URL. Stored in localStorage.
+
+const SAVED_VIEWS_KEY = 'explore-saved-views';
+
+interface SavedView {
+  name: string;
+  path: string;
+  savedAt: string;
+}
+
+function readSavedViews(): SavedView[] {
+  try {
+    return JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY) ?? '[]') as SavedView[];
+  } catch {
+    return [];
+  }
+}
+
+function SavedViewsMenu() {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [views, setViews] = useState<SavedView[]>(readSavedViews);
+  const [name, setName] = useState('');
+
+  const persist = (next: SavedView[]) => {
+    setViews(next);
+    localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(next));
+  };
+
+  const saveCurrent = () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const path = window.location.pathname + window.location.search;
+    persist([
+      { name: trimmed, path, savedAt: new Date().toISOString() },
+      ...views.filter((v) => v.name !== trimmed),
+    ]);
+    setName('');
+  };
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button type="button" className="btn btn-xs" onClick={() => setOpen((v) => !v)}>
+        Views{views.length > 0 ? ` (${views.length})` : ''} ▾
+      </button>
+      {open && (
+        <div
+          className="card"
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: '110%',
+            zIndex: 50,
+            width: 300,
+            padding: 10,
+            boxShadow: 'var(--shadow-lg)',
+          }}
+        >
+          <Row gap={6} style={{ marginBottom: 8 }}>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && saveCurrent()}
+              placeholder="Name this view…"
+              style={{
+                flex: 1,
+                padding: '5px 8px',
+                fontSize: 11.5,
+                background: 'var(--bg-card)',
+                color: 'var(--fg)',
+                border: '1px solid var(--border)',
+                borderRadius: 5,
+              }}
+            />
+            <button type="button" className="btn btn-xs" onClick={saveCurrent} disabled={!name.trim()}>
+              Save
+            </button>
+          </Row>
+          {views.length === 0 ? (
+            <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+              No saved views yet — set up scope, filters and overlays, then
+              save the state under a name.
+            </div>
+          ) : (
+            <Col gap={2}>
+              {views.map((v) => (
+                <Row key={v.name} gap={6} align="center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpen(false);
+                      navigate(v.path);
+                    }}
+                    style={{
+                      flex: 1,
+                      textAlign: 'left',
+                      background: 'transparent',
+                      border: 0,
+                      color: 'var(--fg)',
+                      fontSize: 12,
+                      padding: '4px 2px',
+                      cursor: 'pointer',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                    title={v.path}
+                  >
+                    {v.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => persist(views.filter((x) => x.name !== v.name))}
+                    style={{
+                      background: 'transparent',
+                      border: 0,
+                      color: 'var(--fg-dim)',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                    }}
+                    title="Delete saved view"
+                  >
+                    ✕
+                  </button>
+                </Row>
+              ))}
+            </Col>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Range stats panel — shown when the user drags across the chart to select
 // a window. Lists every channel that had data inside [from, to] with peak,
 // average, and viewed-hours stats. Backed by /api/viewership/range-leaderboard.
@@ -2123,6 +2690,42 @@ function RangeStatsPanel({
     { peak: 0, name: '' },
   );
 
+  // Share of the window's viewed hours by platform and by language —
+  // computed from the per-channel rows (viewed hours are additive, so the
+  // shares are exact; per-group "peak" would NOT be, so we don't show one).
+  const shareBars = (key: 'platform' | 'language') => {
+    const sums = new Map<string, number>();
+    for (const c of channels) {
+      const k = (key === 'platform' ? c.platform : c.language) || '—';
+      sums.set(k, (sums.get(k) ?? 0) + (c.viewedHours ?? 0));
+    }
+    return [...sums.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([label, hours]) => ({
+        label,
+        hours,
+        share: sumHours > 0 ? hours / sumHours : 0,
+      }));
+  };
+  const platformShares = shareBars('platform');
+  const languageShares = shareBars('language');
+
+  const exportRangeCsv = () =>
+    downloadCsv(
+      `explore-range-${csvStamp(fromDate)}-${csvStamp(toDate)}`,
+      ['Channel', 'Platform', 'Category', 'Language', 'Peak CCV', 'Avg CCV', 'Viewed Hours'],
+      sortable.sorted.map((c) => [
+        c.displayName,
+        c.platform,
+        c.tier,
+        c.language,
+        c.peakCCV,
+        c.avgCCV,
+        c.viewedHours,
+      ]),
+    );
+
   return (
     <div className="card" style={{ padding: 14 }}>
       <Row justify="space-between" align="center" style={{ marginBottom: 10 }}>
@@ -2136,15 +2739,69 @@ function RangeStatsPanel({
             {formatChartTimeInTz(toDate, timezone, true) || to}
           </span>
         </Col>
-        <button
-          type="button"
-          className="btn btn-xs"
-          onClick={onClose}
-          style={{ background: 'transparent', border: '1px solid var(--border)' }}
-        >
-          Close
-        </button>
+        <Row gap={6}>
+          <button type="button" className="btn btn-xs" onClick={exportRangeCsv} title="Download this window's channel stats as CSV">
+            CSV
+          </button>
+          <button
+            type="button"
+            className="btn btn-xs"
+            onClick={onClose}
+            style={{ background: 'transparent', border: '1px solid var(--border)' }}
+          >
+            Close
+          </button>
+        </Row>
       </Row>
+
+      {/* Share of viewed hours in this window, by platform / language */}
+      {sumHours > 0 && (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+            gap: 14,
+            marginBottom: 12,
+          }}
+        >
+          {[
+            { title: 'By platform', rows: platformShares },
+            { title: 'By language', rows: languageShares },
+          ].map((grp) => (
+            <div key={grp.title}>
+              <div className="eyebrow" style={{ fontSize: 9.5, marginBottom: 5 }}>
+                {grp.title} · share of viewed hours
+              </div>
+              <Col gap={4}>
+                {grp.rows.map((r) => (
+                  <Row key={r.label} gap={8} align="center">
+                    <span
+                      style={{
+                        width: 64,
+                        fontSize: 10.5,
+                        color: 'var(--fg-muted)',
+                        textTransform: 'uppercase',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={r.label}
+                    >
+                      {r.label}
+                    </span>
+                    <div style={{ flex: 1, height: 6, background: 'var(--bg-sunken)', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{ width: `${Math.round(r.share * 100)}%`, height: '100%', background: 'var(--red)' }} />
+                    </div>
+                    <span className="tabular" style={{ fontSize: 10.5, color: 'var(--fg-dim)', width: 74, textAlign: 'right' }}>
+                      {(r.share * 100).toFixed(0)}% · {fmtCompact(r.hours)}h
+                    </span>
+                  </Row>
+                ))}
+              </Col>
+            </div>
+          ))}
+        </div>
+      )}
       <div
         style={{
           display: 'grid',

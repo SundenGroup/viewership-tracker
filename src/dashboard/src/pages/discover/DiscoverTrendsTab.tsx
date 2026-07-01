@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import * as api from '@/services/api';
 import type {
   GameTrackerRangeBucket,
   GameTrackerLeaderboardRow,
   GameTrackerRangeLeaderboardRow,
   GameTrackerPlatformBreakdown,
+  GameTrackerTrendingRow,
 } from '@/services/api';
 import {
   Row,
@@ -18,8 +20,10 @@ import {
   IconBolt,
   IconTrophy,
   IconX,
+  IconDownload,
 } from '@/components/design';
 import { fmtCompact, fmtN } from '@/design/format';
+import { downloadCsv, csvStamp } from '@/utils/csv';
 import { Avatar } from './DiscoverDetailPage';
 import { DiscoverTimelineChart } from './DiscoverTimelineChart';
 
@@ -46,9 +50,25 @@ interface Selection {
 }
 
 export function DiscoverTrendsTab({ slug }: { slug: string }) {
-  const [rangeKey, setRangeKey] = useState<RangePreset>('24h');
+  // Range + chart selection are mirrored into URL search params (?range,
+  // ?at / ?sel_from+?sel_to) so a pasted link reproduces the view. State
+  // initializes from the URL on mount; the sync effect below writes back.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [rangeKey, setRangeKey] = useState<RangePreset>(() => {
+    const r = searchParams.get('range');
+    return RANGE_OPTIONS.some((o) => o.key === r) ? (r as RangePreset) : '24h';
+  });
   const [buckets, setBuckets] = useState<GameTrackerRangeBucket[]>([]);
-  const [selection, setSelection] = useState<Selection | null>(null);
+  const [selection, setSelection] = useState<Selection | null>(() => {
+    const at = searchParams.get('at');
+    if (at && !Number.isNaN(Date.parse(at))) return { fromIso: at, toIso: null };
+    const selFrom = searchParams.get('sel_from');
+    const selTo = searchParams.get('sel_to');
+    if (selFrom && selTo && !Number.isNaN(Date.parse(selFrom)) && !Number.isNaN(Date.parse(selTo))) {
+      return { fromIso: selFrom, toIso: selTo };
+    }
+    return null;
+  });
   const [pointSnapshot, setPointSnapshot] = useState<GameTrackerLeaderboardRow[] | null>(null);
   const [rangeRows, setRangeRows] = useState<GameTrackerRangeLeaderboardRow[] | null>(null);
   const [breakdown, setBreakdown] = useState<{
@@ -59,14 +79,48 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
 
   const range = RANGE_OPTIONS.find((r) => r.key === rangeKey)!;
 
+  // State → URL (replace, merged with unrelated keys like ?tab / ?q).
+  useEffect(() => {
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (rangeKey === '24h') p.delete('range');
+        else p.set('range', rangeKey);
+        p.delete('at');
+        p.delete('sel_from');
+        p.delete('sel_to');
+        if (selection) {
+          if (selection.toIso === null) p.set('at', selection.fromIso);
+          else {
+            p.set('sel_from', selection.fromIso);
+            p.set('sel_to', selection.toIso);
+          }
+        }
+        return p;
+      },
+      { replace: true },
+    );
+    // setSearchParams intentionally omitted: re-running on param identity
+    // changes would rewrite the URL in a loop for no state change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeKey, selection]);
+
+  // Skip the selection reset on mount so a selection restored from the
+  // URL isn't immediately clobbered by the initial data load.
+  const skipResetOnMount = useRef(true);
+
   useEffect(() => {
     let cancelled = false;
     const from = new Date(Date.now() - range.hours * 60 * 60_000);
     const to = new Date();
     setError(null);
-    setSelection(null);
-    setPointSnapshot(null);
-    setRangeRows(null);
+    if (skipResetOnMount.current) {
+      skipResetOnMount.current = false;
+    } else {
+      setSelection(null);
+      setPointSnapshot(null);
+      setRangeRows(null);
+    }
 
     Promise.all([
       api.getGameTrackerRange(slug, from, to, range.bucketSeconds),
@@ -127,6 +181,9 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
 
   return (
     <Col gap={16}>
+      {/* Risers & anomalies */}
+      <TrendingSection slug={slug} />
+
       {/* Range picker */}
       <Row gap={8} align="center">
         <span
@@ -206,6 +263,7 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
       {/* Side-by-side: selected detail + breakdowns */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <SelectedPanel
+          slug={slug}
           selection={selection}
           pointSnapshot={pointSnapshot}
           rangeRows={rangeRows}
@@ -251,6 +309,146 @@ function RangePill({
   );
 }
 
+const TRENDING_HOURS_OPTIONS = [
+  { label: '24h', hours: 24 },
+  { label: '48h', hours: 48 },
+  { label: '7d', hours: 168 },
+] as const;
+
+/**
+ * Risers & anomalies — peak CCV in the last N hours vs the N hours
+ * before. NEW = channel had no snapshots in the prior window; the amber
+ * ×N pill flags a ≥3× spike over the prior peak.
+ */
+function TrendingSection({ slug }: { slug: string }) {
+  const navigate = useNavigate();
+  const [hours, setHours] = useState<number>(24);
+  const [rows, setRows] = useState<GameTrackerTrendingRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRows(null);
+    setError(null);
+    api
+      .getGameTrackerTrending(slug, hours, 20)
+      .then((res) => {
+        if (!cancelled) setRows(res.rows);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, hours]);
+
+  return (
+    <Section
+      title="Trending"
+      eyebrow={`RISERS · LAST ${hours === 168 ? '7D' : `${hours}H`} VS PRIOR`}
+      compact
+      right={
+        <Row gap={4} align="center">
+          {TRENDING_HOURS_OPTIONS.map((opt) => (
+            <RangePill
+              key={opt.hours}
+              active={hours === opt.hours}
+              onClick={() => setHours(opt.hours)}
+            >
+              {opt.label}
+            </RangePill>
+          ))}
+        </Row>
+      }
+    >
+      {error && <div style={{ color: 'var(--red)', fontSize: 12 }}>{error}</div>}
+      {!error && rows === null && (
+        <div style={{ color: 'var(--fg-muted)', fontSize: 12 }}>Loading…</div>
+      )}
+      {rows !== null && rows.length === 0 && (
+        <div style={{ color: 'var(--fg-muted)', fontSize: 12, padding: '4px 0' }}>
+          No risers in this window.
+        </div>
+      )}
+      {rows !== null && rows.length > 0 && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border-faint)' }}>
+              <th style={{ ...miniTh, width: 30 }}>#</th>
+              <th style={miniTh}>Channel</th>
+              <th style={{ ...miniTh, textAlign: 'right', width: 140 }}>Prev → Now</th>
+              <th style={{ ...miniTh, textAlign: 'right', width: 80 }}>Δ</th>
+              <th style={{ ...miniTh, width: 70 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const delta = r.cur_peak - r.prev_peak;
+              const spike = !r.is_new && r.prev_peak > 0 && r.cur_peak >= 3 * r.prev_peak;
+              const profilePic = r.channel?.metadata?.profile_image_url as string | undefined;
+              return (
+                <tr
+                  key={r.channel_id}
+                  onClick={() => navigate(`/discover/${slug}/channel/${r.channel_id}`)}
+                  style={{ borderBottom: '1px solid var(--border-faint)', cursor: 'pointer' }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'var(--bg-sunken)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'transparent';
+                  }}
+                >
+                  <td style={{ ...miniTd, color: 'var(--fg-dim)', fontFamily: 'var(--font-mono)' }}>
+                    {i + 1}
+                  </td>
+                  <td style={miniTd}>
+                    <Row gap={8} align="center">
+                      <Avatar
+                        src={profilePic ?? null}
+                        name={r.channel?.display_name ?? '?'}
+                        size={24}
+                      />
+                      <PlatformPip id={r.channel?.platform ?? 'twitch'} size={11} />
+                      <span style={{ fontWeight: 500, color: 'var(--fg)' }}>
+                        {r.channel?.display_name ?? r.channel_id.slice(0, 8)}
+                      </span>
+                    </Row>
+                  </td>
+                  <td style={{ ...miniTd, ...numericTd, color: 'var(--fg-muted)' }}>
+                    {fmtCompact(r.prev_peak)} →{' '}
+                    <span style={{ color: 'var(--fg)', fontWeight: 600 }}>
+                      {fmtCompact(r.cur_peak)}
+                    </span>
+                  </td>
+                  <td
+                    style={{
+                      ...miniTd,
+                      ...numericTd,
+                      fontWeight: 600,
+                      color: delta >= 0 ? 'var(--live)' : 'var(--red)',
+                    }}
+                  >
+                    {delta >= 0 ? '+' : ''}
+                    {fmtCompact(delta)}
+                  </td>
+                  <td style={{ ...miniTd, textAlign: 'right' }}>
+                    {r.is_new ? (
+                      <Pill tone="red">NEW</Pill>
+                    ) : spike ? (
+                      <Pill tone="warn">×{(r.cur_peak / r.prev_peak).toFixed(1)}</Pill>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </Section>
+  );
+}
+
 function TrendKpi({
   icon,
   label,
@@ -290,11 +488,13 @@ function TrendKpi({
 }
 
 function SelectedPanel({
+  slug,
   selection,
   pointSnapshot,
   rangeRows,
   onClear,
 }: {
+  slug: string;
   selection: Selection | null;
   pointSnapshot: GameTrackerLeaderboardRow[] | null;
   rangeRows: GameTrackerRangeLeaderboardRow[] | null;
@@ -339,24 +539,49 @@ function SelectedPanel({
       }
       eyebrow={isRange ? 'RANGE' : 'AT MOMENT'}
       right={
-        <button
-          type="button"
-          onClick={onClear}
-          aria-label="Clear selection"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 22,
-            height: 22,
-            border: 'none',
-            background: 'transparent',
-            color: 'var(--fg-dim)',
-            cursor: 'pointer',
-          }}
-        >
-          <IconX size={14} />
-        </button>
+        <Row gap={6} align="center">
+          {isRange && rangeRows && rangeRows.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-xs"
+              style={{ cursor: 'pointer' }}
+              onClick={() =>
+                downloadCsv(
+                  `${slug}-trends-range-${csvStamp()}.csv`,
+                  ['rank', 'channel', 'platform', 'peak_ccv', 'avg_ccv', 'minutes_live'],
+                  rangeRows.map((r, i) => [
+                    i + 1,
+                    r.channel?.display_name ?? r.channel_id,
+                    r.platform,
+                    r.peak_ccv,
+                    r.avg_ccv,
+                    r.minutes_live,
+                  ]),
+                )
+              }
+            >
+              <IconDownload size={11} /> CSV
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClear}
+            aria-label="Clear selection"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 22,
+              height: 22,
+              border: 'none',
+              background: 'transparent',
+              color: 'var(--fg-dim)',
+              cursor: 'pointer',
+            }}
+          >
+            <IconX size={14} />
+          </button>
+        </Row>
       }
       style={{ padding: 0 }}
     >

@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams, Link, useNavigate } from 'react-router-dom';
 import * as api from '@/services/api';
-import type { GameTrackerDetail, GameTrackerLeaderboardRow } from '@/services/api';
+import type {
+  GameTrackerDetail,
+  GameTrackerLeaderboardRow,
+  GameTrackerRecentChannelRow,
+} from '@/services/api';
 import { DiscoverSearch } from './DiscoverSearch';
 import { DiscoverSearchResults } from './DiscoverSearchResults';
 import {
@@ -20,8 +24,10 @@ import {
   IconList,
   IconGrid,
   IconChev,
+  IconDownload,
 } from '@/components/design';
 import { fmtN, fmtCompact } from '@/design/format';
+import { downloadCsv, csvStamp } from '@/utils/csv';
 import { DiscoverTrendsTab } from './DiscoverTrendsTab';
 import { DiscoverChannelsTab } from './DiscoverChannelsTab';
 
@@ -43,6 +49,7 @@ export function DiscoverDetailPage() {
 
   const [detail, setDetail] = useState<GameTrackerDetail | null>(null);
   const [leaderboard, setLeaderboard] = useState<GameTrackerLeaderboardRow[] | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -57,6 +64,7 @@ export function DiscoverDetailPage() {
         if (cancelled) return;
         setDetail(d);
         setLeaderboard(lb);
+        setLastUpdatedAt(Date.now());
         setError(null);
       } catch (err) {
         if (!cancelled) setError((err as Error).message);
@@ -205,6 +213,7 @@ export function DiscoverDetailPage() {
               platformCount={platforms.length}
               leaderboard={leaderboard}
               lastCycle={detail.last_cycle}
+              lastUpdatedAt={lastUpdatedAt}
             />
           )}
           {tab === 'trends' && <DiscoverTrendsTab slug={slug} />}
@@ -246,6 +255,7 @@ function LiveTab({
   platformCount,
   leaderboard,
   lastCycle,
+  lastUpdatedAt,
 }: {
   slug: string;
   totalCcvNow: number;
@@ -254,7 +264,23 @@ function LiveTab({
   platformCount: number;
   leaderboard: GameTrackerLeaderboardRow[] | null;
   lastCycle: GameTrackerDetail['last_cycle'];
+  lastUpdatedAt: number | null;
 }) {
+  const exportCsv = () => {
+    if (!leaderboard || leaderboard.length === 0) return;
+    downloadCsv(
+      `${slug}-live-${csvStamp()}.csv`,
+      ['rank', 'channel', 'platform', 'language', 'ccv', 'stream_title'],
+      leaderboard.map((row, i) => [
+        i + 1,
+        row.channel?.display_name ?? row.channel_id,
+        row.platform,
+        row.language,
+        row.concurrent_viewers,
+        row.stream_title,
+      ]),
+    );
+  };
   return (
     <Col gap={16}>
       {/* Hero KPI strip */}
@@ -282,8 +308,28 @@ function LiveTab({
         />
       </Row>
 
+      {/* Recently discovered channels (48h) — hidden when empty */}
+      <RecentlyDiscoveredStrip slug={slug} />
+
       {/* Top streams */}
-      <Section title="Top streams now" eyebrow="LIVE LEADERBOARD">
+      <Section
+        title="Top streams now"
+        eyebrow="LIVE LEADERBOARD"
+        right={
+          <Row gap={10} align="center">
+            <FreshnessIndicator at={lastUpdatedAt} />
+            <button
+              type="button"
+              className="btn btn-xs"
+              onClick={exportCsv}
+              disabled={!leaderboard || leaderboard.length === 0}
+              style={{ cursor: 'pointer' }}
+            >
+              <IconDownload size={11} /> CSV
+            </button>
+          </Row>
+        }
+      >
         <LeaderboardTable rows={leaderboard} trackerSlug={slug} />
       </Section>
 
@@ -361,7 +407,105 @@ function KpiCard({
 export type LeaderboardRow = GameTrackerLeaderboardRow & {
   minutes_live?: number;
   days_streamed?: number;
+  /** Range mode only — carried through for CSV export. */
+  avg_ccv?: number;
 };
+
+/**
+ * "updated Xs ago" freshness readout for polled sections. Re-renders on
+ * a slow internal tick so the age stays current between polls.
+ */
+export function FreshnessIndicator({ at }: { at: number | null }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const handle = setInterval(() => setTick((t) => t + 1), 5_000);
+    return () => clearInterval(handle);
+  }, []);
+  if (at === null) return null;
+  const secs = Math.max(0, Math.round((Date.now() - at) / 1000));
+  const label = secs < 90 ? `${secs}s` : `${Math.round(secs / 60)}m`;
+  return (
+    <span className="mono" style={{ fontSize: 11, color: 'var(--fg-dim)', whiteSpace: 'nowrap' }}>
+      updated {label} ago
+    </span>
+  );
+}
+
+/** "3h ago"-style recency for discovery chips. */
+function timeAgo(iso: string): string {
+  const mins = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60_000));
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60 * 24) return `${Math.floor(mins / 60)}h ago`;
+  return `${Math.floor(mins / (60 * 24))}d ago`;
+}
+
+/**
+ * Compact wrap of chips for channels the tracker discovered in the last
+ * 48h — each links to the channel detail page. Renders nothing while
+ * loading or when the window is empty.
+ */
+function RecentlyDiscoveredStrip({ slug }: { slug: string }) {
+  const [rows, setRows] = useState<GameTrackerRecentChannelRow[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getGameTrackerRecentChannels(slug, 48, 12)
+      .then((res) => {
+        if (!cancelled) setRows(res.rows);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
+
+  if (rows.length === 0) return null;
+
+  return (
+    <Section eyebrow="Recently discovered (48h)" compact>
+      <Row gap={8} wrap>
+        {rows.map((r) => (
+          <Link
+            key={r.channel_id}
+            to={`/discover/${slug}/channel/${r.channel_id}`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '4px 10px',
+              borderRadius: 999,
+              border: '1px solid var(--border)',
+              background: 'var(--bg-sunken)',
+              fontSize: 11.5,
+              textDecoration: 'none',
+              color: 'inherit',
+              whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'var(--bg-hover)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'var(--bg-sunken)';
+            }}
+          >
+            <PlatformPip id={r.platform} size={11} />
+            <span style={{ color: 'var(--fg)', fontWeight: 500 }}>{r.display_name}</span>
+            <span style={{ color: 'var(--fg-dim)' }}>·</span>
+            <span
+              className="mono"
+              style={{ color: 'var(--fg-muted)', fontVariantNumeric: 'tabular-nums' }}
+            >
+              peak {fmtCompact(r.peak)}
+            </span>
+            <span style={{ color: 'var(--fg-dim)' }}>·</span>
+            <span style={{ color: 'var(--fg-dim)' }}>{timeAgo(r.joined_at)}</span>
+          </Link>
+        ))}
+      </Row>
+    </Section>
+  );
+}
 
 export function LeaderboardTable({
   rows,

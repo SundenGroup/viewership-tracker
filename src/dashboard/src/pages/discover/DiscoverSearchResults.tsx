@@ -17,6 +17,9 @@ import { Avatar } from './DiscoverDetailPage';
 
 type SortKey = 'last_seen' | 'peak_ccv';
 
+/** Backend accepts up to 365 days for the search window. */
+const DAY_OPTIONS = [30, 90, 180, 365];
+
 /**
  * Full-page search results for /discover/:slug?q=…
  *
@@ -30,6 +33,7 @@ export function DiscoverSearchResults({ slug, query }: { slug: string; query: st
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('last_seen');
+  const [days, setDays] = useState(30);
 
   useEffect(() => {
     if (query.trim().length < 2) {
@@ -39,8 +43,9 @@ export function DiscoverSearchResults({ slug, query }: { slug: string; query: st
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setRows(null);
     api
-      .searchGameTracker(slug, query.trim(), 30, 100)
+      .searchGameTracker(slug, query.trim(), days, 100)
       .then((res) => {
         if (cancelled) return;
         setRows(res.rows);
@@ -54,7 +59,7 @@ export function DiscoverSearchResults({ slug, query }: { slug: string; query: st
     return () => {
       cancelled = true;
     };
-  }, [slug, query]);
+  }, [slug, query, days]);
 
   const sortedRows = useMemo(() => {
     if (!rows) return null;
@@ -85,7 +90,7 @@ export function DiscoverSearchResults({ slug, query }: { slug: string; query: st
         <Row gap={8} align="center">
           {rows && (
             <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
-              {rows.length} match{rows.length === 1 ? '' : 'es'}
+              {rows.length} match{rows.length === 1 ? '' : 'es'} · last {days} days
               {titleMatches > 0 && channelMatches > 0 && (
                 <span style={{ color: 'var(--fg-dim)' }}>
                   {' '}
@@ -94,6 +99,26 @@ export function DiscoverSearchResults({ slug, query }: { slug: string; query: st
               )}
             </span>
           )}
+          <select
+            value={days}
+            onChange={(e) => setDays(Number(e.target.value))}
+            aria-label="Search window"
+            style={{
+              padding: '4px 8px',
+              fontSize: 11,
+              borderRadius: 6,
+              border: '1px solid var(--border)',
+              background: 'var(--bg-sunken)',
+              color: 'var(--fg)',
+              cursor: 'pointer',
+            }}
+          >
+            {DAY_OPTIONS.map((d) => (
+              <option key={d} value={d}>
+                Last {d} days
+              </option>
+            ))}
+          </select>
           <button
             type="button"
             onClick={() => navigate(`/discover/${slug}`)}
@@ -125,7 +150,7 @@ export function DiscoverSearchResults({ slug, query }: { slug: string; query: st
       )}
       {sortedRows && sortedRows.length === 0 && (
         <div style={{ padding: 32, textAlign: 'center', color: 'var(--fg-muted)' }}>
-          No matches for &ldquo;{query}&rdquo; in the last 30 days.
+          No matches for &ldquo;{query}&rdquo; in the last {days} days.
         </div>
       )}
       {sortedRows && sortedRows.length > 0 && (

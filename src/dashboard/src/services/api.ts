@@ -1199,6 +1199,46 @@ export function getGameTrackerChannelTimeline(
   );
 }
 
+export interface GameTrackerTrendingRow {
+  channel_id: string;
+  cur_peak: number;
+  prev_peak: number;
+  is_new: boolean;
+  channel: {
+    id: string;
+    display_name: string;
+    channel_identifier: string;
+    platform: string;
+    metadata: Record<string, unknown>;
+  } | null;
+}
+
+/** Risers & anomalies: peak in the last N hours vs the N hours before. */
+export function getGameTrackerTrending(slug: string, hours = 24, limit = 20) {
+  const params = new URLSearchParams({ hours: String(hours), limit: String(limit) });
+  return request<{ hours: number; rows: GameTrackerTrendingRow[] }>(
+    `/api/game-trackers/${slug}/trending?${params.toString()}`,
+  );
+}
+
+export interface GameTrackerRecentChannelRow {
+  joined_at: string;
+  channel_id: string;
+  platform: string;
+  channel_identifier: string;
+  display_name: string;
+  language: string | null;
+  peak: number;
+}
+
+/** Channels the tracker discovered within the window, newest first. */
+export function getGameTrackerRecentChannels(slug: string, hours = 48, limit = 15) {
+  const params = new URLSearchParams({ hours: String(hours), limit: String(limit) });
+  return request<{ hours: number; rows: GameTrackerRecentChannelRow[] }>(
+    `/api/game-trackers/${slug}/recent-channels?${params.toString()}`,
+  );
+}
+
 export function searchGameTracker(slug: string, query: string, days = 30, limit = 50) {
   const params = new URLSearchParams({
     q: query,

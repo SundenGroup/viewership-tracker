@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import * as api from '@/services/api';
-import { Row, Section, IconFilter } from '@/components/design';
-import { LeaderboardTable, type LeaderboardRow } from './DiscoverDetailPage';
+import { Row, Section, IconFilter, IconDownload } from '@/components/design';
+import { downloadCsv, csvStamp } from '@/utils/csv';
+import { LeaderboardTable, FreshnessIndicator, type LeaderboardRow } from './DiscoverDetailPage';
 
 const POLL_INTERVAL_MS = 30_000;
 type PlatformFilter = 'all' | 'twitch' | 'kick';
@@ -11,17 +13,56 @@ type SortKey = 'ccv' | 'lang';
 const PAGE_SIZE = 50;
 
 export function DiscoverChannelsTab({ slug }: { slug: string }) {
+  // Filters/pagination are mirrored into URL search params so views are
+  // shareable — state initializes from the URL on mount, then a sync
+  // effect below writes changes back (merging, never clobbering ?q/&tab).
+  const [searchParams, setSearchParams] = useSearchParams();
   const [rows, setRows] = useState<LeaderboardRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [platform, setPlatform] = useState<PlatformFilter>('all');
-  const [lang, setLang] = useState<string>('all');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const [platform, setPlatform] = useState<PlatformFilter>(() => {
+    const p = searchParams.get('platform');
+    return p === 'twitch' || p === 'kick' ? p : 'all';
+  });
+  const [lang, setLang] = useState<string>(() => searchParams.get('language') ?? 'all');
   const [sort, setSort] = useState<SortKey>('ccv');
-  const [dateMode, setDateMode] = useState<DateMode>('now');
-  const [fromDate, setFromDate] = useState<string>('');
-  const [toDate, setToDate] = useState<string>('');
-  const [page, setPage] = useState(0);
+  const [dateMode, setDateMode] = useState<DateMode>(() => {
+    const m = searchParams.get('mode');
+    return m === '24h' || m === '7d' || m === 'custom' ? m : 'now';
+  });
+  const [fromDate, setFromDate] = useState<string>(() => searchParams.get('from') ?? '');
+  const [toDate, setToDate] = useState<string>(() => searchParams.get('to') ?? '');
+  const [page, setPage] = useState(() => {
+    const raw = Number(searchParams.get('page') ?? '1');
+    return Number.isFinite(raw) && raw > 1 ? Math.floor(raw) - 1 : 0;
+  });
   const [total, setTotal] = useState<number | null>(null);
   const [rangeLangOptions, setRangeLangOptions] = useState<string[]>([]);
+
+  // State → URL (replace, merged) so pasted links reproduce the view.
+  // Defaults are omitted to keep URLs clean; page is 1-based in the URL.
+  useEffect(() => {
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        const setOrDelete = (key: string, value: string | null) => {
+          if (value === null || value === '') p.delete(key);
+          else p.set(key, value);
+        };
+        setOrDelete('mode', dateMode === 'now' ? null : dateMode);
+        setOrDelete('from', dateMode === 'custom' ? fromDate : null);
+        setOrDelete('to', dateMode === 'custom' ? toDate : null);
+        setOrDelete('platform', platform === 'all' ? null : platform);
+        setOrDelete('language', lang === 'all' ? null : lang);
+        setOrDelete('page', page > 0 ? String(page + 1) : null);
+        return p;
+      },
+      { replace: true },
+    );
+    // setSearchParams intentionally omitted: re-running on param identity
+    // changes would rewrite the URL in a loop for no state change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateMode, fromDate, toDate, platform, lang, page]);
 
   // Resolve the [from, to] window for range modes. Returns null for 'now'
   // (live mode) or an incomplete custom selection.
@@ -40,9 +81,16 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
 
   const rangeKey = range ? `${range.from.toISOString()}|${range.to.toISOString()}` : 'now';
 
-  // Reset to page 1 whenever the range or a server-side filter changes.
+  // Reset to page 1 whenever the range or a server-side filter changes —
+  // but not on mount, or it would clobber a page restored from the URL.
+  const didMount = useRef(false);
   useEffect(() => {
+    if (!didMount.current) {
+      didMount.current = true;
+      return;
+    }
     setPage(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rangeKey, lang, platform]);
 
   // Range mode: load the full language list for the dropdown (independent of
@@ -73,7 +121,11 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
       const refresh = () =>
         api
           .getGameTrackerLeaderboard(slug, undefined, 200)
-          .then((r) => !cancelled && setRows(r))
+          .then((r) => {
+            if (cancelled) return;
+            setRows(r);
+            setLastUpdatedAt(Date.now());
+          })
           .catch((err: Error) => !cancelled && setError(err.message));
       refresh();
       const handle = setInterval(refresh, POLL_INTERVAL_MS);
@@ -107,6 +159,7 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
             channel: r.channel,
             minutes_live: r.minutes_live,
             days_streamed: r.days_streamed,
+            avg_ccv: r.avg_ccv,
           })),
         );
       })
@@ -153,6 +206,40 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
   const pageCount = total != null ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : null;
   const hasNextPage = !!range && (pageCount != null ? page + 1 < pageCount : (rows?.length ?? 0) === PAGE_SIZE);
 
+  // Export the rows as currently displayed (filters + sort applied).
+  const exportCsv = () => {
+    if (filtered.length === 0) return;
+    if (range) {
+      downloadCsv(
+        `${slug}-channels-range-${csvStamp()}.csv`,
+        ['rank', 'channel', 'platform', 'language', 'peak_ccv', 'avg_ccv', 'hours_live', 'days_streamed'],
+        filtered.map((r, i) => [
+          i + 1 + page * PAGE_SIZE,
+          r.channel?.display_name ?? r.channel_id,
+          r.platform,
+          r.language,
+          r.concurrent_viewers,
+          r.avg_ccv,
+          r.minutes_live != null ? (r.minutes_live / 60).toFixed(1) : null,
+          r.days_streamed,
+        ]),
+      );
+    } else {
+      downloadCsv(
+        `${slug}-channels-live-${csvStamp()}.csv`,
+        ['rank', 'channel', 'platform', 'language', 'ccv', 'stream_title'],
+        filtered.map((r, i) => [
+          i + 1,
+          r.channel?.display_name ?? r.channel_id,
+          r.platform,
+          r.language,
+          r.concurrent_viewers,
+          r.stream_title,
+        ]),
+      );
+    }
+  };
+
   return (
     <Section
       title="All channels"
@@ -175,6 +262,16 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
           <span style={{ fontSize: 11, color: 'var(--fg-dim)', marginLeft: 6 }}>
             {range ? `${filtered.length} on page ${page + 1}` : `${filtered.length} live`}
           </span>
+          {!range && <FreshnessIndicator at={lastUpdatedAt} />}
+          <button
+            type="button"
+            className="btn btn-xs"
+            onClick={exportCsv}
+            disabled={filtered.length === 0}
+            style={{ cursor: 'pointer', marginLeft: 4 }}
+          >
+            <IconDownload size={11} /> CSV
+          </button>
         </Row>
       }
     >
