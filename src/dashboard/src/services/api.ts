@@ -363,6 +363,49 @@ export function getRangeLeaderboard(seriesId: string, from: string, to: string) 
   );
 }
 
+// ── Explore page — Ask (natural-language) ──────────────────────────────────
+// One question about the current Explore view. The server compiles it into a
+// single validated intent and answers with either a URL-state patch (the
+// page re-render IS the answer), a query result, or a refusal.
+
+/** Current URL params the Explore page sends as its view state. */
+export interface AskViewState {
+  stage?: string;
+  day?: string;
+  channels?: string;
+  languages?: string;
+  platforms?: string;
+  tiers?: string;
+  regions?: string;
+}
+
+export interface AskPatch {
+  set: Record<string, string>;
+  del: string[];
+}
+
+export type AskBlock =
+  | { type: 'stat'; label: string; value: number; sub?: string }
+  | { type: 'table'; columns: string[]; rows: Array<Array<string | number>> };
+
+export type AskEnvelope =
+  | { kind: 'patch'; patch: AskPatch; headline: string; resolvedIntent: string[] }
+  | {
+      kind: 'answer';
+      headline: string;
+      blocks: AskBlock[];
+      resolvedIntent: string[];
+      patchSuggestion?: AskPatch;
+    }
+  | { kind: 'refusal'; message: string; suggestions: string[]; resolvedIntent: string[] };
+
+export function askExplore(seriesId: string, question: string, viewState: AskViewState) {
+  return request<AskEnvelope>(`/api/ask/explore/${seriesId}`, {
+    method: 'POST',
+    body: JSON.stringify({ question, viewState }),
+  });
+}
+
 // ── Polling / Orchestrator ─────────────────────────────────────────────────
 
 export function getPollingStatus() {

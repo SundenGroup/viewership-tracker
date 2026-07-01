@@ -46,6 +46,7 @@ import { downloadCsv, csvStamp } from '@/utils/csv';
 import { useAuth } from '@/hooks/useAuth';
 import { useApi, usePollingApi } from '@/hooks/useApi';
 import * as api from '@/services/api';
+import { ExploreAskBox, ExploreAskResults, useExploreAsk } from '@/components/editor/ExploreAskBox';
 import type {
   TournamentSeries,
   SeriesWithStages,
@@ -404,6 +405,45 @@ function ExploreScopedView({
       p.delete('q');
     });
   }, [updateUrl]);
+
+  // ── Ask (natural-language) ─────────────────────────────────────────
+  // The server compiles a question into ONE validated intent: either a
+  // URL-state patch (applied via the same updateUrl mutator the rest of
+  // the page uses — Back/Undo restore the previous view) or a query
+  // answered straight from Postgres.
+  const getAskViewState = useCallback(
+    (): api.AskViewState => ({
+      stage: stageIdFromUrl,
+      day: dayIdFromUrl,
+      channels: channelsParam || undefined,
+      languages: searchParams.get('languages') ?? undefined,
+      platforms: searchParams.get('platforms') ?? undefined,
+      tiers: searchParams.get('tiers') ?? undefined,
+      regions: searchParams.get('regions') ?? undefined,
+    }),
+    [stageIdFromUrl, dayIdFromUrl, channelsParam, searchParams],
+  );
+
+  const applyAskPatch = useCallback(
+    (set: Record<string, string>, del: string[]) => {
+      updateUrl((p) => {
+        for (const key of del) p.delete(key);
+        for (const [key, value] of Object.entries(set)) p.set(key, value);
+      });
+    },
+    [updateUrl],
+  );
+
+  const ask = useExploreAsk({
+    seriesId,
+    getViewState: getAskViewState,
+    onPatch: applyAskPatch,
+    snapshotParams: useCallback(() => searchParams.toString(), [searchParams]),
+    restoreParams: useCallback(
+      (params: string) => setSearchParams(new URLSearchParams(params)),
+      [setSearchParams],
+    ),
+  });
 
   // ── Curve-shape metrics (opt-in) ───────────────────────────────────
   // Per-channel per-minute series for the whole scope: stability (std dev
@@ -812,9 +852,14 @@ function ExploreScopedView({
                 </>
               )}
             </Row>
+            <ExploreAskBox ask={ask} />
             <SavedViewsMenu />
           </Row>
         </div>
+
+        {/* Ask results — patch confirmation bar / answer card / refusal,
+            directly under the scrubber card (renders nothing when idle) */}
+        <ExploreAskResults ask={ask} />
 
         {/* Chart — uses InteractiveMainChart (the same component the exported
             reports render) when no channels are checked, so the visual style
