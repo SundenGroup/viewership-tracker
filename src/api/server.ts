@@ -26,6 +26,12 @@ import { authenticate, requireRole } from './middleware/auth';
 export function createApp() {
   const app = express();
 
+  // Exactly one reverse-proxy hop (nginx) in front of us. Without this,
+  // express-rate-limit sees nginx's IP for every client (one shared
+  // bucket + ERR_ERL_UNEXPECTED_X_FORWARDED_FOR warnings on every
+  // rate-limited route).
+  app.set('trust proxy', 1);
+
   // ── Security ──────────────────────────────────────────────────────────
 
   app.use(helmet({ contentSecurityPolicy: false })); // CSP disabled for inline Chart.js in reports
