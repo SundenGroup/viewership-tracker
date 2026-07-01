@@ -327,42 +327,17 @@ router.get(
       };
       const filter = parseViewFilter(req.query as Record<string, unknown>);
 
-      const [{ overall, perDay }, days] = await Promise.all([
-        ViewershipSnapshotModel.getLanguagePeaks(scopeObj, filter),
-        db('broadcast_days')
-          .where('series_id', series.id)
-          .orderBy('date', 'asc')
-          .select('id', 'label', 'date'),
-      ]);
-
-      const dayMeta = new Map(days.map((d) => [d.id as string, d]));
-      const perDayByLang = new Map<string, Array<{ dayId: string; label: string; date: string; peakCCV: number }>>();
-      for (const row of perDay) {
-        const key = row.language ?? '';
-        const meta = dayMeta.get(row.broadcast_day_id);
-        if (!meta) continue;
-        const list = perDayByLang.get(key) ?? [];
-        list.push({
-          dayId: row.broadcast_day_id,
-          label: meta.label as string,
-          date: String(meta.date).slice(0, 10),
-          peakCCV: parseInt(row.peak_ccv, 10),
-        });
-        perDayByLang.set(key, list);
-      }
+      const rows = await ViewershipSnapshotModel.getLanguagePeaks(scopeObj, filter);
 
       res.json({
         scope: scopeObj,
-        languages: overall
-          .map((o) => ({
-            language: o.language,
-            peakCCV: parseInt(o.peak_ccv, 10),
-            peakAt: o.peak_at,
-            days: (perDayByLang.get(o.language ?? '') ?? []).sort((a, b) =>
-              a.date.localeCompare(b.date),
-            ),
-          }))
-          .sort((a, b) => b.peakCCV - a.peakCCV),
+        languages: rows.map((o) => ({
+          language: o.language,
+          peakCCV: parseInt(o.peak_ccv, 10),
+          peakAt: o.peak_at,
+          avgCCV: parseInt(o.avg_ccv, 10),
+          viewedHours: Math.round(parseInt(o.viewer_minutes, 10) / 60),
+        })),
       });
     } catch (err) {
       next(err);

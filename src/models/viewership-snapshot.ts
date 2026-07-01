@@ -544,54 +544,38 @@ export async function getChannelLeaderboard(scope: Scope, limit = 25, filter?: V
 export interface LanguagePeakRow {
   language: string | null;
   peak_ccv: string;
+  avg_ccv: string;
+  viewer_minutes: string;
   peak_at: Date;
 }
 
-export interface LanguageDayPeakRow {
-  language: string | null;
-  broadcast_day_id: string;
-  peak_ccv: string;
-}
-
 /**
- * Per-language peak moments — the "Peak by language" table partners ask
- * for after every event. For each language: the single highest minute
- * (sum of that language's per-channel rollup CCV) and WHEN it happened;
- * plus per-broadcast-day peaks so callers can show growth across days.
- * Same three-level aggregation semantics as getBreakdown().
+ * Per-language stats — the "Peak by language" table partners ask for
+ * after every event. For each language: the single highest minute (sum
+ * of that language's per-channel rollup CCV), WHEN it happened, the
+ * average per-minute total, and total viewer-minutes. Same three-level
+ * aggregation semantics as getBreakdown().
  */
 export async function getLanguagePeaks(
   scope: Scope,
   filter?: ViewFilter,
-): Promise<{ overall: LanguagePeakRow[]; perDay: LanguageDayPeakRow[] }> {
+): Promise<LanguagePeakRow[]> {
   const fw = rollupFromWhere(scope, filter, { forceJoin: true });
-  const overall = await db.raw(
-    `SELECT DISTINCT ON (group_key)
-       group_key AS language,
-       ts_total::text AS peak_ccv,
-       minute_bucket AS peak_at
+  return db.raw(
+    `SELECT group_key AS language,
+       MAX(ts_total)::text AS peak_ccv,
+       ROUND(AVG(ts_total))::text AS avg_ccv,
+       SUM(ts_total)::text AS viewer_minutes,
+       (ARRAY_AGG(minute_bucket ORDER BY ts_total DESC, minute_bucket ASC))[1] AS peak_at
      FROM (
        SELECT minute_bucket, c.language AS group_key, SUM(r.ccv) AS ts_total
        ${fw.sql}
        GROUP BY minute_bucket, c.language
      ) per_ts
-     ORDER BY group_key, ts_total DESC, minute_bucket ASC`,
+     GROUP BY group_key
+     ORDER BY MAX(ts_total) DESC`,
     fw.bindings,
   ).then((r: { rows: LanguagePeakRow[] }) => r.rows);
-
-  const perDay = await db.raw(
-    `SELECT group_key AS language, broadcast_day_id, MAX(ts_total)::text AS peak_ccv
-     FROM (
-       SELECT r.broadcast_day_id, minute_bucket, c.language AS group_key, SUM(r.ccv) AS ts_total
-       ${fw.sql}
-       GROUP BY r.broadcast_day_id, minute_bucket, c.language
-     ) per_ts
-     WHERE broadcast_day_id IS NOT NULL
-     GROUP BY group_key, broadcast_day_id`,
-    fw.bindings,
-  ).then((r: { rows: LanguageDayPeakRow[] }) => r.rows);
-
-  return { overall, perDay };
 }
 
 export async function getTimeSeriesData(scope: Scope, intervalSeconds = 60, filter?: ViewFilter): Promise<TimeSeriesBucket[]> {
