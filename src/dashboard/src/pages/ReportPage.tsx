@@ -1622,7 +1622,7 @@ function DetailedReport({
         eyebrow="06 · Leaderboard"
         title={`All ${model.leaderboard.length} tracked channels — sort any column`}
       >
-        <Leaderboard channels={model.leaderboard} timezone={seriesInfo.timezone} />
+        <Leaderboard channels={model.leaderboard} />
       </Section>
 
       <div
@@ -1662,27 +1662,9 @@ function useIsNarrow(maxWidth = 640): boolean {
   return narrow;
 }
 
-function Leaderboard({
-  channels,
-  timezone,
-}: {
-  channels: ChannelRow[];
-  timezone?: string;
-}) {
+function Leaderboard({ channels }: { channels: ChannelRow[] }) {
   const [sort, setSort] = useState<keyof ChannelRow>('peak');
   const [dir, setDir] = useState<'asc' | 'desc'>('desc');
-  const fmtPeakAt = (iso: string | null) => {
-    if (!iso || !timezone) return null;
-    try {
-      return new Intl.DateTimeFormat('sv-SE', {
-        timeZone: timezone,
-        hour: '2-digit',
-        minute: '2-digit',
-      }).format(new Date(iso));
-    } catch {
-      return null;
-    }
-  };
   // On phones the full 8-column grid needs ~700px — collapse to the four
   // essential columns (rank, channel, peak, viewed hours) instead.
   const narrow = useIsNarrow(640);
@@ -1810,11 +1792,6 @@ function Leaderboard({
             )}
             <div className="tabular" style={{ textAlign: 'right' }}>
               {fmtN(c.peak)}
-              {!narrow && fmtPeakAt(c.peakAt) && (
-                <div style={{ fontSize: 9.5, color: 'var(--fg-dim)' }}>
-                  @ {fmtPeakAt(c.peakAt)}
-                </div>
-              )}
             </div>
             {!narrow && (
               <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
