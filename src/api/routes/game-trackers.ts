@@ -1,4 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import db from '../../utils/db';
 import * as GameTrackerModel from '../../models/game-tracker';
 import * as GameTrackerChannelModel from '../../models/game-tracker-channel';
 import * as GameTrackerSnapshotModel from '../../models/game-tracker-snapshot';
@@ -293,7 +294,7 @@ router.get('/:slug/search', async (req: Request, res: Response, next: NextFuncti
       res.status(400).json({ error: 'q must be at least 2 characters' });
       return;
     }
-    const days = req.query.days ? Math.min(Math.max(Number(req.query.days), 1), 90) : 30;
+    const days = req.query.days ? Math.min(Math.max(Number(req.query.days), 1), 365) : 30;
     const limit = req.query.limit ? Math.min(Math.max(Number(req.query.limit), 1), 100) : 50;
     const rows = await GameTrackerSnapshotModel.searchTitlesAndChannels(tracker.id, q, days, limit);
     if (rows.length === 0) {
@@ -352,6 +353,129 @@ router.get('/:slug/range-leaderboard', async (req: Request, res: Response, next:
       to: toTs,
       total,
       rows: rows.map((r) => ({ ...r, channel: channelMap.get(r.channel_id) ?? null })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /:slug/trending?hours=24&limit=20
+ *
+ * Risers & anomalies: each channel's peak in the last N hours compared to
+ * its peak in the N hours before that. Powers the Discover "Trending"
+ * section — biggest gainers, sudden multi-x spikes, and channels that
+ * appeared from nothing (prev window empty).
+ */
+router.get('/:slug/trending', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
+    if (!tracker) {
+      res.status(404).json({ error: 'Game tracker not found' });
+      return;
+    }
+    const hours = req.query.hours ? Math.min(Math.max(Number(req.query.hours), 1), 168) : 24;
+    const limit = req.query.limit ? Math.min(Math.max(Number(req.query.limit), 1), 50) : 20;
+    const now = Date.now();
+    const curFrom = new Date(now - hours * 3_600_000);
+    const prevFrom = new Date(now - 2 * hours * 3_600_000);
+
+    const result = await db.raw(
+      `
+      WITH cur AS (
+        SELECT channel_id, max(concurrent_viewers) AS peak
+        FROM game_tracker_snapshots
+        WHERE game_tracker_id = ? AND timestamp >= ?
+        GROUP BY channel_id
+      ),
+      prev AS (
+        SELECT channel_id, max(concurrent_viewers) AS peak
+        FROM game_tracker_snapshots
+        WHERE game_tracker_id = ? AND timestamp >= ? AND timestamp < ?
+        GROUP BY channel_id
+      )
+      SELECT c.channel_id,
+             c.peak            AS cur_peak,
+             COALESCE(p.peak, 0) AS prev_peak,
+             (p.channel_id IS NULL) AS is_new
+      FROM cur c
+      LEFT JOIN prev p ON p.channel_id = c.channel_id
+      WHERE c.peak >= 50 AND c.peak > COALESCE(p.peak, 0)
+      ORDER BY (c.peak - COALESCE(p.peak, 0)) DESC
+      LIMIT ?
+      `,
+      [tracker.id, curFrom, tracker.id, prevFrom, curFrom, limit],
+    );
+    const rows = (result.rows ?? []) as Array<{
+      channel_id: string;
+      cur_peak: number;
+      prev_peak: number;
+      is_new: boolean;
+    }>;
+    if (rows.length === 0) {
+      res.json({ hours, rows: [] });
+      return;
+    }
+    const channels = await ChannelModel.findByIds(rows.map((r) => r.channel_id));
+    const channelMap = new Map(channels.map((c) => [c.id, c]));
+    res.json({
+      hours,
+      rows: rows.map((r) => ({ ...r, channel: channelMap.get(r.channel_id) ?? null })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /:slug/recent-channels?hours=48&limit=15
+ *
+ * Channels the tracker discovered recently (game_tracker_channels.joined_at
+ * within the window, not dropped), newest first, with their peak so far.
+ * Powers the "recently discovered" strip.
+ */
+router.get('/:slug/recent-channels', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
+    if (!tracker) {
+      res.status(404).json({ error: 'Game tracker not found' });
+      return;
+    }
+    const hours = req.query.hours ? Math.min(Math.max(Number(req.query.hours), 1), 336) : 48;
+    const limit = req.query.limit ? Math.min(Math.max(Number(req.query.limit), 1), 50) : 15;
+    const since = new Date(Date.now() - hours * 3_600_000);
+
+    const joins = await db('game_tracker_channels as gtc')
+      .join('channels as c', 'c.id', 'gtc.channel_id')
+      .where('gtc.game_tracker_id', tracker.id)
+      .where('gtc.joined_at', '>=', since)
+      .whereNull('gtc.dropped_at')
+      .orderBy('gtc.joined_at', 'desc')
+      .limit(limit)
+      .select(
+        'gtc.joined_at',
+        'c.id as channel_id',
+        'c.platform',
+        'c.channel_identifier',
+        'c.display_name',
+        'c.language',
+      );
+    if (joins.length === 0) {
+      res.json({ hours, rows: [] });
+      return;
+    }
+    // Peak since joining, per channel, in one grouped query.
+    const peaks = await db('game_tracker_snapshots')
+      .where('game_tracker_id', tracker.id)
+      .whereIn('channel_id', joins.map((j) => j.channel_id))
+      .where('timestamp', '>=', since)
+      .groupBy('channel_id')
+      .select('channel_id')
+      .max('concurrent_viewers as peak');
+    const peakMap = new Map(peaks.map((p) => [p.channel_id, Number(p.peak)]));
+    res.json({
+      hours,
+      rows: joins.map((j) => ({ ...j, peak: peakMap.get(j.channel_id) ?? 0 })),
     });
   } catch (err) {
     next(err);
