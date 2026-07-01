@@ -82,6 +82,56 @@ the dashboard.
    filtering** — "watch parties only" cannot be filtered server-side today.
    Add `tiers` to the filter layer first (also benefits existing UI).
 
+## v2 — SCOPED PER-SURFACE DESIGN (supersedes the global-box framing above)
+
+*Decision 2026-07-02: Ask is a per-surface helper (Public Dashboard /
+Explore / Discover), pinned to what the user is viewing. Pattern follows
+the Clutch Social precedent: closed intent catalog as strict tools,
+`tool_choice: any` with refusal-as-a-tool, numbers always from Postgres,
+resolved-intent footer, Sonnet default via `ASK_MODEL` env (Haiku =
+documented cheap mode, not default). No AI narratives anywhere.*
+
+**Shared core (`src/agent/ask/`, built once):** `compiler.ts` (one
+non-streaming `messages.create`, strict tools, vocab block with prompt-
+cache breakpoint, schema-validated tool call), `answer-spec.ts` (ONE
+envelope: `{kind: stat|table|patch|refusal, blocks, applyAction?,
+resolvedIntent}`), `resolvers.ts` (day/stage/language/channel refs →
+ids, series-timezone time resolution), handler factory + limits
+(per-user and per-IP rate limits, atomic daily budget, `ASK_DAILY_BUDGET_USD`
+kill switch), eval harness (~20 real questions per surface before model
+lock).
+
+**Per surface:**
+- **Explore** (editor-only): Ask box in the scrubber card ("Ask this
+  view… ⌘K"). 11 intents, 7 of which are URL-STATE PATCHES — "show
+  Russian watch parties" applies `languages=ru&tiers=watch_party` and the
+  page re-render IS the answer (browser Back = undo). Vocabulary = the
+  series' real stages/days/channels/languages injected as enums; model
+  can only pick from them.
+- **Public Dashboard** (anonymous): "✦ Ask about this event" pill by the
+  scope scrubber; inline panel, suggested-question chips are server
+  templates (zero LLM), deterministic matcher absorbs 50–70% of typed
+  questions before any model call; 8 intents + refusal; answers offer
+  "Apply to dashboard →" (never auto-apply for anonymous users).
+  Per-IP limits + global daily LLM budget. Note: route into PublicPage
+  (PublicDashboardPage.tsx is NOT routed).
+- **Discover** (viewer+): Ask pill next to search on the tracker page;
+  9 intents over existing tracker endpoints (range-leaderboard/trending/
+  search/timeline); ranges clamped ≤92 days until a tracker day-stats
+  rollup exists (raw month scans are the cost risk); answers deep-link
+  into Channels/Trends tab URL state.
+
+**Build order (verifier):** Stage 0 (~½d) scaffold shared core + Console
+spend cap. Stage 1 **Explore** (~1wk) — trusted users, exercises the
+hardest shared problems (timezone, channel fuzzy-match, day refs) where a
+miss costs an eye-roll not public trust. Stage 2 **Public** (~1wk) —
+reuses core + hardened guardrails, adds templates/chips. Stage 3
+**Discover** (~1wk) — needs the tracker rollup decision first.
+
+**Prerequisites:** tier filter in ViewFilter (watch-party questions);
+SDK/model bump for the first tool-use call path; rate limiting on the ask
+routes; `ask_queries` audit table.
+
 ## Cost envelope
 
 BETA (editor-only, ~50 q/day): template hits $0; LLM path ≈ $0.01–0.05 per
