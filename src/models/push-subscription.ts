@@ -21,7 +21,8 @@ export type PushEventType =
   | 'broadcast_ending'
   | 'polling_stalled'
   | 'quota_exhausted'
-  | 'discovery_candidate';
+  | 'discovery_candidate'
+  | 'data_anomaly';
 
 export const ALL_EVENT_TYPES: PushEventType[] = [
   'broadcast_started',
@@ -29,6 +30,7 @@ export const ALL_EVENT_TYPES: PushEventType[] = [
   'polling_stalled',
   'quota_exhausted',
   'discovery_candidate',
+  'data_anomaly',
 ];
 
 export type PushPreferences = Record<PushEventType, boolean>;
@@ -39,6 +41,7 @@ export const DEFAULT_PREFERENCES: PushPreferences = {
   polling_stalled: true,
   quota_exhausted: true,
   discovery_candidate: true,
+  data_anomaly: true,
 };
 
 export interface PushSubscriptionRow {
@@ -109,10 +112,16 @@ export async function findSubscribersForEvent(
   eventType: PushEventType,
   options: { roles?: ('admin' | 'editor' | 'viewer')[] } = {},
 ): Promise<PushSubscriptionRow[]> {
-  // jsonb path operator (->>) returns text; cast to boolean by comparing to 'true'
+  // jsonb path operator (->>) returns text; cast to boolean by comparing to 'true'.
+  // A MISSING key counts as subscribed: event types added after a
+  // subscription was created default ON without requiring every user to
+  // re-save their preferences (explicit false still opts out).
   let q = db<PushSubscriptionRow>(TABLE)
     .select(`${TABLE}.*`)
-    .whereRaw(`${TABLE}.preferences->>? = 'true'`, [eventType]);
+    .whereRaw(
+      `(${TABLE}.preferences->>? = 'true' OR ${TABLE}.preferences->>? IS NULL)`,
+      [eventType, eventType],
+    );
 
   if (options.roles && options.roles.length > 0) {
     q = q

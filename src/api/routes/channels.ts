@@ -7,6 +7,7 @@ import * as TournamentSeriesModel from '../../models/tournament-series';
 import { SteamAdapter } from '../../adapters/steam';
 import db from '../../utils/db';
 import logger from '../../utils/logger';
+import { normalizeLanguageCode } from '../../utils/language';
 import { requireRole } from '../middleware/auth';
 
 const router = Router();
@@ -262,9 +263,9 @@ router.post('/:seriesId/channels', requireRole('admin', 'editor'), async (req: R
 
     // Strip broadcast_day_ids from body before inserting (it's not a column on channels)
     const { broadcast_day_ids: _dayIds, ...channelBody } = req.body;
-    // Normalize language to base code (e.g. en-US → en)
+    // Normalize language (base code + alias map, e.g. en-US → en, ua → uk)
     if (channelBody.language && typeof channelBody.language === 'string') {
-      channelBody.language = channelBody.language.split('-')[0].toLowerCase();
+      channelBody.language = normalizeLanguageCode(channelBody.language);
     }
     let channel;
     try {
@@ -340,9 +341,9 @@ router.post('/:seriesId/channels/bulk', requireRole('admin', 'editor'), async (r
         }
         // Strip broadcast_day_ids from individual channel objects (not a DB column)
         const { broadcast_day_ids: _bdi, ...chBody } = ch;
-        // Normalize language to base code (e.g. en-US → en)
+        // Normalize language (base code + alias map, e.g. en-US → en, ua → uk)
         if (chBody.language && typeof chBody.language === 'string') {
-          chBody.language = chBody.language.split('-')[0].toLowerCase();
+          chBody.language = normalizeLanguageCode(chBody.language);
         }
         const created = await ChannelModel.create({
           ...chBody,
@@ -377,9 +378,9 @@ router.put('/channels/:id', requireRole('admin', 'editor'), async (req: Request,
       res.status(404).json({ error: 'Channel not found' });
       return;
     }
-    // Normalize language to base code (e.g. en-US → en)
+    // Normalize language (base code + alias map, e.g. en-US → en, ua → uk)
     if (req.body.language && typeof req.body.language === 'string') {
-      req.body.language = req.body.language.split('-')[0].toLowerCase();
+      req.body.language = normalizeLanguageCode(req.body.language);
     }
     const updated = await ChannelModel.update(req.params.id as string, req.body);
 

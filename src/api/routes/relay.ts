@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import db from '../../utils/db';
 import logger from '../../utils/logger';
+import { getPushNotifier } from '../../services/push-notifier';
 
 const router = Router();
 
@@ -90,9 +91,17 @@ const COHOST_SUSPECT_TTL_MS = 30 * 60_000;
 const MAX_PLAUSIBLE_RELAY_CCV = 500_000;
 const cohostSuspects = new Map<string, number>(); // identifier(lower) -> expiry epoch ms
 
-function markCohostSuspect(identifier: string): void {
-  cohostSuspects.set(identifier.toLowerCase(), Date.now() + COHOST_SUSPECT_TTL_MS);
+/** Returns true when this is a NEW suspect (not already active). */
+function markCohostSuspect(identifier: string): boolean {
+  const key = identifier.toLowerCase();
+  const isNew = (cohostSuspects.get(key) ?? 0) <= Date.now();
+  cohostSuspects.set(key, Date.now() + COHOST_SUSPECT_TTL_MS);
+  return isNew;
 }
+
+// Tab-bleed detection: several channels reporting the IDENTICAL viewer
+// count in one push is the scraper's wrong-tab signature. Throttled push.
+let lastBleedPushAt = 0;
 
 function activeCohostSuspects(): string[] {
   const now = Date.now();
@@ -105,6 +114,55 @@ function activeCohostSuspects(): string[] {
 function looksLikeCombinedBadge(relayViewers: number, helixViewers: number): boolean {
   return relayViewers > Math.max(helixViewers * 2, helixViewers + 500);
 }
+
+// ── Relay health (observability) ─────────────────────────────────────────
+//
+// In-memory counters exposed via GET /api/relay-health (JWT-auth'd router
+// below, mounted separately in server.ts). "DB freshness ≠ relay healthy"
+// — this makes the relay's actual push activity visible in the dashboard
+// instead of requiring an SSH + log grep.
+interface RelayPlatformStats {
+  lastPushAt: string | null;
+  lastMatched: number;
+  lastWritten: number; // updated (twitch) / inserted+updated (tiktok)
+  lastSuspected: number;
+  totalPushes: number;
+}
+const relayStats: Record<'twitch' | 'tiktok', RelayPlatformStats> = {
+  twitch: { lastPushAt: null, lastMatched: 0, lastWritten: 0, lastSuspected: 0, totalPushes: 0 },
+  tiktok: { lastPushAt: null, lastMatched: 0, lastWritten: 0, lastSuspected: 0, totalPushes: 0 },
+};
+
+function recordRelayPush(
+  platform: 'twitch' | 'tiktok',
+  matched: number,
+  written: number,
+  suspected = 0,
+): void {
+  const s = relayStats[platform];
+  s.lastPushAt = new Date().toISOString();
+  s.lastMatched = matched;
+  s.lastWritten = written;
+  s.lastSuspected = suspected;
+  s.totalPushes++;
+}
+
+/** JWT-authenticated health router — mounted at /api/relay-health. */
+export const relayHealthRouter = Router();
+relayHealthRouter.get('/', (_req: Request, res: Response) => {
+  const now = Date.now();
+  const withAge = (s: RelayPlatformStats) => ({
+    ...s,
+    secondsSincePush: s.lastPushAt
+      ? Math.round((now - new Date(s.lastPushAt).getTime()) / 1000)
+      : null,
+  });
+  res.json({
+    twitch: withAge(relayStats.twitch),
+    tiktok: withAge(relayStats.tiktok),
+    cohostSuspects: activeCohostSuspects(),
+  });
+});
 
 /**
  * POST /api/relay/tiktok
@@ -238,6 +296,7 @@ router.post('/tiktok', requireRelayToken, async (req: Request, res: Response, ne
     }
 
     logger.info(`[Relay] TikTok: ${matched} matched, ${snapshotsInserted} inserted, ${snapshotsUpdated} updated (higher)`);
+    recordRelayPush('tiktok', matched, snapshotsInserted + snapshotsUpdated);
 
     // Trigger WebSocket broadcast so dashboard gets updated TikTok numbers
     if ((snapshotsInserted > 0 || snapshotsUpdated > 0) && relayBroadcast) {
@@ -296,6 +355,34 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
     let matched = 0;
     let updated = 0;
     let suspected = 0;
+    const newSuspects: string[] = [];
+
+    // Tab-bleed signature: ≥3 channels pushing the IDENTICAL value (>100)
+    // in one batch means the scraper read the same tab for all of them.
+    const valueGroups = new Map<number, string[]>();
+    for (const input of channels) {
+      const v = input.viewers ?? 0;
+      if (v > 100) {
+        const list = valueGroups.get(v) ?? [];
+        list.push((input.identifier || '').toLowerCase());
+        valueGroups.set(v, list);
+      }
+    }
+    const bleedGroups = [...valueGroups.entries()].filter(([, ids]) => ids.length >= 3);
+    if (bleedGroups.length > 0 && Date.now() - lastBleedPushAt > 10 * 60_000) {
+      lastBleedPushAt = Date.now();
+      const desc = bleedGroups
+        .map(([v, ids]) => `${ids.join(', ')} all @ ${v}`)
+        .join(' | ');
+      logger.warn(`[Relay] Twitch: tab-bleed signature — ${desc}`);
+      getPushNotifier()
+        .notify('data_anomaly', {
+          title: 'Browser scraper tab-bleed suspected',
+          body: `Identical viewer counts across channels: ${desc}`,
+          tag: 'anomaly-tab-bleed',
+        })
+        .catch(() => {});
+    }
 
     for (const input of channels) {
       const identifier = (input.identifier || '').toLowerCase();
@@ -327,7 +414,9 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
       for (const row of rows) {
         const helixViewers = Number(row.concurrent_viewers) || 0;
         if (looksLikeCombinedBadge(relayViewers, helixViewers)) {
-          markCohostSuspect(identifier);
+          if (markCohostSuspect(identifier)) {
+            newSuspects.push(`${identifier} (${relayViewers} vs helix ${helixViewers})`);
+          }
           suspected++;
           logger.warn(
             `[Relay] Twitch: ${identifier} relay=${relayViewers} vs helix=${helixViewers} — combined-badge suspect, keeping Helix value`,
@@ -347,6 +436,18 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
       `[Relay] Twitch: ${matched} matched, ${updated} replaced with browser data` +
         (suspected > 0 ? `, ${suspected} cohost-suspect (kept Helix)` : ''),
     );
+    if (newSuspects.length > 0) {
+      getPushNotifier()
+        .notify('data_anomaly', {
+          title: 'Stream Together detected — overlay suppressed',
+          body:
+            `${newSuspects.join('; ')}. Helix values kept; the scraper switches ` +
+            'these channels to the per-channel popover extractor automatically.',
+          tag: 'anomaly-cohost-suspect',
+        })
+        .catch(() => {});
+    }
+    recordRelayPush('twitch', matched, updated, suspected);
     res.json({ matched, updated, suspected });
   } catch (err) {
     next(err);

@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { PollingOrchestrator } from '../../services/polling-orchestrator';
 import { DiscoveryService } from '../../services/discovery-service';
 import { requireRole } from '../middleware/auth';
+import db from '../../utils/db';
 
 // The orchestrator and discovery instances are injected via factory functions
 let orchestrator: PollingOrchestrator | null = null;
@@ -247,6 +248,105 @@ router.post('/discovery/promote', requireRole('admin', 'editor'), async (req: Re
     }
     await svc.promoteChannel(channelId, tier);
     res.json({ promoted: true, channelId, tier });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/polling/roster-liveness
+ *
+ * Probe every day-pinned channel of the series' live broadcast day(s)
+ * directly against the platform adapters and report channels that are
+ * LIVE right now but NOT pinned to today ("extend-pin candidates"), plus
+ * pinned-today channels that are offline.
+ *
+ * Why: the orchestrator DROPS snapshots for a pinned channel on days it
+ * isn't pinned to, so cross-day liveness never reaches the DB — during
+ * PNC2026 six GeoGuessr casters silently lost a day of data this way.
+ * This is the API version of scripts/check-roster-liveness.ts --pinned.
+ *
+ * POST (not GET): it performs real platform polls (incl. YouTube quota).
+ * Body: { seriesId?: string } — defaults to all series with a live day.
+ */
+router.post('/roster-liveness', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const orch = ensureOrchestrator(res);
+    if (!orch) return;
+    const { seriesId } = (req.body ?? {}) as { seriesId?: string };
+
+    let dayQuery = db('broadcast_days').where('status', 'live').select('id', 'series_id', 'label');
+    if (seriesId) dayQuery = dayQuery.where('series_id', seriesId);
+    const liveDays = await dayQuery;
+    if (liveDays.length === 0) {
+      res.json({ liveDays: [], probed: 0, liveNotPinnedToday: [], pinnedTodayOffline: [] });
+      return;
+    }
+    const liveDayIds = new Set(liveDays.map((d) => d.id as string));
+    const seriesIds = [...new Set(liveDays.map((d) => d.series_id as string))];
+
+    // Only channels that HAVE day-pins — the set that can be "pinned to
+    // another day". Bounded (~200), safe to probe across all platforms.
+    const channels = await db('channels as c')
+      .whereIn('c.series_id', seriesIds)
+      .where('c.is_active', true)
+      .whereExists(db('channel_broadcast_days as cbd').whereRaw('cbd.channel_id = c.id'))
+      .select('c.id', 'c.series_id', 'c.platform', 'c.channel_identifier', 'c.display_name');
+    if (channels.length === 0) {
+      res.json({ liveDays, probed: 0, liveNotPinnedToday: [], pinnedTodayOffline: [] });
+      return;
+    }
+
+    const pins = await db('channel_broadcast_days')
+      .whereIn('channel_id', channels.map((c) => c.id as string))
+      .select('channel_id', 'broadcast_day_id');
+    const pinMap = new Map<string, string[]>();
+    for (const p of pins) {
+      const list = pinMap.get(p.channel_id) ?? [];
+      list.push(p.broadcast_day_id);
+      pinMap.set(p.channel_id, list);
+    }
+
+    const snaps = await orch.getRegistry().getViewerCountsMultiPlatform(
+      channels.map((c) => ({
+        platform: c.platform as import('../../adapters').PlatformName,
+        channelIdentifier: c.channel_identifier as string,
+      })),
+    );
+    const snapMap = new Map<string, { isLive: boolean; viewers: number; title: string }>();
+    for (const s of snaps) {
+      snapMap.set(`${s.platform}:${s.channelIdentifier.toLowerCase()}`, {
+        isLive: s.isLive,
+        viewers: s.concurrentViewers,
+        title: s.title ?? '',
+      });
+    }
+
+    const rows = channels.map((c) => {
+      const snap = snapMap.get(`${c.platform}:${(c.channel_identifier as string).toLowerCase()}`);
+      const pinnedDayIds = pinMap.get(c.id as string) ?? [];
+      return {
+        channelId: c.id as string,
+        seriesId: c.series_id as string,
+        platform: c.platform as string,
+        identifier: c.channel_identifier as string,
+        displayName: c.display_name as string,
+        live: snap?.isLive ?? false,
+        viewers: snap?.viewers ?? 0,
+        title: snap?.title ?? '',
+        pinnedDayIds,
+        pinnedToday: pinnedDayIds.some((d) => liveDayIds.has(d)),
+      };
+    });
+
+    res.json({
+      liveDays,
+      probed: rows.length,
+      liveNotPinnedToday: rows
+        .filter((r) => r.live && !r.pinnedToday)
+        .sort((a, b) => b.viewers - a.viewers),
+      pinnedTodayOffline: rows.filter((r) => r.pinnedToday && !r.live),
+    });
   } catch (err) {
     next(err);
   }

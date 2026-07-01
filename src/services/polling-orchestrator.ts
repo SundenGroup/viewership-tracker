@@ -73,9 +73,24 @@ export class PollingOrchestrator {
   private lastStallPushAt = 0;
   private endingNotifiedDayIds = new Set<string>();
 
+  // ── Anomaly sentry state ────────────────────────────────────────────
+  // Detects the two crash signatures that cost data during PNC2026:
+  // a sudden total-CCV collapse (tracking outage / broadcast crash) and
+  // an official channel flatlining to 0 mid-broadcast.
+  private prevTotalCCV: number | null = null;
+  private officialZeroStreak = new Map<string, number>();
+  private officialWasLive = new Set<string>();
+  private lastAnomalyPushAt = new Map<string, number>();
+
   constructor(registry: AdapterRegistry, db: Knex) {
     this.registry = registry;
     this.db = db;
+  }
+
+  /** Adapter registry accessor — for API routes that need to probe
+   *  platforms directly (e.g. the roster-liveness check). */
+  getRegistry(): AdapterRegistry {
+    return this.registry;
   }
 
   /**
@@ -902,7 +917,82 @@ export class PollingOrchestrator {
       }
     }
 
+    // Anomaly sentry — after the cycle is fully accounted for.
+    try {
+      this.checkDataAnomalies(channelList, insertRows, totalCCV);
+    } catch (err) {
+      logger.warn('[Poll] Anomaly check failed', { error: (err as Error).message });
+    }
+
     return result;
+  }
+
+  // ── Anomaly sentry ────────────────────────────────────────────────────
+
+  /** Throttled data_anomaly push (10 min per anomaly key). */
+  private pushAnomaly(key: string, title: string, body: string): void {
+    const THROTTLE_MS = 10 * 60_000;
+    const last = this.lastAnomalyPushAt.get(key) ?? 0;
+    if (Date.now() - last < THROTTLE_MS) return;
+    this.lastAnomalyPushAt.set(key, Date.now());
+    logger.warn(`[Anomaly] ${title}: ${body}`);
+    this.pushNotifier
+      ?.notify('data_anomaly', { title, body, tag: `anomaly-${key}` })
+      .catch((err) => logger.warn('[Anomaly] push failed', { error: (err as Error).message }));
+  }
+
+  private checkDataAnomalies(
+    channelList: Channel[],
+    insertRows: Array<{ channel_id: string; concurrent_viewers: number }>,
+    totalCCV: number,
+  ): void {
+    // A. Total-CCV collapse: >40% loss in one cycle from a meaningful base.
+    //    (The Jun 26 PNC crash looked exactly like this: 113k → 49k → 11k.)
+    if (
+      this.prevTotalCCV !== null &&
+      this.prevTotalCCV >= 5000 &&
+      totalCCV < this.prevTotalCCV * 0.6
+    ) {
+      this.pushAnomaly(
+        'total-drop',
+        'Total CCV dropped sharply',
+        `${this.prevTotalCCV.toLocaleString()} → ${totalCCV.toLocaleString()} in one poll cycle — possible tracking outage or broadcast crash.`,
+      );
+    }
+    this.prevTotalCCV = totalCCV;
+
+    // B. Official flatline: an official channel that WAS live (≥200 CCV)
+    //    reports 0 for 3 consecutive cycles while its day is still live.
+    const maxByChannel = new Map<string, number>();
+    for (const r of insertRows) {
+      maxByChannel.set(
+        r.channel_id,
+        Math.max(maxByChannel.get(r.channel_id) ?? 0, r.concurrent_viewers),
+      );
+    }
+    for (const ch of channelList) {
+      if (ch.tier !== 'official') continue;
+      const v = maxByChannel.get(ch.id) ?? 0;
+      if (v >= 200) {
+        this.officialWasLive.add(ch.id);
+        this.officialZeroStreak.delete(ch.id);
+        continue;
+      }
+      if (v === 0 && this.officialWasLive.has(ch.id)) {
+        const streak = (this.officialZeroStreak.get(ch.id) ?? 0) + 1;
+        this.officialZeroStreak.set(ch.id, streak);
+        if (streak === 3) {
+          this.pushAnomaly(
+            `flatline-${ch.id}`,
+            'Official channel flatlined',
+            `${ch.display_name} (${ch.platform}) has reported 0 viewers for 3 consecutive cycles while the broadcast day is live.`,
+          );
+          // Require it to come back live before it can alert again.
+          this.officialWasLive.delete(ch.id);
+          this.officialZeroStreak.delete(ch.id);
+        }
+      }
+    }
   }
 
   // ── Consecutive failure tracking ──────────────────────────────────────

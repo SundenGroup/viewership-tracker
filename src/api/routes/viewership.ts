@@ -572,4 +572,146 @@ router.get('/snapshot-at-timestamp', async (req: Request, res: Response, next: N
   }
 });
 
+/**
+ * GET /api/viewership/day-qa/:dayId
+ *
+ * Post-event data QA checklist for one broadcast day — the checks that
+ * were run by hand after every PNC2026 day:
+ *   - coverage gaps (minutes with zero data mid-broadcast → crash windows)
+ *   - pinned channels that produced no data (never went live / wrong id)
+ *   - data outside the scheduled window (post-stream tails to trim)
+ *   - suspected cohost leftovers (channel pairs sharing identical values)
+ *   - language hygiene (blank codes on channels with data)
+ */
+router.get('/day-qa/:dayId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const dayId = req.params.dayId as string;
+    const day = await db('broadcast_days')
+      .where('id', dayId)
+      .first('id', 'series_id', 'label', 'broadcast_start', 'broadcast_end', 'status');
+    if (!day) {
+      res.status(404).json({ error: 'Broadcast day not found' });
+      return;
+    }
+
+    // ── Basic stats + per-minute coverage ──
+    const minuteRows = await db('viewership_snapshots')
+      .where('broadcast_day_id', dayId)
+      .select(db.raw("date_trunc('minute', \"timestamp\") as m"))
+      .count('* as rows')
+      .groupByRaw('1')
+      .orderByRaw('1');
+    const totalRows = minuteRows.reduce((s, r) => s + parseInt(String(r.rows), 10), 0);
+
+    const gaps: Array<{ from: string; to: string; minutes: number }> = [];
+    if (minuteRows.length > 1) {
+      let prev = new Date(minuteRows[0].m as string).getTime();
+      for (let i = 1; i < minuteRows.length; i++) {
+        const cur = new Date(minuteRows[i].m as string).getTime();
+        const deltaMin = Math.round((cur - prev) / 60_000);
+        if (deltaMin > 2) {
+          gaps.push({
+            from: new Date(prev + 60_000).toISOString(),
+            to: new Date(cur).toISOString(),
+            minutes: deltaMin - 1,
+          });
+        }
+        prev = cur;
+      }
+    }
+
+    // ── Channels pinned to this day (or all-days) with zero data ──
+    const zeroData = await db('channels as c')
+      .where('c.series_id', day.series_id)
+      .where('c.is_active', true)
+      .where(function () {
+        this.whereExists(
+          db('channel_broadcast_days as cbd')
+            .whereRaw('cbd.channel_id = c.id')
+            .where('cbd.broadcast_day_id', dayId),
+        ).orWhereNotExists(
+          db('channel_broadcast_days as cbd2').whereRaw('cbd2.channel_id = c.id'),
+        );
+      })
+      .whereNotExists(
+        db('viewership_snapshots as v')
+          .whereRaw('v.channel_id = c.id')
+          .where('v.broadcast_day_id', dayId),
+      )
+      .select('c.id', 'c.platform', 'c.channel_identifier', 'c.display_name', 'c.tier');
+
+    // ── Data outside the scheduled window (±15 min slack) ──
+    const SLACK_MS = 15 * 60_000;
+    const outside = await db('viewership_snapshots')
+      .where('broadcast_day_id', dayId)
+      .where(function () {
+        this.where('timestamp', '<', new Date(new Date(day.broadcast_start).getTime() - SLACK_MS))
+          .orWhere('timestamp', '>', new Date(new Date(day.broadcast_end).getTime() + SLACK_MS));
+      })
+      .count<{ count: string }[]>('* as count');
+    const outsideRows = parseInt(outside[0]?.count ?? '0', 10);
+
+    // ── Cohost leftovers: twitch channel pairs sharing the same nonzero
+    //    value at the same minute ≥10 times (combined-badge signature) ──
+    const cohostPairs = await db.raw(
+      `
+      WITH per_min AS (
+        SELECT v.channel_id, date_trunc('minute', v."timestamp") AS m,
+               max(v.concurrent_viewers) AS val
+        FROM viewership_snapshots v
+        JOIN channels c ON c.id = v.channel_id
+        WHERE v.broadcast_day_id = ?
+          AND c.platform = 'twitch'
+          AND v.concurrent_viewers > 200
+        GROUP BY 1, 2
+      )
+      SELECT c1.channel_identifier AS a, c2.channel_identifier AS b, count(*) AS shared_minutes
+      FROM per_min p1
+      JOIN per_min p2 ON p2.m = p1.m AND p2.val = p1.val AND p2.channel_id > p1.channel_id
+      JOIN channels c1 ON c1.id = p1.channel_id
+      JOIN channels c2 ON c2.id = p2.channel_id
+      GROUP BY 1, 2
+      HAVING count(*) >= 10
+      ORDER BY shared_minutes DESC
+      LIMIT 20
+      `,
+      [dayId],
+    );
+
+    // ── Language hygiene: channels with data but blank language ──
+    const blankLanguage = await db('channels as c')
+      .whereNull('c.language')
+      .orWhere('c.language', '')
+      .whereExists(
+        db('viewership_snapshots as v')
+          .whereRaw('v.channel_id = c.id')
+          .where('v.broadcast_day_id', dayId),
+      )
+      .select('c.id', 'c.platform', 'c.channel_identifier', 'c.display_name');
+
+    res.json({
+      day: {
+        id: day.id,
+        label: day.label,
+        status: day.status,
+        broadcastStart: day.broadcast_start,
+        broadcastEnd: day.broadcast_end,
+      },
+      totalRows,
+      minutesWithData: minuteRows.length,
+      gaps,
+      zeroDataChannels: zeroData,
+      outsideScheduleRows: outsideRows,
+      cohostSuspectPairs: (cohostPairs.rows ?? []) as Array<{
+        a: string;
+        b: string;
+        shared_minutes: string;
+      }>,
+      blankLanguageChannels: blankLanguage,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

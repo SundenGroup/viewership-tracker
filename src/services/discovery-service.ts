@@ -1,6 +1,7 @@
 import type { Knex } from 'knex';
 import logger from '../utils/logger';
 import { config } from '../utils/config';
+import { normalizeLanguageCode } from '../utils/language';
 import type { AdapterRegistry, PlatformName } from '../adapters';
 import type { DiscoveredStream } from '../adapters/types';
 import type { TournamentSeries } from '../models/tournament-series';
@@ -455,7 +456,7 @@ export class DiscoveryService {
             platform,
             channel_identifier: stream.channelIdentifier,
             display_name: stream.displayName,
-            language: stream.language ? stream.language.split('-')[0].toLowerCase() : null,
+            language: normalizeLanguageCode(stream.language),
             tier: 'community',
             source: 'auto_discovered',
             is_active: false,
