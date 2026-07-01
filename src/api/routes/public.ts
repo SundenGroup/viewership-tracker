@@ -297,12 +297,78 @@ router.get('/:shortName/metrics', metricsCache, async (req: Request, res: Respon
         peakCCV: parseInt(e.peak_ccv, 10),
         avgCCV: parseFloat(e.avg_ccv),
         totalViewedMinutes: parseInt(e.total_viewed_minutes, 10),
+        peakAt: e.peak_at ?? null,
       })),
     });
   } catch (err) {
     next(err);
   }
 });
+
+// ── GET /api/public/:shortName/language-peaks ───────────────────────────
+//
+// "Peak by language" — for each language in the scope: the highest
+// single-minute total (per-channel-deduped, same semantics as the other
+// aggregations), WHEN it happened, and per-broadcast-day peaks so the
+// client can render growth across days. The post-event table partners
+// ask for after every tournament.
+
+const languagePeaksCache = publicCacheMiddleware({ ttlMs: 60_000, label: 'language-peaks' });
+
+router.get(
+  '/:shortName/language-peaks',
+  languagePeaksCache,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const series = getPublicSeries(req);
+      const scopeObj = parseScope(req.query as Record<string, unknown>, series.id) ?? {
+        level: 'series' as const,
+        id: series.id,
+      };
+      const filter = parseViewFilter(req.query as Record<string, unknown>);
+
+      const [{ overall, perDay }, days] = await Promise.all([
+        ViewershipSnapshotModel.getLanguagePeaks(scopeObj, filter),
+        db('broadcast_days')
+          .where('series_id', series.id)
+          .orderBy('date', 'asc')
+          .select('id', 'label', 'date'),
+      ]);
+
+      const dayMeta = new Map(days.map((d) => [d.id as string, d]));
+      const perDayByLang = new Map<string, Array<{ dayId: string; label: string; date: string; peakCCV: number }>>();
+      for (const row of perDay) {
+        const key = row.language ?? '';
+        const meta = dayMeta.get(row.broadcast_day_id);
+        if (!meta) continue;
+        const list = perDayByLang.get(key) ?? [];
+        list.push({
+          dayId: row.broadcast_day_id,
+          label: meta.label as string,
+          date: String(meta.date).slice(0, 10),
+          peakCCV: parseInt(row.peak_ccv, 10),
+        });
+        perDayByLang.set(key, list);
+      }
+
+      res.json({
+        scope: scopeObj,
+        languages: overall
+          .map((o) => ({
+            language: o.language,
+            peakCCV: parseInt(o.peak_ccv, 10),
+            peakAt: o.peak_at,
+            days: (perDayByLang.get(o.language ?? '') ?? []).sort((a, b) =>
+              a.date.localeCompare(b.date),
+            ),
+          }))
+          .sort((a, b) => b.peakCCV - a.peakCCV),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // ── GET /api/public/:shortName/timeseries ───────────────────────────────
 
