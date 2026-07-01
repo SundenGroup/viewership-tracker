@@ -60,6 +60,14 @@ let CHANNELS: string[] = [];
 const CHANNEL_REFRESH_MS = 5 * 60_000;
 let lastChannelFetch = 0;
 
+// Channels the SERVER wants treated as cohost (Stream Together). Union of:
+// manual metadata flags + channels the relay endpoint auto-flagged after a
+// relay push diverged from the Helix slice (combined-badge signature).
+// Merged with the local COHOST_CHANNELS env override at read time, so a
+// channel that starts co-streaming mid-broadcast switches to the popover
+// extractor within one channel-list refresh — no PC .env edit needed.
+let SERVER_COHOST = new Set<string>();
+
 async function refreshChannelList(): Promise<void> {
   if (Date.now() - lastChannelFetch < CHANNEL_REFRESH_MS && CHANNELS.length > 0) return;
 
@@ -68,7 +76,15 @@ async function refreshChannelList(): Promise<void> {
       headers: { Authorization: `Bearer ${RELAY_SECRET}` },
     });
     if (!res.ok) throw new Error(`${res.status}`);
-    const data = (await res.json()) as { channels: string[] };
+    const data = (await res.json()) as { channels: string[]; cohost?: string[] };
+    const serverCohost = new Set((data.cohost ?? []).map((s) => s.toLowerCase()));
+    if (
+      serverCohost.size !== SERVER_COHOST.size ||
+      [...serverCohost].some((s) => !SERVER_COHOST.has(s))
+    ) {
+      log(`Server cohost list: ${[...serverCohost].join(', ') || '(empty)'}`);
+    }
+    SERVER_COHOST = serverCohost;
     // pubg_battlegrounds is excluded from browser scraping BY DEFAULT
     // because of Twitch's cohost feature ("Stream Together"): during
     // PAS / PEC / PNC broadcasts its page badge shows the COMBINED total
@@ -244,6 +260,20 @@ interface ManagedTab {
 const managedTabs = new Map<string, ManagedTab>();
 const tabLastReload = new Map<string, number>();
 
+// Exact channel-path match for a Twitch tab URL. A substring check like
+// url.includes(`twitch.tv/${channel}`) makes channel "axt" match a tab on
+// "twitch.tv/axtlol" — two channels then read the SAME tab and report the
+// same viewer count (the "tab bleed" bug). Compare the full path segment.
+function urlIsChannelPage(url: string, channel: string): boolean {
+  try {
+    const p = new URL(url);
+    if (!/(^|\.)twitch\.tv$/i.test(p.hostname)) return false;
+    return p.pathname.toLowerCase().replace(/\/+$/, '') === `/${channel.toLowerCase()}`;
+  } catch {
+    return false;
+  }
+}
+
 async function ensureTabsOpen(channels: string[]): Promise<void> {
   const targets = await getTargets();
   const existingUrls = new Map<string, CDPTarget>();
@@ -251,6 +281,13 @@ async function ensureTabsOpen(channels: string[]): Promise<void> {
     if (t.type === 'page' && t.url.includes('twitch.tv/')) {
       existingUrls.set(t.url, t);
     }
+  }
+
+  // Target ids already owned by a channel this cycle — a tab must never be
+  // shared between two channels (tab bleed).
+  const claimedTargets = new Set<string>();
+  for (const tab of managedTabs.values()) {
+    if (targets.some((t) => t.id === tab.targetId)) claimedTargets.add(tab.targetId);
   }
 
   for (const channel of channels) {
@@ -264,12 +301,14 @@ async function ensureTabsOpen(channels: string[]): Promise<void> {
       managedTabs.delete(channel); // Tab died, recreate
     }
 
-    // Check if there's already a tab with this URL
-    const found = [...existingUrls.entries()].find(([u]) =>
-      u.toLowerCase().includes(`twitch.tv/${channel.toLowerCase()}`),
+    // Check if there's already a tab on this channel's page (exact path
+    // match, and not already claimed by another channel).
+    const found = [...existingUrls.entries()].find(
+      ([u, t]) => urlIsChannelPage(u, channel) && !claimedTargets.has(t.id),
     );
     if (found) {
       managedTabs.set(channel, { channel, targetId: found[1].id, wsUrl: found[1].webSocketDebuggerUrl });
+      claimedTargets.add(found[1].id);
       log(`  Reusing existing tab for ${channel}`);
       continue;
     }
@@ -315,9 +354,11 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
     // Remove webdriver flag on each read (in case page navigated)
     await session.evaluate(`Object.defineProperty(navigator, 'webdriver', { get: () => false })`);
 
-    // Check if the tab is still on the correct channel page (Twitch SPA can redirect to homepage)
+    // Check if the tab is still on the correct channel page (Twitch SPA can
+    // redirect to homepage). Exact path match — a substring check would let
+    // channel "axt" pass on "twitch.tv/axtlol" and read the wrong stream.
     const currentUrl = await session.evaluate(`location.href`) as string;
-    if (!currentUrl?.toLowerCase().includes(tab.channel.toLowerCase())) {
+    if (!urlIsChannelPage(currentUrl ?? '', tab.channel)) {
       log(`  ${tab.channel}: tab navigated away (${currentUrl?.slice(0, 50)}), reloading...`);
       await session.send('Page.navigate', { url: `https://www.twitch.tv/${tab.channel}` });
       session.close();
@@ -385,7 +426,12 @@ async function readViewerCount(tab: ManagedTab): Promise<{ channel: string; view
       .split(',')
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
-    const cohostEnabled = cohostAllowList.includes(tab.channel.toLowerCase());
+    // Cohost mode = local env override ∪ server-driven list (manual metadata
+    // flag or relay auto-detection). The env var remains as a manual escape
+    // hatch, but the server list means nobody has to predict co-streamers.
+    const cohostEnabled =
+      cohostAllowList.includes(tab.channel.toLowerCase()) ||
+      SERVER_COHOST.has(tab.channel.toLowerCase());
     const slug = tab.channel.toLowerCase();
 
     // ── Cohost-aware extractor (v7) ───────────────────────────────────
@@ -766,8 +812,11 @@ async function pushToServer(results: ChannelResult[]): Promise<void> {
     throw new Error(`Server returned ${response.status}: ${body}`);
   }
 
-  const result = (await response.json()) as { matched: number; updated: number };
-  log(`  Pushed: ${result.matched} matched, ${result.updated} updated (higher)`);
+  const result = (await response.json()) as { matched: number; updated: number; suspected?: number };
+  log(
+    `  Pushed: ${result.matched} matched, ${result.updated} replaced` +
+      (result.suspected ? `, ${result.suspected} cohost-suspect (server kept Helix)` : ''),
+  );
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────

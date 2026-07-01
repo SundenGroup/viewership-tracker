@@ -10,6 +10,7 @@ import stagesRouter from './routes/stages';
 import broadcastDaysRouter from './routes/broadcast-days';
 import channelsRouter from './routes/channels';
 import viewershipRouter from './routes/viewership';
+import viewershipImportRouter from './routes/viewership-import';
 import exportRouter from './routes/export';
 import reportPayloadRouter from './routes/report-payload';
 import pollingRouter from './routes/polling';
@@ -51,7 +52,10 @@ export function createApp() {
 
   // ── Middleware ─────────────────────────────────────────────────────────
 
-  app.use(express.json({ limit: '1mb' }));
+  // 5mb: the admin CSV import (/api/import/csv) ships a full day's official
+  // platform export inline as JSON; a per-minute day file is ~50-100KB but
+  // multi-hour YouTube exports can run larger.
+  app.use(express.json({ limit: '5mb' }));
   app.use(cookieParser());
 
   // Rate limit login attempts
@@ -104,6 +108,7 @@ export function createApp() {
 
   // Editor+ routes
   app.use('/api/export', requireRole('admin', 'editor'), exportRouter);
+  app.use('/api/import', requireRole('admin', 'editor'), viewershipImportRouter);
   app.use('/api/reports', requireRole('admin', 'editor'), reportsRouter);
   app.use('/api/push', requireRole('admin', 'editor'), pushRouter);
 

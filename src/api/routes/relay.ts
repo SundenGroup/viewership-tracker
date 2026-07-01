@@ -63,6 +63,49 @@ export function setRelayBroadcast(fn: RelayBroadcastFn): void {
   relayBroadcast = fn;
 }
 
+// ── Cohost (Stream Together) auto-detection ─────────────────────────────
+//
+// When a channel co-streams, the browser scraper's page badge shows the
+// COMBINED total across all participants, while the orchestrator's Helix
+// value (the row the relay is about to overwrite) is the channel's own,
+// correct slice. Historically this had to be prevented by hand-listing
+// channels in COHOST_CHANNELS on the scraper PC — every miss wrote days
+// of inflated data (qqdoya/ko0416, assentw, krapycoco, the GeoGuessr
+// watch parties...).
+//
+// The guard below makes detection automatic: a relay value wildly above
+// the Helix slice it would replace is refused (Helix stands) and the
+// channel is flagged as a cohost suspect for a TTL. The browser-channels
+// endpoint returns the suspect list, and the scraper switches those
+// channels to its Shared-Viewership popover extractor (exact per-channel
+// slice) on its next channel-list refresh. Manual override remains via
+// channels.metadata.is_cohosted or the scraper's COHOST_CHANNELS env.
+//
+// Threshold note: 2x + absolute slack. A real raid can spike a channel
+// fast, but Helix catches up within its 3–5 min step — worst case we
+// suppress the browser overlay for a couple of minutes on a legit spike,
+// vs. writing hours of combined-badge inflation. Every inflation case
+// we've repaired was 2–10x the slice.
+const COHOST_SUSPECT_TTL_MS = 30 * 60_000;
+const MAX_PLAUSIBLE_RELAY_CCV = 500_000;
+const cohostSuspects = new Map<string, number>(); // identifier(lower) -> expiry epoch ms
+
+function markCohostSuspect(identifier: string): void {
+  cohostSuspects.set(identifier.toLowerCase(), Date.now() + COHOST_SUSPECT_TTL_MS);
+}
+
+function activeCohostSuspects(): string[] {
+  const now = Date.now();
+  for (const [k, exp] of cohostSuspects) {
+    if (exp <= now) cohostSuspects.delete(k);
+  }
+  return [...cohostSuspects.keys()];
+}
+
+function looksLikeCombinedBadge(relayViewers: number, helixViewers: number): boolean {
+  return relayViewers > Math.max(helixViewers * 2, helixViewers + 500);
+}
+
 /**
  * POST /api/relay/tiktok
  *
@@ -252,11 +295,18 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
     const pollTimestamp = new Date(recentBulk.timestamp);
     let matched = 0;
     let updated = 0;
+    let suspected = 0;
 
     for (const input of channels) {
       const identifier = (input.identifier || '').toLowerCase();
       const relayViewers = input.viewers ?? 0;
       if (relayViewers <= 0) continue;
+      if (relayViewers > MAX_PLAUSIBLE_RELAY_CCV) {
+        logger.warn(
+          `[Relay] Twitch: ignoring implausible value for ${identifier}: ${relayViewers}`,
+        );
+        continue;
+      }
 
       // Find all snapshots for this channel at the most recent poll timestamp
       const rows = await db('viewership_snapshots as vs')
@@ -270,9 +320,20 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
       matched++;
 
       // Browser scraper data is real per-minute — more accurate than the API's
-      // 3-5 minute stepped cache. Always use the scraper value (replace, not max).
-      // The API data is only kept as fallback when the scraper has no data.
+      // 3-5 minute stepped cache. Always use the scraper value (replace, not max)
+      // — UNLESS it looks like a Stream Together combined badge (far above the
+      // Helix slice it would replace). Then keep Helix and flag the channel so
+      // the scraper switches it to the per-channel popover extractor.
       for (const row of rows) {
+        const helixViewers = Number(row.concurrent_viewers) || 0;
+        if (looksLikeCombinedBadge(relayViewers, helixViewers)) {
+          markCohostSuspect(identifier);
+          suspected++;
+          logger.warn(
+            `[Relay] Twitch: ${identifier} relay=${relayViewers} vs helix=${helixViewers} — combined-badge suspect, keeping Helix value`,
+          );
+          continue;
+        }
         if (relayViewers !== row.concurrent_viewers) {
           await db('viewership_snapshots')
             .where('id', row.id)
@@ -282,8 +343,11 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
       }
     }
 
-    logger.info(`[Relay] Twitch: ${matched} matched, ${updated} replaced with browser data`);
-    res.json({ matched, updated });
+    logger.info(
+      `[Relay] Twitch: ${matched} matched, ${updated} replaced with browser data` +
+        (suspected > 0 ? `, ${suspected} cohost-suspect (kept Helix)` : ''),
+    );
+    res.json({ matched, updated, suspected });
   } catch (err) {
     next(err);
   }
@@ -405,7 +469,28 @@ router.get('/twitch/browser-channels', requireRelayToken, async (_req: Request, 
       ...ranked.map((c) => c.channel_identifier),
     ].slice(0, limit);
 
-    res.json({ channels: result });
+    // Channels the scraper must treat as cohost (Stream Together): manual
+    // flags on the channel row (metadata.is_cohosted) + relay auto-detected
+    // suspects. For these the scraper reads the per-channel slice from the
+    // Shared Viewership popover (or abstains to Helix) — never the combined
+    // page badge.
+    const flagged = await db('channels as c')
+      .join('broadcast_days as bd', function () {
+        this.on('bd.series_id', 'c.series_id').andOn('bd.status', db.raw("'live'"));
+      })
+      .where('c.platform', 'twitch')
+      .where('c.is_active', true)
+      .whereRaw("(c.metadata->>'is_cohosted')::boolean IS TRUE")
+      .distinct('c.channel_identifier')
+      .pluck('c.channel_identifier');
+    const cohost = [
+      ...new Set([
+        ...flagged.map((s: string) => s.toLowerCase()),
+        ...activeCohostSuspects(),
+      ]),
+    ];
+
+    res.json({ channels: result, cohost });
   } catch (err) {
     next(err);
   }
