@@ -33,6 +33,8 @@ export interface ChannelRow {
   avg: number;
   /** Viewed hours — in whole hours. */
   hours: number;
+  /** ISO timestamp of the channel's peak minute (null when unknown). */
+  peakAt: string | null;
   title: string;
   status: 'live' | 'offline';
 }
@@ -134,6 +136,7 @@ export function useDashboardModel({
         peak,
         avg: avg || 0,
         hours: Math.round((mins || 0) / 60),
+        peakAt: meta?.peakAt ?? null,
         title: c.streamTitle ?? '',
         status: live > 0 ? 'live' : 'offline',
       };
@@ -155,6 +158,7 @@ export function useDashboardModel({
         peak: peak || 0,
         avg: avg || 0,
         hours: Math.round((mins || 0) / 60),
+        peakAt: row.peakAt ?? null,
         title: '',
         status: 'offline',
       };

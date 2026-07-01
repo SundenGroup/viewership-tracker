@@ -297,6 +297,35 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     { intervalMs: 60_000, enabled: needsScopedFetch && !!shortName },
   );
 
+  // Per-language peak moments (detailed report's "Peak by language" table).
+  const { data: languagePeaksData } = usePollingApi<{ languages: api.PublicLanguagePeak[] }>(
+    () => {
+      if (!shortName) {
+        return Promise.resolve(null as unknown as { languages: api.PublicLanguagePeak[] });
+      }
+      if (resolvedScope && resolvedScope.level === 'multi_stage') {
+        return api.getPublicLanguagePeaks(
+          shortName,
+          'multi_stage',
+          resolvedScope.ids,
+          viewFilter.languages,
+          viewFilter.platforms,
+          excludeChannelIds,
+        );
+      }
+      return api.getPublicLanguagePeaks(
+        shortName,
+        resolvedScope?.level,
+        resolvedScope?.id,
+        viewFilter.languages,
+        viewFilter.platforms,
+        excludeChannelIds,
+      );
+    },
+    [shortName, scopeCacheKey, filterKey],
+    { intervalMs: 300_000, enabled: !!shortName },
+  );
+
   const { data: scopedLiveCCV } = usePollingApi<LiveCCVResponse>(
     () => {
       if (!needsScopedFetch || !shortName || !resolvedScope) {
@@ -599,6 +628,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       trend={trend}
       dayBoundaries={dayBoundaries}
       viewLabel={viewLabel}
+      languagePeaks={languagePeaksData?.languages ?? null}
     />
   );
 }
@@ -853,6 +883,7 @@ function DetailedReport({
   trend,
   dayBoundaries,
   viewLabel,
+  languagePeaks,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
@@ -865,6 +896,7 @@ function DetailedReport({
   trend: TrendDeltas | null;
   dayBoundaries: Array<{ index: number; label: string }>;
   viewLabel: string | null;
+  languagePeaks: api.PublicLanguagePeak[] | null;
 }) {
   const totalDayCount = useMemo(() => {
     if (scopeLevel === 'day') return 1;
@@ -1441,6 +1473,102 @@ function DetailedReport({
 
       <div style={{ height: 24 }} />
 
+      {/* Section 04b — peak by language (the post-event table partners ask
+          for: each language's single best minute, when it happened, and how
+          it grew across broadcast days) */}
+      {languagePeaks && languagePeaks.filter((l) => l.peakCCV > 0).length > 1 && (
+        <>
+          <Section
+            eyebrow="04b · Language peaks"
+            title="Peak viewership per language"
+            right={<Pill>{languagePeaks.filter((l) => l.peakCCV > 0).length} languages</Pill>}
+          >
+            <div>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(120px, 1.2fr) 110px 90px 1fr',
+                  padding: '0 4px 6px',
+                  fontSize: 10,
+                  fontFamily: 'var(--font-mono)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  color: 'var(--fg-dim)',
+                  borderBottom: '1px solid var(--border)',
+                }}
+              >
+                <div>Language</div>
+                <div style={{ textAlign: 'right' }}>Peak</div>
+                <div style={{ textAlign: 'right' }}>At</div>
+                <div style={{ textAlign: 'right' }}>Across days</div>
+              </div>
+              {languagePeaks
+                .filter((l) => l.peakCCV > 0)
+                .slice(0, 14)
+                .map((l) => {
+                  const daysWithData = l.days.filter((d) => d.peakCCV > 0);
+                  const first = daysWithData[0];
+                  const last = daysWithData[daysWithData.length - 1];
+                  const growth =
+                    daysWithData.length >= 2 && first && last && first.peakCCV > 0
+                      ? ((last.peakCCV - first.peakCCV) / first.peakCCV) * 100
+                      : null;
+                  const peakTime = new Intl.DateTimeFormat('sv-SE', {
+                    timeZone: seriesInfo.timezone,
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  }).format(new Date(l.peakAt));
+                  return (
+                    <div
+                      key={l.language ?? '—'}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(120px, 1.2fr) 110px 90px 1fr',
+                        padding: '7px 4px',
+                        borderBottom: '1px solid var(--border-faint)',
+                        fontSize: 12.5,
+                        alignItems: 'center',
+                      }}
+                    >
+                      <div>{languageFullName(l.language)}</div>
+                      <div className="tabular" style={{ textAlign: 'right', fontWeight: 600 }}>
+                        {fmtN(l.peakCCV)}
+                      </div>
+                      <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+                        {peakTime}
+                      </div>
+                      <div
+                        className="tabular"
+                        style={{ textAlign: 'right', fontSize: 11, color: 'var(--fg-muted)' }}
+                      >
+                        {daysWithData.length >= 2 ? (
+                          <>
+                            {fmtCompact(first!.peakCCV)} → {fmtCompact(last!.peakCCV)}{' '}
+                            <span
+                              style={{
+                                fontWeight: 600,
+                                color:
+                                  (growth ?? 0) >= 0 ? 'var(--live)' : 'var(--danger)',
+                              }}
+                            >
+                              {growth !== null
+                                ? `${growth >= 0 ? '+' : ''}${growth.toFixed(0)}%`
+                                : ''}
+                            </span>
+                          </>
+                        ) : (
+                          <span style={{ color: 'var(--fg-dim)' }}>single day</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </Section>
+          <div style={{ height: 24 }} />
+        </>
+      )}
+
       {/* Section 05 — operational breakdown */}
       {(() => {
         // For post-event scopes there are no live channels, so "Live coverage"
@@ -1505,7 +1633,7 @@ function DetailedReport({
         eyebrow="06 · Leaderboard"
         title={`All ${model.leaderboard.length} tracked channels — sort any column`}
       >
-        <Leaderboard channels={model.leaderboard} />
+        <Leaderboard channels={model.leaderboard} timezone={seriesInfo.timezone} />
       </Section>
 
       <div
@@ -1545,9 +1673,27 @@ function useIsNarrow(maxWidth = 640): boolean {
   return narrow;
 }
 
-function Leaderboard({ channels }: { channels: ChannelRow[] }) {
+function Leaderboard({
+  channels,
+  timezone,
+}: {
+  channels: ChannelRow[];
+  timezone?: string;
+}) {
   const [sort, setSort] = useState<keyof ChannelRow>('peak');
   const [dir, setDir] = useState<'asc' | 'desc'>('desc');
+  const fmtPeakAt = (iso: string | null) => {
+    if (!iso || !timezone) return null;
+    try {
+      return new Intl.DateTimeFormat('sv-SE', {
+        timeZone: timezone,
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(new Date(iso));
+    } catch {
+      return null;
+    }
+  };
   // On phones the full 8-column grid needs ~700px — collapse to the four
   // essential columns (rank, channel, peak, viewed hours) instead.
   const narrow = useIsNarrow(640);
@@ -1675,6 +1821,11 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
             )}
             <div className="tabular" style={{ textAlign: 'right' }}>
               {fmtN(c.peak)}
+              {!narrow && fmtPeakAt(c.peakAt) && (
+                <div style={{ fontSize: 9.5, color: 'var(--fg-dim)' }}>
+                  @ {fmtPeakAt(c.peakAt)}
+                </div>
+              )}
             </div>
             {!narrow && (
               <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>

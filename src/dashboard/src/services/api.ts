@@ -883,6 +883,31 @@ export function getPublicMetrics(
   return publicRequest<MetricsResponse>(`/api/public/${shortName}/metrics${qs}`);
 }
 
+export interface PublicLanguagePeak {
+  language: string | null;
+  peakCCV: number;
+  peakAt: string;
+  days: Array<{ dayId: string; label: string; date: string; peakCCV: number }>;
+}
+
+/** Per-language peak moments (+ per-day peaks for growth) for a scope. */
+export function getPublicLanguagePeaks(
+  shortName: string,
+  scope?: ScopeLevel | 'multi_stage',
+  id?: string | string[],
+  languages?: string[],
+  platforms?: string[],
+  excludeChannelIds?: string[],
+) {
+  const params = new URLSearchParams();
+  appendScopeParams(params, scope, id);
+  appendFilterParams(params, languages, platforms, excludeChannelIds);
+  const qs = params.toString() ? `?${params}` : '';
+  return publicRequest<{ languages: PublicLanguagePeak[] }>(
+    `/api/public/${shortName}/language-peaks${qs}`,
+  );
+}
+
 export function getPublicTimeSeries(
   shortName: string,
   query: Omit<TimeSeriesQuery, 'scope' | 'id'> & {

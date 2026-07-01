@@ -243,6 +243,8 @@ export interface LeaderboardEntry {
   peakCCV: number;
   avgCCV: number;
   totalViewedMinutes: number;
+  /** ISO timestamp of the channel's peak minute (null when no data). */
+  peakAt?: string | null;
   /** Snake_case aliases for backward compatibility. */
   channel_id?: string;
   channel_identifier?: string;
