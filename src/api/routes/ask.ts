@@ -5,15 +5,19 @@
  *   body: { question: string, viewState?: { stage?, day?, channels?,
  *           languages?, platforms?, tiers?, regions? } }
  *
- * The model only picks one intent from a closed catalog; the server
- * validates, resolves ids against this series, and either runs the query
- * (numbers always from Postgres) or returns a URL-state patch. See
- * src/agent/ask/ for the compiler + Explore surface.
+ * Simple questions are answered by a deterministic matcher first — no model
+ * call, works with no API key. Otherwise the model picks one intent from a
+ * closed catalog; the server validates, resolves ids against this series,
+ * and either runs the query (numbers always from Postgres) or returns a
+ * URL-state patch. See src/agent/ask/ for the matcher, compiler + Explore
+ * surface.
  */
 
+import Anthropic from '@anthropic-ai/sdk';
 import { Router, Request, Response, NextFunction } from 'express';
 import * as TournamentSeriesModel from '../../models/tournament-series';
-import { compileIntent, isAskConfigured } from '../../agent/ask/compiler';
+import { compileIntent, isAskConfigured, CompiledIntent } from '../../agent/ask/compiler';
+import { matchExploreQuestion } from '../../agent/ask/matcher';
 import {
   buildExploreTools,
   buildExploreVocabulary,
@@ -89,10 +93,6 @@ router.post('/explore/:seriesId', async (req: Request, res: Response, next: Next
   try {
     const started = Date.now();
 
-    if (!isAskConfigured()) {
-      res.status(501).json({ error: 'Ask is not configured' });
-      return;
-    }
     if (!isValidUUID(req.params.seriesId)) {
       res.status(400).json({ error: 'Invalid seriesId format' });
       return;
@@ -113,6 +113,43 @@ router.post('/explore/:seriesId', async (req: Request, res: Response, next: Next
       res.status(401).json({ error: 'Authentication required' });
       return;
     }
+    const series = await TournamentSeriesModel.findById(req.params.seriesId as string);
+    if (!series) {
+      res.status(404).json({ error: 'Series not found' });
+      return;
+    }
+
+    const viewState = sanitizeViewState(req.body?.viewState);
+    const vocab = await buildExploreVocabulary(series);
+
+    // Deterministic fast path — simple questions never touch the model (or
+    // the rate limits guarding its token budget), so they keep working even
+    // with no API key. The matcher only fires when it fully understands the
+    // question; anything ambiguous falls through to the compiler.
+    const matched = matchExploreQuestion(question, vocab, viewState);
+    if (matched) {
+      const envelope = await executeExploreIntent(matched.name, matched.input, {
+        series,
+        vocab,
+        viewState,
+      });
+      logger.info('[Ask] explore question', {
+        user: req.user?.email,
+        seriesId: series.id,
+        question,
+        intent: matched.name,
+        kind: envelope.kind,
+        source: 'matcher',
+        ms: Date.now() - started,
+      });
+      res.json(envelope);
+      return;
+    }
+
+    if (!isAskConfigured()) {
+      res.status(501).json({ error: 'Ask is not configured' });
+      return;
+    }
     if (!checkUserLimit(userId)) {
       res.status(429).json({ error: 'Ask limit reached — try again in a bit (30 questions per hour)' });
       return;
@@ -123,18 +160,24 @@ router.post('/explore/:seriesId', async (req: Request, res: Response, next: Next
       return;
     }
 
-    const series = await TournamentSeriesModel.findById(req.params.seriesId as string);
-    if (!series) {
-      res.status(404).json({ error: 'Series not found' });
-      return;
-    }
-
-    const viewState = sanitizeViewState(req.body?.viewState);
-    const vocab = await buildExploreVocabulary(series);
     const tools = buildExploreTools(vocab);
     const context = renderAskContext(series, vocab, viewState);
 
-    const compiled = await compileIntent({ tools, context, question });
+    let compiled: CompiledIntent;
+    try {
+      compiled = await compileIntent({ tools, context, question });
+    } catch (err) {
+      // Honest failure — credits exhausted / auth / network to Anthropic.
+      if (err instanceof Anthropic.APIError) {
+        logger.error('[Ask] Anthropic API error', { status: err.status, message: err.message });
+        res.status(502).json({
+          error: 'llm_unavailable',
+          message: 'The AI backend is unavailable (likely out of API credits). Simple filter questions still work.',
+        });
+        return;
+      }
+      throw err;
+    }
     const envelope = await executeExploreIntent(compiled.name, compiled.input, {
       series,
       vocab,
@@ -148,6 +191,7 @@ router.post('/explore/:seriesId', async (req: Request, res: Response, next: Next
       question,
       intent: compiled.name,
       kind: envelope.kind,
+      source: 'llm',
       ms: Date.now() - started,
     });
 
