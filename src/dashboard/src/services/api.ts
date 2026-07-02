@@ -395,7 +395,10 @@ export type AskEnvelope =
       headline: string;
       blocks: AskBlock[];
       resolvedIntent: string[];
-      patchSuggestion?: AskPatch;
+      /** Opt-in follow-up actions the answer card offers ("Filter to RU"). */
+      suggestions?: Array<{ label: string; patch: AskPatch }>;
+      /** Patch the client auto-applies so the answer is visible on the chart. */
+      chartPatch?: AskPatch;
     }
   | { kind: 'refusal'; message: string; suggestions: string[]; resolvedIntent: string[] };
 

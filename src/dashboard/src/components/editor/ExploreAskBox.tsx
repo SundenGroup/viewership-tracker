@@ -8,7 +8,11 @@
  *               re-rendering IS the answer) and show a slim confirmation bar
  *               with Undo, auto-dismissed after 8s.
  *   • answer  — numbers straight from Postgres, rendered as an AnswerCard
- *               (stat blocks / compact table) below the scrubber.
+ *               (stat blocks / compact table) below the scrubber. When the
+ *               envelope carries a chartPatch we auto-apply it so the answer
+ *               is visible ON the timeline (e.g. the peak minute pinned);
+ *               closing the card restores the pre-patch URL. Optional
+ *               suggestions render as follow-up buttons in the footer.
  *   • refusal — muted message + suggestion chips that refill the input.
  *
  * State lives in `useExploreAsk` so the input can sit inside the scrubber
@@ -32,17 +36,29 @@ interface PatchConfirmation {
   snapshot: string;
 }
 
+interface AskAnswer {
+  envelope: Extract<api.AskEnvelope, { kind: 'answer' }>;
+  /**
+   * Search-params string captured BEFORE the envelope's chartPatch was
+   * auto-applied — closing the card restores it (undoes the pin). Null when
+   * the answer did not touch the chart.
+   */
+  chartSnapshot: string | null;
+}
+
 export interface ExploreAskController {
   question: string;
   setQuestion: (q: string) => void;
   pending: boolean;
   error: string | null;
-  answer: Extract<api.AskEnvelope, { kind: 'answer' }> | null;
+  answer: AskAnswer | null;
   refusal: Extract<api.AskEnvelope, { kind: 'refusal' }> | null;
   confirmation: PatchConfirmation | null;
   submit: () => void;
   undo: () => void;
   dismiss: () => void;
+  /** Close the answer card, restoring the pre-chartPatch URL if one was applied. */
+  closeAnswer: () => void;
   applyPatch: (patch: api.AskPatch) => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
 }
@@ -63,7 +79,7 @@ export function useExploreAsk({
   const [question, setQuestion] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [answer, setAnswer] = useState<Extract<api.AskEnvelope, { kind: 'answer' }> | null>(null);
+  const [answer, setAnswer] = useState<AskAnswer | null>(null);
   const [refusal, setRefusal] = useState<Extract<api.AskEnvelope, { kind: 'refusal' }> | null>(null);
   const [confirmation, setConfirmation] = useState<PatchConfirmation | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -105,7 +121,15 @@ export function useExploreAsk({
         setConfirmation({ headline: envelope.headline, chips: envelope.resolvedIntent, snapshot });
         dismissTimer.current = window.setTimeout(() => setConfirmation(null), AUTO_DISMISS_MS);
       } else if (envelope.kind === 'answer') {
-        setAnswer(envelope);
+        if (envelope.chartPatch) {
+          // Auto-apply the chart patch so the answer is visible on the
+          // timeline — capture the pre-patch URL first so ✕ can undo it.
+          const snapshot = snapshotParams();
+          onPatch(envelope.chartPatch.set, envelope.chartPatch.del);
+          setAnswer({ envelope, chartSnapshot: snapshot });
+        } else {
+          setAnswer({ envelope, chartSnapshot: null });
+        }
       } else {
         setRefusal(envelope);
       }
@@ -140,6 +164,12 @@ export function useExploreAsk({
     setConfirmation(null);
   }, [confirmation, restoreParams, clearDismissTimer]);
 
+  const closeAnswer = useCallback(() => {
+    // Closing the card also undoes the auto-applied chart pin.
+    if (answer && answer.chartSnapshot !== null) restoreParams(answer.chartSnapshot);
+    dismiss();
+  }, [answer, restoreParams, dismiss]);
+
   return {
     question,
     setQuestion,
@@ -151,6 +181,7 @@ export function useExploreAsk({
     submit: () => void submit(),
     undo,
     dismiss,
+    closeAnswer,
     applyPatch,
     inputRef,
   };
@@ -326,19 +357,20 @@ export function ExploreAskResults({ ask }: { ask: ExploreAskController }) {
   }
 
   if (ask.answer) {
+    const { envelope, chartSnapshot } = ask.answer;
     return (
       <div className="card" style={{ padding: '14px 16px' }}>
         <Row justify="space-between" align="center" style={{ gap: 10, marginBottom: 10 }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>{ask.answer.headline}</span>
-          <CloseButton onClick={ask.dismiss} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{envelope.headline}</span>
+          <CloseButton onClick={ask.closeAnswer} />
         </Row>
-        {ask.answer.blocks.length === 0 && (
+        {envelope.blocks.length === 0 && (
           <div style={{ fontSize: 12, color: 'var(--fg-dim)' }}>
             No data matched in this scope.
           </div>
         )}
         <Row gap={32} style={{ flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          {ask.answer.blocks
+          {envelope.blocks
             .filter((b): b is Extract<api.AskBlock, { type: 'stat' }> => b.type === 'stat')
             .map((b) => (
               <Col key={b.label} gap={2}>
@@ -354,25 +386,29 @@ export function ExploreAskResults({ ask }: { ask: ExploreAskController }) {
               </Col>
             ))}
         </Row>
-        {ask.answer.blocks
+        {envelope.blocks
           .filter((b): b is Extract<api.AskBlock, { type: 'table' }> => b.type === 'table')
           .map((b, i) => (
             <AskTable key={i} columns={b.columns} rows={b.rows} />
           ))}
         <AskFooter
-          chips={ask.answer.resolvedIntent}
+          chips={envelope.resolvedIntent}
+          note={chartSnapshot !== null ? <ChartPinChip /> : undefined}
           action={
-            ask.answer.patchSuggestion ? (
-              <button
-                type="button"
-                className="btn btn-xs"
-                onClick={() => {
-                  ask.applyPatch(ask.answer!.patchSuggestion!);
-                  ask.dismiss();
-                }}
-              >
-                Apply as filters →
-              </button>
+            envelope.suggestions?.length ? (
+              <Row gap={6} align="center" style={{ flexWrap: 'wrap' }}>
+                {envelope.suggestions.map((s) => (
+                  <button
+                    key={s.label}
+                    type="button"
+                    className="btn btn-xs"
+                    // Keep the card open — suggestions are additive follow-ups.
+                    onClick={() => ask.applyPatch(s.patch)}
+                  >
+                    → {s.label}
+                  </button>
+                ))}
+              </Row>
             ) : undefined
           }
         />
@@ -464,8 +500,37 @@ function AskTable({ columns, rows }: { columns: string[]; rows: Array<Array<stri
   );
 }
 
-/** Resolved-intent chips + model attribution + optional action. */
-function AskFooter({ chips, action }: { chips: string[]; action?: React.ReactNode }) {
+/** Small live-tinted chip flagging that the answer is pinned on the chart. */
+function ChartPinChip() {
+  return (
+    <span
+      style={{
+        padding: '1px 7px',
+        borderRadius: 999,
+        fontSize: 9.5,
+        fontFamily: 'var(--font-mono)',
+        letterSpacing: '0.06em',
+        background: 'color-mix(in oklab, var(--live) 7%, var(--bg-card))',
+        border: '1px solid color-mix(in oklab, var(--live) 25%, transparent)',
+        color: 'var(--live)',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      ⌖ shown on chart
+    </span>
+  );
+}
+
+/** Resolved-intent chips + model attribution + optional note & action. */
+function AskFooter({
+  chips,
+  note,
+  action,
+}: {
+  chips: string[];
+  note?: React.ReactNode;
+  action?: React.ReactNode;
+}) {
   return (
     <Row justify="space-between" align="center" style={{ marginTop: 12, gap: 8, flexWrap: 'wrap' }}>
       <Row gap={4} align="center" style={{ flexWrap: 'wrap' }}>
@@ -488,6 +553,7 @@ function AskFooter({ chips, action }: { chips: string[]; action?: React.ReactNod
             {chip}
           </span>
         ))}
+        {note}
         <span style={{ fontSize: 9.5, color: 'var(--fg-dim)', marginLeft: 4 }}>✦ Ask</span>
       </Row>
       {action}
