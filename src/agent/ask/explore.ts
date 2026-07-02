@@ -37,7 +37,10 @@ export type AskEnvelope =
       headline: string;
       blocks: AskBlock[];
       resolvedIntent: string[];
-      patchSuggestion?: AskPatch;
+      /** Opt-in follow-up actions the answer card offers ("Filter to RU"). */
+      suggestions?: Array<{ label: string; patch: AskPatch }>;
+      /** Patch the client auto-applies so the answer is visible on the chart. */
+      chartPatch?: AskPatch;
     }
   | { kind: 'refusal'; message: string; suggestions: string[]; resolvedIntent: string[] };
 
@@ -743,11 +746,23 @@ export async function executeExploreIntent(
         };
       }
 
-      // Equivalent table filters so the UI can offer "Apply as filters →".
+      // Follow-up actions: overlay the ranked channels on the chart (opt-in,
+      // ≤8 lines), and the equivalent table filters when the ranking was
+      // narrowed by language/tier/platform.
+      const overlayIds = top.slice(0, 8).map((r) => r.channel_id);
+      const suggestions: Array<{ label: string; patch: AskPatch }> = [
+        {
+          label: `Overlay top ${overlayIds.length} on chart`,
+          patch: { set: { channels: overlayIds.join(',') }, del: [] },
+        },
+      ];
       const suggestionSet: Record<string, string> = {};
       if (language) suggestionSet.languages = language;
       if (tier) suggestionSet.tiers = tier;
       if (platform) suggestionSet.platforms = platform;
+      if (Object.keys(suggestionSet).length > 0) {
+        suggestions.push({ label: 'Apply as filters', patch: { set: suggestionSet, del: [] } });
+      }
 
       return {
         kind: 'answer',
@@ -768,9 +783,7 @@ export async function executeExploreIntent(
           },
         ],
         resolvedIntent: chips,
-        ...(Object.keys(suggestionSet).length > 0
-          ? { patchSuggestion: { set: suggestionSet, del: [] } }
-          : {}),
+        suggestions,
       };
     }
 
@@ -796,6 +809,9 @@ export async function executeExploreIntent(
             sub: `at ${formatInTz(new Date(peak.timestamp), series.timezone)} (${series.timezone})`,
           }],
           resolvedIntent: chips,
+          // Pin the peak minute on the timeline (a pinned moment and a
+          // pinned range are mutually exclusive).
+          chartPatch: { set: { at: new Date(peak.timestamp).toISOString() }, del: ['from', 'to'] },
         };
       }
       if (metric === 'average') {
@@ -867,7 +883,11 @@ export async function executeExploreIntent(
           },
         ],
         resolvedIntent: chips,
-        patchSuggestion: { set: { languages: language }, del: [] },
+        // Pin the language's peak minute on the timeline.
+        chartPatch: { set: { at: new Date(row.peak_at).toISOString() }, del: ['from', 'to'] },
+        suggestions: [
+          { label: `Filter to ${language.toUpperCase()}`, patch: { set: { languages: language }, del: [] } },
+        ],
       };
     }
 
