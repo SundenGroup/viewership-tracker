@@ -802,25 +802,27 @@ function ExploreScopedView({
       logout={logout}
     >
       <Col gap={14}>
-        {/* Scope scrubber */}
+        {/* Scope scrubber — one row: scrubber at natural width, Ask growing
+            beside it, Compare + Views pinned right (wraps when squeezed).
+            The "Showing:" caption is dropped — the ask box makes the current
+            context obvious and the row width is precious. */}
         <div className="card" style={{ padding: '10px 14px' }}>
-          <ScopeScrubber
-            level={scopeLevel}
-            onLevelChange={handleScopeChange}
-            stages={stageOptions}
-            stageId={activeStage?.id}
-            onStageChange={handleStageChange}
-            days={dayOptions}
-            dayId={dayIdFromUrl}
-            onDayChange={handleDayChange}
-            viewGroup="all"
-            viewGroups={[]}
-            showShowingLabel={true}
-          />
-          {/* Ask left-aligned and growing; Compare + Views pinned right.
-              (space-between with an empty Compare group at series scope
-              was centering the ask box in dead space.) */}
-          <Row align="center" style={{ marginTop: 8, flexWrap: 'wrap', gap: 10 }}>
+          <Row align="center" style={{ gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ flex: '0 1 auto', minWidth: 0 }}>
+              <ScopeScrubber
+                level={scopeLevel}
+                onLevelChange={handleScopeChange}
+                stages={stageOptions}
+                stageId={activeStage?.id}
+                onStageChange={handleStageChange}
+                days={dayOptions}
+                dayId={dayIdFromUrl}
+                onDayChange={handleDayChange}
+                viewGroup="all"
+                viewGroups={[]}
+                showShowingLabel={false}
+              />
+            </div>
             <ExploreAskBox ask={ask} />
             <Row gap={8} align="center" style={{ marginLeft: 'auto' }}>
               {compareOptions.length > 0 && (

@@ -111,12 +111,19 @@ export function useExploreAsk({
       }
     } catch (e) {
       if (e instanceof ApiError) {
+        // Prefer the server's own message (e.g. the 502 "AI backend is
+        // unavailable" explanation) over canned per-status text.
+        const body = e.body as { message?: unknown } | undefined;
+        const serverMessage = typeof body?.message === 'string' ? body.message : null;
         setError(
-          e.status === 429
-            ? 'Ask limit reached — try again in a little while.'
-            : e.status === 501
-              ? 'Ask isn’t configured on this server.'
-              : 'Ask hit a snag — try again.',
+          serverMessage ??
+            (e.status === 429
+              ? 'Ask limit reached — try again in a little while.'
+              : e.status === 501
+                ? 'Ask isn’t configured on this server.'
+                : e.status === 502
+                  ? 'The AI backend is unavailable — simple filter questions still work.'
+                  : 'Ask hit a snag — try again.'),
         );
       } else {
         setError('Ask hit a snag — try again.');
