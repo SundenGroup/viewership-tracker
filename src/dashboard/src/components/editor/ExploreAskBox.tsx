@@ -171,7 +171,7 @@ export function ExploreAskBox({ ask }: { ask: ExploreAskController }) {
   }, [ask.inputRef]);
 
   return (
-    <div style={{ flex: 1, maxWidth: 460, minWidth: 220 }}>
+    <div style={{ flex: 1, maxWidth: 560, minWidth: 220 }}>
       <Row
         gap={7}
         align="center"

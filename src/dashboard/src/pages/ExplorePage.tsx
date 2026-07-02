@@ -817,8 +817,12 @@ function ExploreScopedView({
             viewGroups={[]}
             showShowingLabel={true}
           />
-          <Row justify="space-between" align="center" style={{ marginTop: 8, flexWrap: 'wrap', gap: 8 }}>
-            <Row gap={6} align="center">
+          {/* Ask left-aligned and growing; Compare + Views pinned right.
+              (space-between with an empty Compare group at series scope
+              was centering the ask box in dead space.) */}
+          <Row align="center" style={{ marginTop: 8, flexWrap: 'wrap', gap: 10 }}>
+            <ExploreAskBox ask={ask} />
+            <Row gap={8} align="center" style={{ marginLeft: 'auto' }}>
               {compareOptions.length > 0 && (
                 <>
                   <span className="eyebrow" style={{ fontSize: 9.5 }}>
@@ -851,9 +855,8 @@ function ExploreScopedView({
                   </select>
                 </>
               )}
+              <SavedViewsMenu />
             </Row>
-            <ExploreAskBox ask={ask} />
-            <SavedViewsMenu />
           </Row>
         </div>
 
