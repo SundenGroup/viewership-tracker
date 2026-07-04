@@ -679,9 +679,15 @@ router.get('/day-qa/:dayId', async (req: Request, res: Response, next: NextFunct
     );
 
     // ── Language hygiene: channels with data but blank language ──
+    // Only channels that actually have DATA on this day AND a blank language.
+    // The OR must be grouped — a flat `.whereNull().orWhere().whereExists()`
+    // compiles to `lang IS NULL OR (lang='' AND EXISTS…)`, which matches every
+    // blank-language channel in the whole DB (incl. auto-discovered twins of
+    // properly-tagged channels), not just this day's roster.
     const blankLanguage = await db('channels as c')
-      .whereNull('c.language')
-      .orWhere('c.language', '')
+      .where(function () {
+        this.whereNull('c.language').orWhere('c.language', '');
+      })
       .whereExists(
         db('viewership_snapshots as v')
           .whereRaw('v.channel_id = c.id')
