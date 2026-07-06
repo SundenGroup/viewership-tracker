@@ -683,20 +683,32 @@ export function backfillFromDiscover(payload: {
 
 // ── Export ──────────────────────────────────────────────────────────────────
 
-export function getExportCsvUrl(scope: ScopeLevel, id: string) {
-  return `${BASE_URL}/api/export/csv?scope=${scope}&id=${id}`;
+/**
+ * Export granularity. `per_minute` (default) is the deduped, correct-by-
+ * construction grain everyone can export; the others are admin-only
+ * (raw = sub-minute polls, easy to double-count; the summaries are
+ * pre-aggregated).
+ */
+export type ExportGranularity = 'per_minute' | 'minute_totals' | 'channel_summary' | 'raw';
+
+function granSuffix(g?: ExportGranularity): string {
+  return g && g !== 'per_minute' ? `&granularity=${g}` : '';
 }
 
-export function getExportJsonUrl(scope: ScopeLevel, id: string) {
-  return `${BASE_URL}/api/export/json?scope=${scope}&id=${id}`;
+export function getExportCsvUrl(scope: ScopeLevel, id: string, gran?: ExportGranularity) {
+  return `${BASE_URL}/api/export/csv?scope=${scope}&id=${id}${granSuffix(gran)}`;
 }
 
-export function getExportCsvUrlMulti(stageIds: string[]) {
-  return `${BASE_URL}/api/export/csv?scope=multi_stage&ids=${stageIds.join(',')}`;
+export function getExportJsonUrl(scope: ScopeLevel, id: string, gran?: ExportGranularity) {
+  return `${BASE_URL}/api/export/json?scope=${scope}&id=${id}${granSuffix(gran)}`;
 }
 
-export function getExportJsonUrlMulti(stageIds: string[]) {
-  return `${BASE_URL}/api/export/json?scope=multi_stage&ids=${stageIds.join(',')}`;
+export function getExportCsvUrlMulti(stageIds: string[], gran?: ExportGranularity) {
+  return `${BASE_URL}/api/export/csv?scope=multi_stage&ids=${stageIds.join(',')}${granSuffix(gran)}`;
+}
+
+export function getExportJsonUrlMulti(stageIds: string[], gran?: ExportGranularity) {
+  return `${BASE_URL}/api/export/json?scope=multi_stage&ids=${stageIds.join(',')}${granSuffix(gran)}`;
 }
 
 // ── Report Generation ─────────────────────────────────────────────────────

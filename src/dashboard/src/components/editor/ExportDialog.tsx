@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import * as api from '@/services/api';
 import { Row, Col, IconX, IconDownload, IconShare } from '@/components/design';
+import { useAuth } from '@/hooks/useAuth';
 import type { SeriesWithStages, ScopeLevel, ViewGroup } from '@/types/api';
 
 export interface ExportDialogProps {
@@ -46,6 +47,37 @@ const FORMAT_TILES: Array<{
   { id: 'html', label: 'HTML', sub: 'Static report — trigger render job' },
 ];
 
+const GRANULARITY_TILES: Array<{
+  id: api.ExportGranularity;
+  label: string;
+  sub: string;
+  adminOnly?: boolean;
+}> = [
+  {
+    id: 'per_minute',
+    label: 'Per minute',
+    sub: 'One row per channel per minute — deduped, matches the dashboard. Safe to sum.',
+  },
+  {
+    id: 'minute_totals',
+    label: 'Minute totals',
+    sub: 'One row per minute: total concurrent viewers + live channel count.',
+    adminOnly: true,
+  },
+  {
+    id: 'channel_summary',
+    label: 'Channel summary',
+    sub: 'One row per channel: peak (+ time), average, viewed hours.',
+    adminOnly: true,
+  },
+  {
+    id: 'raw',
+    label: 'Raw polls',
+    sub: 'Every poll (~2 rows/channel/min). Forensic grain — dedup before summing.',
+    adminOnly: true,
+  },
+];
+
 type ScopeChoice = 'current' | 'series' | 'stage' | 'multi_stage' | 'day';
 
 type ResolvedTarget =
@@ -61,7 +93,9 @@ export function ExportDialog({
   activeViewGroupName,
   viewGroups,
 }: ExportDialogProps) {
+  const { isAdmin } = useAuth();
   const [format, setFormat] = useState<ExportFormat>('csv');
+  const [granularity, setGranularity] = useState<api.ExportGranularity>('per_minute');
   const [scope, setScope] = useState<ScopeChoice>('current');
   const [selectedStageIds, setSelectedStageIds] = useState<string[]>([]);
   const [reRender, setReRender] = useState(false);
@@ -105,6 +139,7 @@ export function ExportDialog({
       setError(null);
       setPublicLink(null);
       setBusy(false);
+      setGranularity('per_minute');
       setScope('current');
       setSelectedStageIds([]);
       setReRender(false);
@@ -362,11 +397,11 @@ export function ExportDialog({
         const url =
           target.kind === 'multi_stage'
             ? format === 'csv'
-              ? api.getExportCsvUrlMulti(target.ids)
-              : api.getExportJsonUrlMulti(target.ids)
+              ? api.getExportCsvUrlMulti(target.ids, granularity)
+              : api.getExportJsonUrlMulti(target.ids, granularity)
             : format === 'csv'
-              ? api.getExportCsvUrl(target.scopeLevel, target.id)
-              : api.getExportJsonUrl(target.scopeLevel, target.id);
+              ? api.getExportCsvUrl(target.scopeLevel, target.id, granularity)
+              : api.getExportJsonUrl(target.scopeLevel, target.id, granularity);
         window.open(url, '_blank', 'noopener,noreferrer');
         onClose();
         return;
@@ -810,6 +845,74 @@ export function ExportDialog({
                 })}
               </div>
             </Field>
+
+            {/* Granularity picker — CSV/JSON only. Per-minute is the safe,
+                correct-by-construction default everyone can export; the
+                other grains are admin-only. */}
+            {(format === 'csv' || format === 'json') && (
+              <Field label="Granularity">
+                <Col gap={6}>
+                  {GRANULARITY_TILES.map((g) => {
+                    const locked = g.adminOnly && !isAdmin;
+                    const active = granularity === g.id;
+                    return (
+                      <label
+                        key={g.id}
+                        title={locked ? 'Admin only' : g.sub}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 10,
+                          padding: '8px 10px',
+                          borderRadius: 5,
+                          background: active ? 'var(--bg-sunken)' : 'transparent',
+                          border: '1px solid ' + (active ? 'var(--border-strong)' : 'transparent'),
+                          cursor: locked ? 'not-allowed' : 'pointer',
+                          opacity: locked ? 0.45 : 1,
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          checked={active}
+                          disabled={locked}
+                          onChange={() => !locked && setGranularity(g.id)}
+                          style={{ marginTop: 2, accentColor: 'var(--red)' }}
+                        />
+                        <Col gap={1} style={{ minWidth: 0 }}>
+                          <Row gap={6} align="center">
+                            <span style={{ fontSize: 12, fontWeight: active ? 600 : 500 }}>
+                              {g.label}
+                            </span>
+                            {g.id === 'per_minute' && (
+                              <span className="mono" style={{ fontSize: 9, color: 'var(--fg-dim)' }}>
+                                RECOMMENDED
+                              </span>
+                            )}
+                            {g.adminOnly && (
+                              <span
+                                className="mono"
+                                style={{
+                                  fontSize: 8.5,
+                                  padding: '1px 5px',
+                                  borderRadius: 3,
+                                  background: 'var(--bg-card)',
+                                  color: 'var(--fg-dim)',
+                                  border: '1px solid var(--border)',
+                                  letterSpacing: 0.3,
+                                }}
+                              >
+                                ADMIN
+                              </span>
+                            )}
+                          </Row>
+                          <span style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>{g.sub}</span>
+                        </Col>
+                      </label>
+                    );
+                  })}
+                </Col>
+              </Field>
+            )}
 
             {/* Scope picker */}
             <Field label="Scope">
