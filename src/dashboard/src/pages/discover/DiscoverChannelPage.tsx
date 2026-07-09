@@ -43,6 +43,40 @@ const RANGES: Record<RangePreset, { hours: number; bucketSeconds: number; label:
   '30d': { hours: 24 * 30, bucketSeconds: 3600, label: '30d' },
 };
 
+/** Stream health grade → color. A/B healthy, C caution, D/F review. */
+export function healthGradeColor(grade: string): string {
+  if (grade === 'A' || grade === 'B') return 'var(--live)';
+  if (grade === 'C') return 'var(--warn)';
+  return 'var(--danger)';
+}
+
+/** Slim colored grade letter for table cells and compact rows. */
+export function HealthGradeChip({ grade, score }: { grade: string; score?: number | null }) {
+  const color = healthGradeColor(grade);
+  return (
+    <span
+      title={score != null ? `Stream health ${score}/100` : 'Stream health'}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minWidth: 20,
+        height: 18,
+        padding: '0 5px',
+        borderRadius: 4,
+        fontSize: 10.5,
+        fontFamily: 'var(--font-mono)',
+        fontWeight: 700,
+        color,
+        background: `color-mix(in oklab, ${color} 14%, transparent)`,
+        border: `1px solid color-mix(in oklab, ${color} 30%, transparent)`,
+      }}
+    >
+      {grade}
+    </span>
+  );
+}
+
 /**
  * /discover/:slug/channel/:channelId — broadcast detail for one streamer
  * within a tracker. Shows their CCV timeline, peak/avg over the range,
@@ -168,7 +202,8 @@ export function DiscoverChannelPage() {
     (summary.rank?.todayByPeak != null ||
       topPct != null ||
       summary.followers?.current != null ||
-      engagementPct != null);
+      engagementPct != null ||
+      summary.healthGrade30d != null);
 
   if (error) {
     return (
@@ -251,6 +286,19 @@ export function DiscoverChannelPage() {
                 </Pill>
               )}
               {engagementPct != null && <Pill>{engagementPct}% chatters/viewer</Pill>}
+              {summary?.healthGrade30d != null && (
+                <Pill
+                  tone={
+                    summary.healthGrade30d === 'A' || summary.healthGrade30d === 'B'
+                      ? 'live'
+                      : summary.healthGrade30d === 'C'
+                        ? 'warn'
+                        : 'red'
+                  }
+                >
+                  Health {summary.healthGrade30d} (30d)
+                </Pill>
+              )}
             </Row>
           )}
         </Col>
@@ -498,6 +546,8 @@ function SessionsTable({
   const showChat = sessions.some(
     (s) => Number(s.messages) > 0 || Number(s.unique_chatters) > 0,
   );
+  // Same pattern for health grades — unscored channels keep the old shape.
+  const showHealth = sessions.some((s) => s.health_grade != null);
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
       <thead>
@@ -509,6 +559,7 @@ function SessionsTable({
           {showChat && <th style={{ ...th, textAlign: 'right' }}>Msgs</th>}
           {showChat && <th style={{ ...th, textAlign: 'right' }}>Chatters</th>}
           <th style={{ ...th, textAlign: 'right' }}>Duration</th>
+          {showHealth && <th style={{ ...th, textAlign: 'center' }}>Health</th>}
         </tr>
       </thead>
       <tbody>
@@ -591,6 +642,15 @@ function SessionsTable({
               <td style={{ ...td, ...numTd, color: 'var(--fg-dim)' }}>
                 {fmtDuration(s.minutes_live * 60_000)}
               </td>
+              {showHealth && (
+                <td style={{ ...td, textAlign: 'center' }}>
+                  {s.health_grade != null ? (
+                    <HealthGradeChip grade={s.health_grade} score={s.health_score} />
+                  ) : (
+                    <span style={{ color: 'var(--fg-faint)' }}>—</span>
+                  )}
+                </td>
+              )}
             </tr>
           );
         })}

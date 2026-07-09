@@ -14,6 +14,7 @@ import {
 import * as api from '@/services/api';
 import type {
   GameTrackerChannelTimelineResponse,
+  GameTrackerHealthEvidence,
   GameTrackerStreamDetailResponse,
 } from '@/services/api';
 import {
@@ -34,7 +35,7 @@ import {
 import { fmtN, fmtCompact, fmtDuration } from '@/design/format';
 import { downloadCsv, csvStamp } from '@/utils/csv';
 import { Avatar } from './DiscoverDetailPage';
-import { ChannelKpi } from './DiscoverChannelPage';
+import { ChannelKpi, healthGradeColor } from './DiscoverChannelPage';
 
 type TrackerChannelMeta = GameTrackerChannelTimelineResponse['channel'];
 
@@ -346,6 +347,16 @@ export function DiscoverStreamPage() {
         )}
       </Row>
 
+      {/* Stream health — rendered only once the scorer has graded this
+          session (ended, big enough, chat-covered). */}
+      {session.health_grade != null && session.health_score != null && (
+        <StreamHealthPanel
+          grade={session.health_grade}
+          score={session.health_score}
+          evidence={session.health_evidence}
+        />
+      )}
+
       {/* Main chart */}
       <Section
         title={chart.hasChatBars ? 'Viewers & chat activity' : 'Concurrent viewers'}
@@ -536,6 +547,162 @@ function FooterNavLink({
       {label}
     </Link>
   );
+}
+
+const SUBSCORE_SPEC = [
+  { key: 'engagement', label: 'Engagement', max: 40 },
+  { key: 'curve', label: 'Curve', max: 30 },
+  { key: 'followers', label: 'Followers', max: 15 },
+  { key: 'spikeResponse', label: 'Response', max: 15 },
+] as const;
+
+/**
+ * "Stream health" card — the per-session integrity grade with its
+ * evidence: big A-F letter + score, subscore mini-bars, and the scorer's
+ * plain-language flags. Health first, accusation never: the footnote
+ * frames everything as signals, not proof.
+ */
+function StreamHealthPanel({
+  grade,
+  score,
+  evidence,
+}: {
+  grade: string;
+  score: number;
+  evidence: GameTrackerHealthEvidence | null;
+}) {
+  const gradeCol = healthGradeColor(grade);
+  const subs = evidence?.subscores ?? null;
+  const flags = evidence?.flags ?? [];
+  const cohort = evidence?.cohort ?? null;
+  const engagementPct = evidence?.engagementPct ?? null;
+  return (
+    <Section
+      title="Stream health"
+      eyebrow="INTEGRITY SIGNALS"
+      style={{ marginBottom: 16 }}
+      right={
+        cohort != null && cohort.n > 0 ? (
+          <span className="chip tabular" style={{ whiteSpace: 'nowrap' }}>
+            vs {fmtN(cohort.n)} {cohort.band} CCV streams (30d)
+          </span>
+        ) : undefined
+      }
+    >
+      <Row gap={24} align="flex-start" wrap>
+        {/* Grade */}
+        <Col gap={4} style={{ alignItems: 'center', minWidth: 88 }}>
+          <div
+            style={{
+              fontFamily: 'var(--font-display, var(--font-sans))',
+              fontSize: 46,
+              fontWeight: 700,
+              lineHeight: 1,
+              color: gradeCol,
+            }}
+          >
+            {grade}
+          </div>
+          <div className="mono tabular" style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+            {score}/100
+          </div>
+        </Col>
+
+        {/* Subscore mini-bars */}
+        {subs != null && (
+          <Col gap={8} style={{ flex: '1 1 220px', minWidth: 200 }}>
+            {SUBSCORE_SPEC.map(({ key, label, max }) => {
+              const value = Math.max(0, Math.min(max, subs[key]));
+              const ratio = max > 0 ? value / max : 0;
+              const barCol =
+                ratio >= 2 / 3 ? 'var(--live)' : ratio >= 1 / 3 ? 'var(--warn)' : 'var(--danger)';
+              return (
+                <Row key={key} gap={8} align="center">
+                  <span
+                    style={{
+                      width: 82,
+                      flexShrink: 0,
+                      fontSize: 11,
+                      color: 'var(--fg-muted)',
+                    }}
+                  >
+                    {label}
+                  </span>
+                  <div
+                    style={{
+                      flex: 1,
+                      height: 5,
+                      borderRadius: 999,
+                      background: 'var(--bg-sunken)',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${Math.round(ratio * 100)}%`,
+                        height: '100%',
+                        borderRadius: 999,
+                        background: barCol,
+                      }}
+                    />
+                  </div>
+                  <span
+                    className="mono tabular"
+                    style={{ width: 44, flexShrink: 0, fontSize: 11, color: 'var(--fg-dim)', textAlign: 'right' }}
+                  >
+                    {value}/{max}
+                  </span>
+                </Row>
+              );
+            })}
+          </Col>
+        )}
+
+        {/* Evidence flags */}
+        <Col gap={6} style={{ flex: '1.4 1 280px', minWidth: 240 }}>
+          {flags.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+              No integrity flags for this session.
+            </div>
+          ) : (
+            flags.map((f, i) => (
+              <Row key={`${f.kind}-${i}`} gap={7} align="flex-start">
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: 999,
+                    background: 'var(--warn)',
+                    flexShrink: 0,
+                    marginTop: 5,
+                  }}
+                />
+                <span style={{ fontSize: 12, color: 'var(--fg)', lineHeight: 1.5 }}>
+                  {f.detail}
+                </span>
+              </Row>
+            ))
+          )}
+        </Col>
+      </Row>
+
+      <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+        {engagementPct != null && cohort != null && (
+          <>Chat engagement in the {ordinal(engagementPct)} percentile of its cohort. </>
+        )}
+        Signals, not proof — see methodology.
+      </div>
+    </Section>
+  );
+}
+
+function ordinal(n: number): string {
+  const rem10 = n % 10;
+  const rem100 = n % 100;
+  if (rem10 === 1 && rem100 !== 11) return `${n}st`;
+  if (rem10 === 2 && rem100 !== 12) return `${n}nd`;
+  if (rem10 === 3 && rem100 !== 13) return `${n}rd`;
+  return `${n}th`;
 }
 
 /**

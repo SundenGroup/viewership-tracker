@@ -409,6 +409,44 @@ export function askExplore(seriesId: string, question: string, viewState: AskVie
   });
 }
 
+// ── Discover pages — Ask (natural-language) ────────────────────────────────
+// One question about a game tracker. Same server-side contract as Explore
+// Ask, but read-only: envelopes are answer|refusal only (no URL patches);
+// an answer may carry a deep link into the dashboard and a data-honesty
+// footnote (e.g. "chat metrics collected from 2026-07-09").
+
+/** Current URL params the Discover page sends as its view state. */
+export interface DiscoverAskViewState {
+  tab?: string;
+  platform?: string;
+  language?: string;
+}
+
+export interface DiscoverDeepLink {
+  label: string;
+  href: string;
+}
+
+export type DiscoverAskEnvelope =
+  | {
+      kind: 'answer';
+      headline: string;
+      blocks: AskBlock[];
+      resolvedIntent: string[];
+      /** Optional jump into the dashboard ("Open in Channels tab"). */
+      deepLink?: DiscoverDeepLink;
+      /** Data-honesty note rendered in the card footer. */
+      footnote?: string;
+    }
+  | { kind: 'refusal'; message: string; suggestions: string[]; resolvedIntent: string[] };
+
+export function askDiscover(slug: string, question: string, viewState: DiscoverAskViewState) {
+  return request<DiscoverAskEnvelope>(`/api/ask/discover/${encodeURIComponent(slug)}`, {
+    method: 'POST',
+    body: JSON.stringify({ question, viewState }),
+  });
+}
+
 // ── Polling / Orchestrator ─────────────────────────────────────────────────
 
 export function getPollingStatus() {
@@ -1369,6 +1407,26 @@ export interface GameTrackerTitleChange {
   at: string;
 }
 
+// Stream health (integrity signals) — nullable on every session; only
+// ended sessions with enough size + chat coverage ever get a grade.
+export interface GameTrackerHealthFlag {
+  kind: string;
+  detail: string;
+}
+
+export interface GameTrackerHealthEvidence {
+  engagementPct: number | null;
+  cohort: { tracker: string; band: string; n: number } | null;
+  flags: GameTrackerHealthFlag[];
+  /** Out of engagement 40 / curve 30 / followers 15 / spikeResponse 15. */
+  subscores: {
+    engagement: number;
+    curve: number;
+    followers: number;
+    spikeResponse: number;
+  } | null;
+}
+
 export interface GameTrackerStreamSessionRow {
   id: string;
   stream_id: string;
@@ -1385,6 +1443,9 @@ export interface GameTrackerStreamSessionRow {
   followers_end: number | null;
   messages: number;
   unique_chatters: number;
+  health_score: number | null;
+  health_grade: string | null;
+  health_evidence: GameTrackerHealthEvidence | null;
 }
 
 export interface GameTrackerChannelSessionsResponse {
@@ -1437,6 +1498,10 @@ export interface GameTrackerChannelSummary {
   rank: { todayByPeak: number | null; of: number | null } | null;
   peakPercentile30d: number | null;
   engagement: { avgChattersPerViewerPct: number | null } | null;
+  /** Grade letter from the avg health_score of scored sessions (30d). */
+  healthGrade30d: string | null;
+  healthAvgScore30d: number | null;
+  healthScoredSessions30d: number;
 }
 
 export function getGameTrackerChannelSummary(slug: string, channelId: string) {

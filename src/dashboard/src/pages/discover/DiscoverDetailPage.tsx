@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams, Link, useNavigate } from 'react-router-dom';
 import * as api from '@/services/api';
 import type {
@@ -8,6 +8,11 @@ import type {
 } from '@/services/api';
 import { DiscoverSearch } from './DiscoverSearch';
 import { DiscoverSearchResults } from './DiscoverSearchResults';
+import {
+  DiscoverAskBox,
+  DiscoverAskResults,
+  useDiscoverAsk,
+} from '@/components/discover/DiscoverAskBox';
 import {
   Row,
   Col,
@@ -51,6 +56,19 @@ export function DiscoverDetailPage() {
   const [leaderboard, setLeaderboard] = useState<GameTrackerLeaderboardRow[] | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // ── Ask (natural-language) ─────────────────────────────────────────
+  // The server compiles a question into ONE validated intent and answers
+  // straight from Postgres (answer/refusal only — no URL patches here).
+  const getAskViewState = useCallback(
+    (): api.DiscoverAskViewState => ({
+      tab: searchParams.get('tab') ?? undefined,
+      platform: searchParams.get('platform') ?? undefined,
+      language: searchParams.get('language') ?? undefined,
+    }),
+    [searchParams],
+  );
+  const ask = useDiscoverAsk({ slug: slug ?? '', getViewState: getAskViewState });
 
   useEffect(() => {
     if (!slug) return;
@@ -121,6 +139,7 @@ export function DiscoverDetailPage() {
       <Row justify="space-between" align="center" gap={16}>
         <BackLink />
         <Row gap={10} align="center" style={{ flex: 1, justifyContent: 'flex-end' }}>
+          <DiscoverAskBox ask={ask} />
           <DiscoverSearch slug={slug ?? ''} />
         </Row>
       </Row>
@@ -170,6 +189,10 @@ export function DiscoverDetailPage() {
           </Row>
         </Col>
       </Row>
+
+      {/* Ask results — answer card / refusal, between the hero and the
+          tab bar (renders nothing when idle) */}
+      <DiscoverAskResults ask={ask} />
 
       {/* When ?q is set, search results take over the body and the tab
           bar is hidden — the operator's intent is "find this thing,"
