@@ -25,6 +25,22 @@ import * as StreamSessionModel from '../src/models/stream-session';
 
 const FINALIZE_CHUNK = 500;
 
+/** Retry transient Postgres deadlocks (40P01) — the live poll cycle upserts
+ *  the same table; a collision aborts one of the two, so just re-run. */
+async function withDeadlockRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code !== '40P01' || i >= attempts) throw err;
+      const wait = 2000 * i + Math.floor(Math.random() * 1500);
+      console.log(`  deadlock with live poll cycle — retrying in ${wait}ms (${i}/${attempts - 1})`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
+
 export async function backfillTracker(
   tracker: GameTrackerModel.GameTracker,
 ): Promise<{ sessions: number; channels: number }> {
@@ -33,7 +49,7 @@ export async function backfillTracker(
   // >10-min gap (two derived segments), so we keep the latest segment —
   // its started_at still COALESCEs back to the platform's broadcast
   // start, and finals are computed over [started_at, ended_at] anyway.
-  const result = await db.raw<{ rows: Array<{ id: string; channel_id: string }> }>(
+  const result = await withDeadlockRetry(() => db.raw<{ rows: Array<{ id: string; channel_id: string }> }>(
     `
     WITH ordered AS (
       SELECT id, channel_id, stream_id, "timestamp", stream_title, game_name, started_at,
@@ -80,6 +96,10 @@ export async function backfillTracker(
     dedup AS (
       SELECT DISTINCT ON (channel_id, stream_id) *
       FROM derived
+      -- Exclude segments still live-ish: the poll cycle owns those rows and
+      -- upserting them here deadlocks against it. They'll be created/closed
+      -- by the live lifecycle within minutes anyway.
+      WHERE last_ts < now() - interval '30 minutes'
       ORDER BY channel_id, stream_id, last_ts DESC
     )
     INSERT INTO stream_sessions
@@ -103,14 +123,13 @@ export async function backfillTracker(
     RETURNING id, channel_id
     `,
     [tracker.id, tracker.id],
-  );
+  ));
   const rows = result.rows;
 
   // Same finals as the live close pass, over each session's window.
   for (let i = 0; i < rows.length; i += FINALIZE_CHUNK) {
-    await StreamSessionModel.finalizeSessions(
-      rows.slice(i, i + FINALIZE_CHUNK).map((r) => r.id),
-    );
+    const chunk = rows.slice(i, i + FINALIZE_CHUNK).map((r) => r.id);
+    await withDeadlockRetry(() => StreamSessionModel.finalizeSessions(chunk));
   }
 
   return { sessions: rows.length, channels: new Set(rows.map((r) => r.channel_id)).size };
