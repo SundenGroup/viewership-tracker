@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   LineChart,
   Line,
@@ -12,7 +12,9 @@ import {
 import * as api from '@/services/api';
 import type {
   GameTrackerChannelTimelineResponse,
-  GameTrackerChannelSession,
+  GameTrackerChannelSessionsResponse,
+  GameTrackerChannelSummary,
+  GameTrackerStreamSessionRow,
 } from '@/services/api';
 import {
   Row,
@@ -24,9 +26,11 @@ import {
   ChannelNameWithLink,
   IconBolt,
   IconUsers,
+  IconUser,
   IconTrophy,
   IconCalendar,
   IconChev,
+  IconList,
 } from '@/components/design';
 import { fmtN, fmtCompact, fmtDuration } from '@/design/format';
 import { Avatar } from './DiscoverDetailPage';
@@ -43,12 +47,15 @@ const RANGES: Record<RangePreset, { hours: number; bucketSeconds: number; label:
  * /discover/:slug/channel/:channelId — broadcast detail for one streamer
  * within a tracker. Shows their CCV timeline, peak/avg over the range,
  * and a list of recent sessions (each contiguous run with the same
- * stream_id).
+ * stream_id). Sessions come from the depth endpoint so each row links
+ * through to the per-stream page (chat + follower detail when tracked).
  */
 export function DiscoverChannelPage() {
   const { slug, channelId } = useParams<{ slug: string; channelId: string }>();
   const [rangeKey, setRangeKey] = useState<RangePreset>('24h');
   const [data, setData] = useState<GameTrackerChannelTimelineResponse | null>(null);
+  const [sessionsData, setSessionsData] = useState<GameTrackerChannelSessionsResponse | null>(null);
+  const [summary, setSummary] = useState<GameTrackerChannelSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -70,6 +77,40 @@ export function DiscoverChannelPage() {
     };
   }, [slug, channelId, rangeKey]);
 
+  // Session depth rows — drives the sessions table + the range chat/follower
+  // KPI tiles. Failure degrades to an empty table (never blocks the page).
+  useEffect(() => {
+    if (!slug || !channelId) return;
+    let cancelled = false;
+    api
+      .getGameTrackerChannelSessions(slug, channelId, 60, 0)
+      .then((res) => {
+        if (!cancelled) setSessionsData(res);
+      })
+      .catch(() => {
+        if (!cancelled) setSessionsData({ total: 0, rows: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, channelId]);
+
+  // Channel summary — hero badge pills. Every field is nullable and the
+  // whole call may fail; pills simply don't render in that case.
+  useEffect(() => {
+    if (!slug || !channelId) return;
+    let cancelled = false;
+    api
+      .getGameTrackerChannelSummary(slug, channelId)
+      .then((res) => {
+        if (!cancelled) setSummary(res);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, channelId]);
+
   const peakCcv = useMemo(
     () => (data?.timeline ?? []).reduce((m, b) => (b.concurrent_viewers > m ? b.concurrent_viewers : m), 0),
     [data],
@@ -89,6 +130,45 @@ export function DiscoverChannelPage() {
     [data],
   );
   const profilePic = (data?.channel?.metadata?.profile_image_url as string | undefined) ?? null;
+
+  // Chat / follower aggregates over the session rows that overlap the
+  // selected range. Number() guards against pg SUM() strings from older
+  // backends; tiles are omitted entirely when the values are zero.
+  const rangeStats = useMemo(() => {
+    const fromMs = Date.now() - RANGES[rangeKey].hours * 60 * 60_000;
+    const inRange = (sessionsData?.rows ?? []).filter(
+      (s) => s.status === 'live' || (s.ended_at != null && Date.parse(s.ended_at) >= fromMs),
+    );
+    let messages = 0;
+    let chatters = 0;
+    let followersDelta = 0;
+    let hasFollowers = false;
+    for (const s of inRange) {
+      messages += Number(s.messages) || 0;
+      chatters += Number(s.unique_chatters) || 0;
+      if (s.followers_start != null && s.followers_end != null) {
+        hasFollowers = true;
+        followersDelta += Number(s.followers_end) - Number(s.followers_start);
+      }
+    }
+    return { count: inRange.length, messages, chatters, followersDelta, hasFollowers };
+  }, [sessionsData, rangeKey]);
+
+  // "Top X% (30d)" — percentile ≥ 50 reads better inverted ("top 7%").
+  const topPct =
+    summary?.peakPercentile30d != null && summary.peakPercentile30d >= 50
+      ? Math.max(1, Math.round(100 - summary.peakPercentile30d))
+      : null;
+  const engagementPct =
+    summary?.engagement?.avgChattersPerViewerPct != null
+      ? Math.round(summary.engagement.avgChattersPerViewerPct * 10) / 10
+      : null;
+  const hasSummaryPills =
+    summary != null &&
+    (summary.rank?.todayByPeak != null ||
+      topPct != null ||
+      summary.followers?.current != null ||
+      engagementPct != null);
 
   if (error) {
     return (
@@ -144,6 +224,35 @@ export function DiscoverChannelPage() {
               weight={400}
             />
           </Row>
+          {/* Summary badge pills — each renders only when the backend has
+              the number (every summary field is nullable). */}
+          {hasSummaryPills && (
+            <Row gap={6} wrap align="center" style={{ marginTop: 2 }}>
+              {summary?.rank?.todayByPeak != null && (
+                <Pill tone="red">
+                  #{summary.rank.todayByPeak} in {slug} today
+                </Pill>
+              )}
+              {topPct != null && <Pill tone="info">Top {topPct}% (30d)</Pill>}
+              {summary?.followers?.current != null && (
+                <Pill>
+                  {fmtCompact(summary.followers.current)} followers
+                  {summary.followers.delta7d != null && (
+                    <span
+                      className="tabular"
+                      style={{
+                        color: summary.followers.delta7d >= 0 ? 'var(--live)' : 'var(--red)',
+                      }}
+                    >
+                      ({summary.followers.delta7d >= 0 ? '+' : ''}
+                      {fmtCompact(summary.followers.delta7d)})
+                    </span>
+                  )}
+                </Pill>
+              )}
+              {engagementPct != null && <Pill>{engagementPct}% chatters/viewer</Pill>}
+            </Row>
+          )}
         </Col>
       </Row>
 
@@ -198,6 +307,37 @@ export function DiscoverChannelPage() {
           value={String(totalSessions)}
           sub={`${fmtDuration(totalMinutes * 60_000)} live`}
         />
+        {rangeStats.messages > 0 && (
+          <ChannelKpi
+            icon={<IconList size={13} />}
+            label={`Messages (${RANGES[rangeKey].label})`}
+            value={fmtCompact(rangeStats.messages)}
+          />
+        )}
+        {rangeStats.chatters > 0 && (
+          <ChannelKpi
+            icon={<IconUsers size={13} />}
+            label={`Unique chatters (${RANGES[rangeKey].label})`}
+            value={fmtCompact(rangeStats.chatters)}
+            sub={rangeStats.count > 1 ? `summed across ${rangeStats.count} sessions` : undefined}
+          />
+        )}
+        {rangeStats.hasFollowers && rangeStats.followersDelta !== 0 && (
+          <ChannelKpi
+            icon={<IconUser size={13} />}
+            label={`Followers Δ (${RANGES[rangeKey].label})`}
+            value={
+              <span
+                style={{
+                  color: rangeStats.followersDelta >= 0 ? 'var(--live)' : 'var(--red)',
+                }}
+              >
+                {rangeStats.followersDelta >= 0 ? '+' : ''}
+                {fmtN(rangeStats.followersDelta)}
+              </span>
+            }
+          />
+        )}
       </Row>
 
       {/* Timeline chart */}
@@ -254,7 +394,17 @@ export function DiscoverChannelPage() {
 
       {/* Recent sessions */}
       <Section title="Recent broadcasts" eyebrow="SESSIONS">
-        <SessionsTable sessions={data.sessions ?? []} />
+        <SessionsTable
+          sessions={sessionsData?.rows ?? null}
+          slug={slug}
+          channelId={channelId}
+          channel={data.channel}
+        />
+        {sessionsData != null && sessionsData.total > sessionsData.rows.length && (
+          <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+            Showing {sessionsData.rows.length} of {fmtN(sessionsData.total)} sessions
+          </div>
+        )}
       </Section>
     </div>
   );
@@ -281,7 +431,7 @@ function BackLink({ slug }: { slug: string | undefined }) {
   );
 }
 
-function ChannelKpi({
+export function ChannelKpi({
   icon,
   label,
   value,
@@ -319,14 +469,35 @@ function ChannelKpi({
   );
 }
 
-function SessionsTable({ sessions }: { sessions: GameTrackerChannelSession[] }) {
+function SessionsTable({
+  sessions,
+  slug,
+  channelId,
+  channel,
+}: {
+  sessions: GameTrackerStreamSessionRow[] | null;
+  slug: string | undefined;
+  channelId: string | undefined;
+  channel: GameTrackerChannelTimelineResponse['channel'];
+}) {
+  const navigate = useNavigate();
+  if (sessions === null) {
+    return (
+      <div style={{ padding: '12px 0', color: 'var(--fg-muted)', fontSize: 13 }}>Loading…</div>
+    );
+  }
   if (sessions.length === 0) {
     return (
       <div style={{ padding: '12px 0', color: 'var(--fg-muted)', fontSize: 13 }}>
-        No completed sessions in the last 30 days.
+        No recent sessions.
       </div>
     );
   }
+  // Chat columns only appear when at least one row actually carries chat
+  // numbers — trackers without chat capture keep the original table shape.
+  const showChat = sessions.some(
+    (s) => Number(s.messages) > 0 || Number(s.unique_chatters) > 0,
+  );
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
       <thead>
@@ -335,46 +506,94 @@ function SessionsTable({ sessions }: { sessions: GameTrackerChannelSession[] }) 
           <th style={th}>Title</th>
           <th style={{ ...th, textAlign: 'right' }}>Peak</th>
           <th style={{ ...th, textAlign: 'right' }}>Avg</th>
+          {showChat && <th style={{ ...th, textAlign: 'right' }}>Msgs</th>}
+          {showChat && <th style={{ ...th, textAlign: 'right' }}>Chatters</th>}
           <th style={{ ...th, textAlign: 'right' }}>Duration</th>
         </tr>
       </thead>
       <tbody>
-        {sessions.map((s) => (
-          <tr key={`${s.stream_id}-${s.started_at}`} style={{ borderBottom: '1px solid var(--border-faint)' }}>
-            <td style={td}>
-              <div style={{ fontSize: 12, color: 'var(--fg)' }}>
-                {new Date(s.started_at).toLocaleDateString([], {
-                  month: 'short',
-                  day: 'numeric',
-                })}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
-                {new Date(s.started_at).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
-              </div>
-            </td>
-            <td
+        {sessions.map((s) => {
+          const latestTitle =
+            s.titles.length > 0 ? s.titles[s.titles.length - 1]!.title : null;
+          const to =
+            slug && channelId && s.stream_id
+              ? `/discover/${slug}/channel/${channelId}/stream/${s.stream_id}`
+              : null;
+          return (
+            <tr
+              key={s.id}
+              onClick={to ? () => navigate(to, { state: { channel } }) : undefined}
               style={{
-                ...td,
-                color: 'var(--fg)',
-                maxWidth: 480,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
+                borderBottom: '1px solid var(--border-faint)',
+                cursor: to ? 'pointer' : 'default',
               }}
-              title={s.stream_title ?? ''}
+              onMouseEnter={(e) => {
+                if (to) e.currentTarget.style.background = 'var(--bg-sunken)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+              }}
             >
-              {s.stream_title ?? '—'}
-            </td>
-            <td style={{ ...td, ...numTd, fontWeight: 600 }}>{fmtCompact(s.peak_ccv)}</td>
-            <td style={{ ...td, ...numTd, color: 'var(--fg-muted)' }}>{fmtCompact(s.avg_ccv)}</td>
-            <td style={{ ...td, ...numTd, color: 'var(--fg-dim)' }}>
-              {fmtDuration(s.minutes_live * 60_000)}
-            </td>
-          </tr>
-        ))}
+              <td style={td}>
+                <Row gap={8} align="center">
+                  <div>
+                    <div style={{ fontSize: 12, color: 'var(--fg)' }}>
+                      {new Date(s.started_at).toLocaleDateString([], {
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+                      {new Date(s.started_at).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                  </div>
+                  {s.status === 'live' && (
+                    <Pill tone="live">
+                      <span className="dot dot-live" /> live
+                    </Pill>
+                  )}
+                </Row>
+              </td>
+              <td
+                style={{
+                  ...td,
+                  color: 'var(--fg)',
+                  maxWidth: 480,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title={latestTitle ?? ''}
+              >
+                {to ? (
+                  <Link to={to} state={{ channel }} style={{ color: 'inherit' }}>
+                    {latestTitle ?? '—'}
+                  </Link>
+                ) : (
+                  latestTitle ?? '—'
+                )}
+              </td>
+              <td style={{ ...td, ...numTd, fontWeight: 600 }}>{fmtCompact(s.peak_ccv)}</td>
+              <td style={{ ...td, ...numTd, color: 'var(--fg-muted)' }}>{fmtCompact(s.avg_ccv)}</td>
+              {showChat && (
+                <td style={{ ...td, ...numTd, color: 'var(--fg-muted)' }}>
+                  {Number(s.messages) > 0 ? fmtCompact(Number(s.messages)) : '—'}
+                </td>
+              )}
+              {showChat && (
+                <td style={{ ...td, ...numTd, color: 'var(--fg-muted)' }}>
+                  {Number(s.unique_chatters) > 0 ? fmtCompact(Number(s.unique_chatters)) : '—'}
+                </td>
+              )}
+              <td style={{ ...td, ...numTd, color: 'var(--fg-dim)' }}>
+                {fmtDuration(s.minutes_live * 60_000)}
+              </td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );

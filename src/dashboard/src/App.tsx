@@ -16,6 +16,7 @@ import { ExplorePage } from '@/pages/ExplorePage';
 import { DiscoverListPage } from '@/pages/discover/DiscoverListPage';
 import { DiscoverDetailPage } from '@/pages/discover/DiscoverDetailPage';
 import { DiscoverChannelPage } from '@/pages/discover/DiscoverChannelPage';
+import { DiscoverStreamPage } from '@/pages/discover/DiscoverStreamPage';
 import { DiscoverAdminNew } from '@/pages/discover/DiscoverAdminNew';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 import { TopNav } from '@/components/nav';
@@ -133,6 +134,7 @@ function AuthGate() {
         <Route path="/explore" element={<AppContent />} />
         <Route path="/discover/admin/new" element={<AppContent />} />
         <Route path="/discover/admin/edit/:slug" element={<AppContent />} />
+        <Route path="/discover/:slug/channel/:channelId/stream/:streamId" element={<AppContent />} />
         <Route path="/discover/:slug/channel/:channelId" element={<AppContent />} />
         <Route path="/discover/:slug" element={<AppContent />} />
         <Route path="/discover" element={<AppContent />} />
@@ -166,6 +168,7 @@ function AppContent() {
   const isExplorePage = pathname.startsWith('/explore');
   const isDiscoverNew = pathname === '/discover/admin/new';
   const isDiscoverEdit = /^\/discover\/admin\/edit\/[^/]+$/.test(pathname);
+  const isDiscoverStream = /^\/discover\/[^/]+\/channel\/[^/]+\/stream\/[^/]+$/.test(pathname);
   const isDiscoverChannel = /^\/discover\/[^/]+\/channel\/[^/]+$/.test(pathname);
   const isDiscoverDetail = /^\/discover\/[^/]+$/.test(pathname) && !isDiscoverNew;
   const isDiscoverList = pathname === '/discover';
@@ -349,6 +352,7 @@ function AppContent() {
     !isDiscoverList &&
     !isDiscoverDetail &&
     !isDiscoverChannel &&
+    !isDiscoverStream &&
     !isDiscoverNew &&
     !isDiscoverEdit;
 
@@ -386,6 +390,8 @@ function AppContent() {
     );
   } else if (isDiscoverList) {
     content = <DiscoverListPage />;
+  } else if (isDiscoverStream) {
+    content = <DiscoverStreamPage />;
   } else if (isDiscoverChannel) {
     content = <DiscoverChannelPage />;
   } else if (isDiscoverDetail) {

@@ -1358,3 +1358,89 @@ export function getGameTrackerRangeLeaderboard(
     rows: GameTrackerRangeLeaderboardRow[];
   }>(`/api/game-trackers/${slug}/range-leaderboard?${params.toString()}`);
 }
+
+// ── Game Tracker — streamer depth (sessions / stream detail / summary) ────
+// Frozen contract shared with the backend work happening in parallel.
+// Chat and follower data may legitimately be absent (empty arrays / nulls);
+// consumers must degrade gracefully rather than assume presence.
+
+export interface GameTrackerTitleChange {
+  title: string;
+  at: string;
+}
+
+export interface GameTrackerStreamSessionRow {
+  id: string;
+  stream_id: string;
+  started_at: string;
+  ended_at: string | null;
+  status: 'live' | 'ended';
+  minutes_live: number;
+  peak_ccv: number;
+  avg_ccv: number;
+  ccv_minutes: number;
+  titles: GameTrackerTitleChange[];
+  category: string | null;
+  followers_start: number | null;
+  followers_end: number | null;
+  messages: number;
+  unique_chatters: number;
+}
+
+export interface GameTrackerChannelSessionsResponse {
+  total: number;
+  rows: GameTrackerStreamSessionRow[];
+}
+
+export function getGameTrackerChannelSessions(
+  slug: string,
+  channelId: string,
+  limit = 50,
+  offset = 0,
+) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  return request<GameTrackerChannelSessionsResponse>(
+    `/api/game-trackers/${slug}/channels/${channelId}/sessions?${params.toString()}`,
+  );
+}
+
+export interface GameTrackerStreamTimelinePoint {
+  ts: string;
+  ccv: number;
+}
+
+export interface GameTrackerStreamChatMinute {
+  minute: string;
+  messages: number;
+  chatters: number;
+}
+
+export interface GameTrackerStreamDetailResponse {
+  session: GameTrackerStreamSessionRow;
+  timeline: GameTrackerStreamTimelinePoint[];
+  chat: GameTrackerStreamChatMinute[];
+  followers: { start: number | null; end: number | null; delta: number | null } | null;
+  titleChanges: GameTrackerTitleChange[];
+  rank: { byPeakInTracker: number | null; of: number | null } | null;
+  prevStreamId: string | null;
+  nextStreamId: string | null;
+}
+
+export function getGameTrackerStreamDetail(slug: string, channelId: string, streamId: string) {
+  return request<GameTrackerStreamDetailResponse>(
+    `/api/game-trackers/${slug}/channels/${channelId}/streams/${streamId}`,
+  );
+}
+
+export interface GameTrackerChannelSummary {
+  followers: { current: number | null; delta7d: number | null } | null;
+  rank: { todayByPeak: number | null; of: number | null } | null;
+  peakPercentile30d: number | null;
+  engagement: { avgChattersPerViewerPct: number | null } | null;
+}
+
+export function getGameTrackerChannelSummary(slug: string, channelId: string) {
+  return request<GameTrackerChannelSummary>(
+    `/api/game-trackers/${slug}/channels/${channelId}/summary`,
+  );
+}
