@@ -54,6 +54,7 @@ interface TwitchUserData {
 }
 
 export interface TwitchUserProfile {
+  id: string;
   login: string;
   displayName: string;
   profileImageUrl: string;
@@ -415,6 +416,7 @@ export class TwitchAdapter implements PlatformAdapter {
       if (!result) continue;
       for (const u of result) {
         out.push({
+          id: u.id,
           login: u.login,
           displayName: u.display_name,
           profileImageUrl: u.profile_image_url,
@@ -423,6 +425,22 @@ export class TwitchAdapter implements PlatformAdapter {
       }
     }
     return out;
+  }
+
+  /**
+   * Total follower count for a broadcaster via Helix
+   * GET /channels/followers?broadcaster_id=X&first=1. With an app access
+   * token the `data` array is withheld (needs moderator scope) but
+   * `total` is always returned — which is all we need. Null on failure.
+   */
+  async getChannelFollowerTotal(broadcasterId: string): Promise<number | null> {
+    const result = await this.requestWithRetry(async () => {
+      const { data } = await this.client.get<{ total: number }>('/channels/followers', {
+        params: { broadcaster_id: broadcasterId, first: 1 },
+      });
+      return data;
+    }, 'getChannelFollowerTotal');
+    return typeof result?.total === 'number' ? result.total : null;
   }
 
   async getGameId(gameName: string): Promise<string | null> {

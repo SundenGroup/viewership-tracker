@@ -3,6 +3,7 @@ import db from '../../utils/db';
 import * as GameTrackerModel from '../../models/game-tracker';
 import * as GameTrackerChannelModel from '../../models/game-tracker-channel';
 import * as GameTrackerSnapshotModel from '../../models/game-tracker-snapshot';
+import * as StreamSessionModel from '../../models/stream-session';
 import * as ChannelModel from '../../models/channel';
 import { requireRole } from '../middleware/auth';
 import type { GameTrackerService } from '../../services/game-tracker-service';
@@ -276,6 +277,120 @@ router.get('/:slug/channels/:channelId/timeline', async (req: Request, res: Resp
       channel,
       timeline,
       sessions,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Streamer depth (stored stream sessions + engagement) ──────────────
+
+/**
+ * GET /:slug/channels/:channelId/sessions?limit=30&offset=0
+ *
+ * Stored stream sessions for one channel, newest first. Live sessions
+ * are included with their current running peak (minute/chat finals stay
+ * 0 until the close pass computes them).
+ */
+router.get('/:slug/channels/:channelId/sessions', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
+    if (!tracker) {
+      res.status(404).json({ error: 'Game tracker not found' });
+      return;
+    }
+    const channelId = req.params.channelId as string;
+    const limit = req.query.limit ? Math.min(Math.max(Number(req.query.limit), 1), 200) : 30;
+    const offset = req.query.offset ? Math.max(0, Number(req.query.offset)) : 0;
+    const [total, sessions] = await Promise.all([
+      StreamSessionModel.countByChannel(tracker.id, channelId),
+      StreamSessionModel.listByChannel(tracker.id, channelId, limit, offset),
+    ]);
+    res.json({ total, rows: sessions.map(StreamSessionModel.toRow) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /:slug/channels/:channelId/streams/:streamId
+ *
+ * Deep-dive for a single stream session: the stored row, its per-minute
+ * CCV timeline, chat volume, follower delta, title history, same-day
+ * peak rank within the tracker, and prev/next stream navigation.
+ */
+router.get(
+  '/:slug/channels/:channelId/streams/:streamId',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
+      if (!tracker) {
+        res.status(404).json({ error: 'Game tracker not found' });
+        return;
+      }
+      const channelId = req.params.channelId as string;
+      const streamId = req.params.streamId as string;
+      const session = await StreamSessionModel.findByStream(tracker.id, channelId, streamId);
+      if (!session) {
+        res.status(404).json({ error: 'Stream session not found' });
+        return;
+      }
+      const windowEnd = session.ended_at ?? new Date();
+      const [timeline, chat, rank, neighbors] = await Promise.all([
+        StreamSessionModel.sessionTimeline(tracker.id, channelId, session.started_at, windowEnd),
+        StreamSessionModel.chatWindow(channelId, session.started_at, windowEnd),
+        StreamSessionModel.rankForSession(tracker.id, session.id),
+        StreamSessionModel.neighborStreamIds(tracker.id, channelId, session.started_at),
+      ]);
+      res.json({
+        session: StreamSessionModel.toRow(session),
+        timeline,
+        chat,
+        followers: {
+          start: session.followers_start,
+          end: session.followers_end,
+          delta:
+            session.followers_start != null && session.followers_end != null
+              ? session.followers_end - session.followers_start
+              : null,
+        },
+        titleChanges: session.titles,
+        rank,
+        prevStreamId: neighbors.prevStreamId,
+        nextStreamId: neighbors.nextStreamId,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * GET /:slug/channels/:channelId/summary
+ *
+ * Channel-level engagement summary: follower count + 7d delta, today's
+ * peak rank in the tracker, 30d peak percentile, and average chat
+ * engagement (chatters per viewer) over the last 30 days.
+ */
+router.get('/:slug/channels/:channelId/summary', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
+    if (!tracker) {
+      res.status(404).json({ error: 'Game tracker not found' });
+      return;
+    }
+    const channelId = req.params.channelId as string;
+    const [followers, rank, peakPercentile30d, avgChattersPerViewerPct] = await Promise.all([
+      StreamSessionModel.followerSummary(channelId),
+      StreamSessionModel.todayRank(tracker.id, channelId),
+      StreamSessionModel.peakPercentile30d(tracker.id, channelId),
+      StreamSessionModel.avgChattersPerViewerPct(tracker.id, channelId),
+    ]);
+    res.json({
+      followers,
+      rank,
+      peakPercentile30d,
+      engagement: { avgChattersPerViewerPct },
     });
   } catch (err) {
     next(err);
