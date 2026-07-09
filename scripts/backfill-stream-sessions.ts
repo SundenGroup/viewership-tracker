@@ -123,6 +123,11 @@ async function main() {
     process.exit(1);
   }
 
+  // The derive query windows over millions of snapshot rows — lift the DB's
+  // statement_timeout for this run. Run with DB_POOL_MAX=1 so the SET (a
+  // per-connection setting) applies to the connection every query uses.
+  await db.raw('SET statement_timeout = 0');
+
   try {
     let trackers: GameTrackerModel.GameTracker[];
     if (arg === '--all') {
