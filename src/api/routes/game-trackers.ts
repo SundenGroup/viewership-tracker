@@ -7,6 +7,7 @@ import * as StreamSessionModel from '../../models/stream-session';
 import * as ChannelModel from '../../models/channel';
 import { requireRole } from '../middleware/auth';
 import type { GameTrackerService } from '../../services/game-tracker-service';
+import { gradeForScore } from '../../services/stream-health';
 import logger from '../../utils/logger';
 
 const router = Router();
@@ -369,8 +370,10 @@ router.get(
  * GET /:slug/channels/:channelId/summary
  *
  * Channel-level engagement summary: follower count + 7d delta, today's
- * peak rank in the tracker, 30d peak percentile, and average chat
- * engagement (chatters per viewer) over the last 30 days.
+ * peak rank in the tracker, 30d peak percentile, average chat
+ * engagement (chatters per viewer) over the last 30 days, and the 30d
+ * health rollup (grade derived from the avg health_score of the
+ * channel's scored sessions; null when nothing is scored yet).
  */
 router.get('/:slug/channels/:channelId/summary', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -380,17 +383,21 @@ router.get('/:slug/channels/:channelId/summary', async (req: Request, res: Respo
       return;
     }
     const channelId = req.params.channelId as string;
-    const [followers, rank, peakPercentile30d, avgChattersPerViewerPct] = await Promise.all([
+    const [followers, rank, peakPercentile30d, avgChattersPerViewerPct, health] = await Promise.all([
       StreamSessionModel.followerSummary(channelId),
       StreamSessionModel.todayRank(tracker.id, channelId),
       StreamSessionModel.peakPercentile30d(tracker.id, channelId),
       StreamSessionModel.avgChattersPerViewerPct(tracker.id, channelId),
+      StreamSessionModel.healthSummary30d(tracker.id, channelId),
     ]);
     res.json({
       followers,
       rank,
       peakPercentile30d,
       engagement: { avgChattersPerViewerPct },
+      healthGrade30d: health.avgScore != null ? gradeForScore(health.avgScore) : null,
+      healthAvgScore30d: health.avgScore,
+      healthScoredSessions30d: health.scoredSessions,
     });
   } catch (err) {
     next(err);

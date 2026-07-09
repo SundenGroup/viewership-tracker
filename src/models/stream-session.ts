@@ -18,6 +18,26 @@ export interface TitleEntry {
   at: string;
 }
 
+/**
+ * Stream health (Stream Integrity Signals Phase 1). Written by
+ * src/services/stream-health.ts for ended sessions with ≥50 avg CCV,
+ * ≥30 min, and chat coverage. NULL columns = not scored (never a zero).
+ */
+export interface HealthFlag {
+  kind: string;
+  detail: string;
+}
+
+export interface HealthEvidence {
+  /** Engagement percentile within the cohort (null when cohort too small). */
+  engagementPct: number | null;
+  cohort: { tracker: string; band: string; n: number };
+  /** Plain-language findings — "signals, not proof". */
+  flags: HealthFlag[];
+  /** Out of engagement 40 / curve 30 / followers 15 / spikeResponse 15. */
+  subscores: { engagement: number; curve: number; followers: number; spikeResponse: number };
+}
+
 export interface StreamSession {
   id: string;
   game_tracker_id: string;
@@ -37,6 +57,9 @@ export interface StreamSession {
   followers_end: number | null;
   messages: number;
   unique_chatters: number;
+  health_score: number | null;
+  health_grade: string | null;
+  health_evidence: HealthEvidence | null;
 }
 
 /** The frozen row shape the sessions endpoints return. */
@@ -56,6 +79,9 @@ export interface StreamSessionRow {
   followers_end: number | null;
   messages: number;
   unique_chatters: number;
+  health_score: number | null;
+  health_grade: string | null;
+  health_evidence: HealthEvidence | null;
 }
 
 export interface UpsertLiveSession {
@@ -82,6 +108,9 @@ function coerce(row: Record<string, unknown>): StreamSession {
     messages: Number(row.messages),
     unique_chatters: Number(row.unique_chatters),
     titles: (row.titles ?? []) as TitleEntry[],
+    health_score: row.health_score != null ? Number(row.health_score) : null,
+    health_grade: (row.health_grade ?? null) as string | null,
+    health_evidence: (row.health_evidence ?? null) as HealthEvidence | null,
   };
 }
 
@@ -103,6 +132,9 @@ export function toRow(s: StreamSession): StreamSessionRow {
     followers_end: s.followers_end,
     messages: s.messages,
     unique_chatters: s.unique_chatters,
+    health_score: s.health_score,
+    health_grade: s.health_grade,
+    health_evidence: s.health_evidence,
   };
 }
 
@@ -542,6 +574,35 @@ export async function peakPercentile30d(
   const row = result.rows[0];
   if (!row || Number(row.n) < 10) return null;
   return Number(row.pct);
+}
+
+/**
+ * Health rollup over the channel's scored sessions in the last 30 days:
+ * average health_score (null when no session has been scored) and how
+ * many scored sessions back it.
+ */
+export async function healthSummary30d(
+  gameTrackerId: string,
+  channelId: string,
+): Promise<{ avgScore: number | null; scoredSessions: number }> {
+  const result = await db.raw<{
+    rows: Array<{ avg_score: number | null; n: string }>;
+  }>(
+    `
+    SELECT ROUND(AVG(health_score))::int AS avg_score, COUNT(*) AS n
+    FROM stream_sessions
+    WHERE game_tracker_id = ?
+      AND channel_id = ?
+      AND health_score IS NOT NULL
+      AND started_at >= now() - interval '30 days'
+    `,
+    [gameTrackerId, channelId],
+  );
+  const row = result.rows[0];
+  return {
+    avgScore: row?.avg_score != null ? Number(row.avg_score) : null,
+    scoredSessions: Number(row?.n ?? 0),
+  };
 }
 
 /**

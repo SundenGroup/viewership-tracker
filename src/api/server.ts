@@ -113,13 +113,15 @@ export function createApp() {
   app.use('/api/report-payload', reportPayloadRouter);
   app.use('/api/game-trackers', gameTrackersRouter);
   app.use('/api/relay-health', relayHealthRouter);
+  // Ask: /discover/:slug is viewer+ like the other tracker routes;
+  // /explore/:seriesId carries its own editor+ requireRole inside the router.
+  app.use('/api/ask', askRouter);
 
   // Editor+ routes
   app.use('/api/export', requireRole('admin', 'editor'), exportRouter);
   app.use('/api/import', requireRole('admin', 'editor'), viewershipImportRouter);
   app.use('/api/reports', requireRole('admin', 'editor'), reportsRouter);
   app.use('/api/push', requireRole('admin', 'editor'), pushRouter);
-  app.use('/api/ask', requireRole('admin', 'editor'), askRouter);
 
   // Admin-only routes
   app.use('/api/polling', requireRole('admin'), pollingRouter);

@@ -14,6 +14,7 @@
  *  10. Graceful shutdown handler (SIGINT, SIGTERM)
  */
 
+import cron, { type ScheduledTask } from 'node-cron';
 import { config } from './utils/config';
 import logger from './utils/logger';
 import db from './utils/db';
@@ -25,6 +26,7 @@ import { GameTrackerService } from './services/game-tracker-service';
 import { ReportAgent } from './agent/report-agent';
 import { ViewershipWebSocketServer } from './api/websocket';
 import { getPushNotifier } from './services/push-notifier';
+import { scoreSessions, sessionIdsEndedWithin } from './services/stream-health';
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
 
@@ -214,6 +216,44 @@ async function bootstrap(): Promise<void> {
   await gameTrackerService.start();
   logger.info('[CVT] Game tracker service started');
 
+  // ── 10c. Stream health scorer (cron) ───────────────────────────────────
+  // Hourly at :10 scores sessions ended in the last 3 hours; the daily
+  // 04:15 UTC pass re-scores the last 7 days (idempotent) so late chat /
+  // follower data and shifting cohort baselines settle. HEALTH_SCORER=0
+  // is the kill switch.
+  const healthScorerTasks: ScheduledTask[] = [];
+  if (process.env.HEALTH_SCORER === '0') {
+    logger.info('[StreamHealth] scorer disabled via HEALTH_SCORER=0');
+  } else {
+    healthScorerTasks.push(
+      cron.schedule('10 * * * *', async () => {
+        try {
+          const ids = await sessionIdsEndedWithin(3);
+          if (ids.length === 0) return;
+          await scoreSessions(ids);
+        } catch (err) {
+          logger.error('[StreamHealth] hourly scoring pass failed', {
+            error: (err as Error).message,
+          });
+        }
+      }, { timezone: 'Etc/UTC', noOverlap: true, name: 'stream-health-hourly' }),
+    );
+    healthScorerTasks.push(
+      cron.schedule('15 4 * * *', async () => {
+        try {
+          const ids = await sessionIdsEndedWithin(7 * 24);
+          if (ids.length === 0) return;
+          await scoreSessions(ids);
+        } catch (err) {
+          logger.error('[StreamHealth] daily scoring pass failed', {
+            error: (err as Error).message,
+          });
+        }
+      }, { timezone: 'Etc/UTC', noOverlap: true, name: 'stream-health-daily' }),
+    );
+    logger.info('[CVT] Stream health scorer scheduled (hourly :10, daily 04:15 UTC)');
+  }
+
   // ── 11. Startup complete ───────────────────────────────────────────────
   logger.info(
     `[CVT] Clutch Viewership Tracker started — API on port ${config.server.port}, WebSocket on port ${config.server.wsPort}`,
@@ -241,6 +281,15 @@ async function bootstrap(): Promise<void> {
     // Stop the polling orchestrator (clears poll interval, stops all discovery)
     logger.info('[CVT] Stopping polling orchestrator...');
     orchestrator.stop();
+
+    // Stop the stream health cron tasks (no-op when disabled)
+    for (const task of healthScorerTasks) {
+      try {
+        await task.destroy();
+      } catch {
+        // best-effort — shutdown proceeds regardless
+      }
+    }
 
     // Shutdown platform adapters (e.g. TikTok headless browser pool)
     logger.info('[CVT] Shutting down platform adapters...');

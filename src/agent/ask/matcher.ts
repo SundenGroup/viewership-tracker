@@ -18,8 +18,9 @@ export interface MatchedIntent {
 
 // ── Gazetteers ──────────────────────────────────────────────────────────────
 
-/** English language names → base codes (matching buildExploreVocabulary). */
-const LANGUAGE_NAMES: Record<string, string> = {
+/** English language names → base codes (matching buildExploreVocabulary).
+ *  Exported for the Discover matcher (discover-matcher.ts). */
+export const LANGUAGE_NAMES: Record<string, string> = {
   russian: 'ru',
   turkish: 'tr',
   english: 'en',
@@ -68,8 +69,9 @@ const TIER_WORDS: Record<string, string> = {
   partners: 'partner',
 };
 
-/** Platform words → platform ids (only kept when present in the vocab). */
-const PLATFORM_WORDS: Record<string, string> = {
+/** Platform words → platform ids (only kept when present in the vocab).
+ *  Exported for the Discover matcher (discover-matcher.ts). */
+export const PLATFORM_WORDS: Record<string, string> = {
   twitch: 'twitch',
   kick: 'kick',
   youtube: 'youtube',
