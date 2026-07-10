@@ -348,13 +348,29 @@ export function DiscoverStreamPage() {
       </Row>
 
       {/* Stream health — rendered only once the scorer has graded this
-          session (ended, big enough, chat-covered). */}
+          session (ended, big enough, chat-covered) AND the channel has
+          passed the evidence gate (enough scored sessions). */}
       {session.health_grade != null && session.health_score != null && (
         <StreamHealthPanel
           grade={session.health_grade}
           score={session.health_score}
           evidence={session.health_evidence}
         />
+      )}
+      {detail?.healthPending && detail.healthPending.scored > 0 && (
+        <div
+          style={{
+            padding: '8px 12px',
+            fontSize: 11,
+            color: 'var(--fg-dim)',
+            background: 'var(--bg-sunken)',
+            borderRadius: 6,
+          }}
+        >
+          Stream health: collecting data — {detail.healthPending.scored}/
+          {detail.healthPending.required} sessions scored. Grades appear once
+          enough streams have been measured to be fair.
+        </div>
       )}
 
       {/* Main chart */}

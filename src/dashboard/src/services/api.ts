@@ -1448,9 +1448,17 @@ export interface GameTrackerStreamSessionRow {
   health_evidence: GameTrackerHealthEvidence | null;
 }
 
+/** Present (non-null) while a channel has fewer scored sessions than the
+ *  server's evidence gate — health fields are suppressed until then. */
+export interface GameTrackerHealthPending {
+  scored: number;
+  required: number;
+}
+
 export interface GameTrackerChannelSessionsResponse {
   total: number;
   rows: GameTrackerStreamSessionRow[];
+  healthPending?: GameTrackerHealthPending | null;
 }
 
 export function getGameTrackerChannelSessions(
@@ -1477,6 +1485,7 @@ export interface GameTrackerStreamChatMinute {
 }
 
 export interface GameTrackerStreamDetailResponse {
+  healthPending?: GameTrackerHealthPending | null;
   session: GameTrackerStreamSessionRow;
   timeline: GameTrackerStreamTimelinePoint[];
   chat: GameTrackerStreamChatMinute[];
@@ -1502,6 +1511,8 @@ export interface GameTrackerChannelSummary {
   healthGrade30d: string | null;
   healthAvgScore30d: number | null;
   healthScoredSessions30d: number;
+  /** Scored sessions needed before grades are shown (server evidence gate). */
+  healthMinSessions?: number;
 }
 
 export function getGameTrackerChannelSummary(slug: string, channelId: string) {

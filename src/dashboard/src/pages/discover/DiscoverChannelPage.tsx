@@ -286,7 +286,7 @@ export function DiscoverChannelPage() {
                 </Pill>
               )}
               {engagementPct != null && <Pill>{engagementPct}% chatters/viewer</Pill>}
-              {summary?.healthGrade30d != null && (
+              {summary?.healthGrade30d != null ? (
                 <Pill
                   tone={
                     summary.healthGrade30d === 'A' || summary.healthGrade30d === 'B'
@@ -298,7 +298,16 @@ export function DiscoverChannelPage() {
                 >
                   Health {summary.healthGrade30d} (30d)
                 </Pill>
-              )}
+              ) : summary != null &&
+                summary.healthScoredSessions30d > 0 &&
+                summary.healthMinSessions != null &&
+                summary.healthScoredSessions30d < summary.healthMinSessions ? (
+                // Evidence gate: grades stay silent until enough sessions are
+                // scored — one odd stream must not read as a verdict.
+                <Pill>
+                  Health: collecting {summary.healthScoredSessions30d}/{summary.healthMinSessions}
+                </Pill>
+              ) : null}
             </Row>
           )}
         </Col>
