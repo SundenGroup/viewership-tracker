@@ -636,17 +636,19 @@ router.get('/tiktok/channels', requireRelayToken, async (_req: Request, res: Res
  */
 router.get('/kick/chatroom-pending', requireRelayToken, async (_req: Request, res: Response, next: NextFunction) => {
   try {
+    // Ordered by recent peak so the channels whose chat the collector will
+    // actually subscribe to resolve first — the 5-viewer long tail waits.
     const rows = await db.raw<{ rows: Array<{ slug: string }> }>(
       `
-      SELECT DISTINCT LOWER(c.channel_identifier) AS slug
+      SELECT LOWER(c.channel_identifier) AS slug, MAX(s.concurrent_viewers) AS recent_peak
       FROM channels c
+      JOIN game_tracker_snapshots s ON s.channel_id = c.id
+        AND s.timestamp > now() - interval '7 days'
+      JOIN game_trackers t ON t.id = s.game_tracker_id AND t.status = 'active'
       WHERE c.platform = 'kick'
         AND (c.metadata->>'kick_chatroom_id') IS NULL
-        AND EXISTS (
-          SELECT 1 FROM game_tracker_snapshots s
-          JOIN game_trackers t ON t.id = s.game_tracker_id AND t.status = 'active'
-          WHERE s.channel_id = c.id AND s.timestamp > now() - interval '7 days'
-        )
+      GROUP BY LOWER(c.channel_identifier)
+      ORDER BY MAX(s.concurrent_viewers) DESC
       LIMIT 50
       `,
     );
