@@ -16,6 +16,8 @@ export interface GameTracker {
   discovery_interval_seconds: number;
   polling_interval_seconds: number;
   max_active_channels: number;
+  /** Days of raw game_tracker_snapshots to keep; NULL = keep forever. */
+  retain_raw_days: number | null;
   metadata: Record<string, unknown>;
   created_at: Date;
   updated_at: Date;
@@ -34,6 +36,7 @@ export interface CreateGameTracker {
   discovery_interval_seconds?: number;
   polling_interval_seconds?: number;
   max_active_channels?: number;
+  retain_raw_days?: number | null;
   metadata?: Record<string, unknown>;
 }
 

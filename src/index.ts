@@ -27,6 +27,8 @@ import { ReportAgent } from './agent/report-agent';
 import { ViewershipWebSocketServer } from './api/websocket';
 import { getPushNotifier } from './services/push-notifier';
 import { scoreSessions, sessionIdsEndedWithin } from './services/stream-health';
+import { rollupRecentDays } from './services/gt-day-rollup';
+import { purgeExpiredRawSnapshots } from './services/raw-retention';
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
 
@@ -254,6 +256,60 @@ async function bootstrap(): Promise<void> {
     logger.info('[CVT] Stream health scorer scheduled (hourly :10, daily 04:15 UTC)');
   }
 
+  // ── 10d. Game-tracker daily rollup (cron) ──────────────────────────────
+  // Nightly at 04:20 UTC upserts yesterday's (and, idempotently, the day
+  // before's) per-tracker per-channel day stats into
+  // game_tracker_channel_day_stats — before the 04:40 raw purge, so a day
+  // is always summarized before its raw rows can age out. GT_ROLLUP=0 is
+  // the kill switch.
+  const maintenanceTasks: ScheduledTask[] = [];
+  if (process.env.GT_ROLLUP === '0') {
+    logger.info('[GTRollup] daily rollup disabled via GT_ROLLUP=0');
+  } else {
+    maintenanceTasks.push(
+      cron.schedule('20 4 * * *', async () => {
+        try {
+          const results = await rollupRecentDays(2);
+          logger.info('[GTRollup] nightly rollup complete', {
+            days: results.map((r) => `${r.day}=${r.rows}`),
+          });
+        } catch (err) {
+          logger.error('[GTRollup] nightly rollup failed', {
+            error: (err as Error).message,
+          });
+        }
+      }, { timezone: 'Etc/UTC', noOverlap: true, name: 'gt-day-rollup' }),
+    );
+    logger.info('[CVT] Game-tracker daily rollup scheduled (daily 04:20 UTC)');
+  }
+
+  // ── 10e. Raw-snapshot retention purge (cron) ───────────────────────────
+  // Nightly at 04:40 UTC deletes game_tracker_snapshots older than each
+  // tracker's retain_raw_days (NULL = keep forever), in 50k-row ctid
+  // batches. Permanent summaries (stream_sessions, chat_minute_rollup,
+  // channel_follower_snapshots, game_tracker_channel_day_stats) are never
+  // purged. RAW_RETENTION=0 is the kill switch.
+  if (process.env.RAW_RETENTION === '0') {
+    logger.info('[RawRetention] purge disabled via RAW_RETENTION=0');
+  } else {
+    maintenanceTasks.push(
+      cron.schedule('40 4 * * *', async () => {
+        try {
+          const results = await purgeExpiredRawSnapshots();
+          logger.info('[RawRetention] nightly purge complete', {
+            trackers: results.map((r) => `${r.slug}=${r.purged}`),
+            totalPurged: results.reduce((sum, r) => sum + r.purged, 0),
+          });
+        } catch (err) {
+          logger.error('[RawRetention] nightly purge failed', {
+            error: (err as Error).message,
+          });
+        }
+      }, { timezone: 'Etc/UTC', noOverlap: true, name: 'raw-retention' }),
+    );
+    logger.info('[CVT] Raw-snapshot retention purge scheduled (daily 04:40 UTC)');
+  }
+
   // ── 11. Startup complete ───────────────────────────────────────────────
   logger.info(
     `[CVT] Clutch Viewership Tracker started — API on port ${config.server.port}, WebSocket on port ${config.server.wsPort}`,
@@ -282,8 +338,8 @@ async function bootstrap(): Promise<void> {
     logger.info('[CVT] Stopping polling orchestrator...');
     orchestrator.stop();
 
-    // Stop the stream health cron tasks (no-op when disabled)
-    for (const task of healthScorerTasks) {
+    // Stop the cron tasks — health scorer, rollup, retention (no-op when disabled)
+    for (const task of [...healthScorerTasks, ...maintenanceTasks]) {
       try {
         await task.destroy();
       } catch {

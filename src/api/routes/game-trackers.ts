@@ -293,6 +293,18 @@ router.get('/:slug/channels/:channelId/timeline', async (req: Request, res: Resp
  * are included with their current running peak (minute/chat finals stay
  * 0 until the close pass computes them).
  */
+// Evidence gate: a channel must have this many SCORED sessions (30d)
+// before any health grade is shown anywhere. One odd stream (subathon
+// sleep segment, chat-elsewhere co-stream) must not read as a verdict —
+// scores are still computed and stored from session one, they just stay
+// silent until a pattern exists. Suppressed server-side so no client can
+// render an ungated grade.
+const HEALTH_MIN_SESSIONS = Math.max(1, Number(process.env.HEALTH_MIN_SESSIONS ?? 3));
+
+function stripHealth(row: ReturnType<typeof StreamSessionModel.toRow>) {
+  return { ...row, health_score: null, health_grade: null, health_evidence: null };
+}
+
 router.get('/:slug/channels/:channelId/sessions', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
@@ -303,11 +315,21 @@ router.get('/:slug/channels/:channelId/sessions', async (req: Request, res: Resp
     const channelId = req.params.channelId as string;
     const limit = req.query.limit ? Math.min(Math.max(Number(req.query.limit), 1), 200) : 30;
     const offset = req.query.offset ? Math.max(0, Number(req.query.offset)) : 0;
-    const [total, sessions] = await Promise.all([
+    const [total, sessions, health] = await Promise.all([
       StreamSessionModel.countByChannel(tracker.id, channelId),
       StreamSessionModel.listByChannel(tracker.id, channelId, limit, offset),
+      StreamSessionModel.healthSummary30d(tracker.id, channelId),
     ]);
-    res.json({ total, rows: sessions.map(StreamSessionModel.toRow) });
+    const gated = health.scoredSessions < HEALTH_MIN_SESSIONS;
+    res.json({
+      total,
+      rows: sessions.map((s) =>
+        gated ? stripHealth(StreamSessionModel.toRow(s)) : StreamSessionModel.toRow(s),
+      ),
+      healthPending: gated
+        ? { scored: health.scoredSessions, required: HEALTH_MIN_SESSIONS }
+        : null,
+    });
   } catch (err) {
     next(err);
   }
@@ -337,14 +359,21 @@ router.get(
         return;
       }
       const windowEnd = session.ended_at ?? new Date();
-      const [timeline, chat, rank, neighbors] = await Promise.all([
+      const [timeline, chat, rank, neighbors, health] = await Promise.all([
         StreamSessionModel.sessionTimeline(tracker.id, channelId, session.started_at, windowEnd),
         StreamSessionModel.chatWindow(channelId, session.started_at, windowEnd),
         StreamSessionModel.rankForSession(tracker.id, session.id),
         StreamSessionModel.neighborStreamIds(tracker.id, channelId, session.started_at),
+        StreamSessionModel.healthSummary30d(tracker.id, channelId),
       ]);
+      const gated = health.scoredSessions < HEALTH_MIN_SESSIONS;
       res.json({
-        session: StreamSessionModel.toRow(session),
+        healthPending: gated
+          ? { scored: health.scoredSessions, required: HEALTH_MIN_SESSIONS }
+          : null,
+        session: gated
+          ? stripHealth(StreamSessionModel.toRow(session))
+          : StreamSessionModel.toRow(session),
         timeline,
         chat,
         followers: {
@@ -390,14 +419,16 @@ router.get('/:slug/channels/:channelId/summary', async (req: Request, res: Respo
       StreamSessionModel.avgChattersPerViewerPct(tracker.id, channelId),
       StreamSessionModel.healthSummary30d(tracker.id, channelId),
     ]);
+    const gated = health.scoredSessions < HEALTH_MIN_SESSIONS;
     res.json({
       followers,
       rank,
       peakPercentile30d,
       engagement: { avgChattersPerViewerPct },
-      healthGrade30d: health.avgScore != null ? gradeForScore(health.avgScore) : null,
-      healthAvgScore30d: health.avgScore,
+      healthGrade30d: !gated && health.avgScore != null ? gradeForScore(health.avgScore) : null,
+      healthAvgScore30d: gated ? null : health.avgScore,
       healthScoredSessions30d: health.scoredSessions,
+      healthMinSessions: HEALTH_MIN_SESSIONS,
     });
   } catch (err) {
     next(err);

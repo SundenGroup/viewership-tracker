@@ -415,4 +415,251 @@ router.post('/csv', async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
+// ── Discover (game-tracker) backfill ─────────────────────────────────────
+//
+// Replaces or gap-fills a channel's broadcast-day data from
+// game_tracker_snapshots — the per-minute Twitch/Kick category tracker
+// that keeps polling independently of broadcast-day status. This is the
+// endpoint version of the two manual workflows used throughout PNC2026:
+//
+//   mode=replace    — Stream Together inflation repair: the stored values
+//                     are combined-badge totals; the game-tracker value is
+//                     the correct per-channel (Helix) slice.
+//   mode=fill-gaps  — crash/downtime recovery: the orchestrator wrote
+//                     nothing, but the game-tracker kept per-minute data
+//                     straight through the gap.
+//
+// The game tracker usually reuses the series' own channel rows, but when
+// a channel was discovered separately (a second row with the same
+// identifier) we match by (platform, lower(identifier)) too.
+
+interface BackfillBody {
+  channelId?: string;
+  broadcastDayId?: string;
+  date?: string;
+  timezone?: string;
+  startTime?: string;
+  endTime?: string;
+  mode?: 'replace' | 'fill-gaps';
+  dryRun?: boolean;
+}
+
+router.post('/discover-backfill', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const {
+      channelId,
+      broadcastDayId,
+      date,
+      timezone = 'Europe/Berlin',
+      startTime,
+      endTime,
+      mode = 'replace',
+      dryRun = true,
+    } = (req.body ?? {}) as BackfillBody;
+
+    if (!channelId || !broadcastDayId) {
+      res.status(400).json({ error: 'channelId and broadcastDayId are required' });
+      return;
+    }
+    if (mode !== 'replace' && mode !== 'fill-gaps') {
+      res.status(400).json({ error: "mode must be 'replace' or 'fill-gaps'" });
+      return;
+    }
+
+    const channel = await db('channels')
+      .where('id', channelId)
+      .first('id', 'series_id', 'platform', 'channel_identifier', 'display_name', 'language', 'region');
+    if (!channel) {
+      res.status(404).json({ error: 'Channel not found' });
+      return;
+    }
+    if (channel.platform !== 'twitch' && channel.platform !== 'kick') {
+      res.status(400).json({
+        error: `Discover backfill covers Twitch and Kick only (game-tracker scope); channel is ${channel.platform}`,
+      });
+      return;
+    }
+    const day = await db('broadcast_days')
+      .where('id', broadcastDayId)
+      .first('id', 'series_id', 'stage_id', 'label', 'date', 'broadcast_start', 'broadcast_end');
+    if (!day) {
+      res.status(404).json({ error: 'Broadcast day not found' });
+      return;
+    }
+    if (day.series_id !== channel.series_id) {
+      res.status(400).json({ error: 'Channel and broadcast day belong to different series' });
+      return;
+    }
+
+    // Resolve the UTC window: explicit local times on the given date, else
+    // the day's scheduled broadcast window.
+    let fromUtc: Date;
+    let toUtc: Date;
+    const startMin = hhmmToMinutes(startTime);
+    const endMin = hhmmToMinutes(endTime);
+    if (startMin !== null || endMin !== null) {
+      const baseDate = date ?? (day.date ? String(day.date).slice(0, 10) : null);
+      if (!baseDate) {
+        res.status(400).json({ error: 'date is required when startTime/endTime are given' });
+        return;
+      }
+      fromUtc =
+        startMin !== null
+          ? zonedToUtc(baseDate, Math.floor(startMin / 60), startMin % 60, 0, timezone)
+          : new Date(day.broadcast_start);
+      toUtc =
+        endMin !== null
+          ? zonedToUtc(baseDate, Math.floor(endMin / 60), endMin % 60, 59, timezone)
+          : new Date(day.broadcast_end);
+    } else {
+      fromUtc = new Date(day.broadcast_start);
+      toUtc = new Date(day.broadcast_end);
+    }
+    if (!(fromUtc < toUtc)) {
+      res.status(400).json({ error: 'Empty time window' });
+      return;
+    }
+
+    // Source rows: the channel itself + any same-identifier twins the
+    // game tracker may have created.
+    const twins = await db('channels')
+      .whereRaw('LOWER(channel_identifier) = ?', [channel.channel_identifier.toLowerCase()])
+      .where('platform', channel.platform)
+      .pluck('id');
+
+    const gtRows = await db('game_tracker_snapshots as g')
+      .join('game_trackers as t', 't.id', 'g.game_tracker_id')
+      .whereIn('g.channel_id', twins)
+      .whereBetween('g.timestamp', [fromUtc, toUtc])
+      .orderBy('g.timestamp', 'asc')
+      .select('g.timestamp', 'g.concurrent_viewers', 'g.stream_id', 'g.stream_title', 't.name as tracker_name');
+
+    if (gtRows.length === 0) {
+      res.status(404).json({
+        error: 'No game-tracker data for this channel in the window',
+        window: { fromUtc: fromUtc.toISOString(), toUtc: toUtc.toISOString() },
+      });
+      return;
+    }
+
+    // One point per minute (max wins when the tracker double-polled).
+    const byMinute = new Map<
+      number,
+      { ts: Date; viewers: number; streamId: string | null; title: string | null }
+    >();
+    for (const r of gtRows) {
+      const ts = new Date(r.timestamp);
+      const minute = Math.floor(ts.getTime() / 60_000);
+      const prev = byMinute.get(minute);
+      if (!prev || r.concurrent_viewers > prev.viewers) {
+        byMinute.set(minute, {
+          ts,
+          viewers: r.concurrent_viewers,
+          streamId: r.stream_id ?? null,
+          title: r.stream_title ?? null,
+        });
+      }
+    }
+    const points = [...byMinute.values()].sort((a, b) => a.ts.getTime() - b.ts.getTime());
+    const trackerName = gtRows[0].tracker_name as string;
+
+    // Existing rows in the window + (for fill-gaps) which minutes are taken.
+    const existingRows = await db('viewership_snapshots')
+      .where('channel_id', channel.id)
+      .where('broadcast_day_id', day.id)
+      .whereBetween('timestamp', [fromUtc, toUtc])
+      .select('timestamp');
+    const existingMinutes = new Set(
+      existingRows.map((r) => Math.floor(new Date(r.timestamp).getTime() / 60_000)),
+    );
+    const gapPoints = points.filter(
+      (p) => !existingMinutes.has(Math.floor(p.ts.getTime() / 60_000)),
+    );
+    const effectivePoints = mode === 'fill-gaps' ? gapPoints : points;
+
+    const fmtLocal = (dt: Date) =>
+      new Intl.DateTimeFormat('sv-SE', {
+        timeZone: timezone,
+        dateStyle: 'short',
+        timeStyle: 'medium',
+      }).format(dt);
+
+    const summary = {
+      channel: {
+        id: channel.id,
+        identifier: channel.channel_identifier,
+        displayName: channel.display_name,
+        platform: channel.platform,
+      },
+      day: { id: day.id, label: day.label },
+      mode,
+      source: `Discover game-tracker (${trackerName})`,
+      timezone,
+      range: {
+        fromUtc: fromUtc.toISOString(),
+        toUtc: toUtc.toISOString(),
+        fromLocal: fmtLocal(fromUtc),
+        toLocal: fmtLocal(toUtc),
+      },
+      trackerPoints: points.length,
+      existingRowsInRange: existingRows.length,
+      gapMinutes: gapPoints.length,
+      willDelete: mode === 'replace' ? existingRows.length : 0,
+      willInsert: effectivePoints.length,
+      sample: {
+        first: effectivePoints.slice(0, 3).map((p) => ({ t: p.ts.toISOString(), v: p.viewers })),
+        last: effectivePoints.slice(-3).map((p) => ({ t: p.ts.toISOString(), v: p.viewers })),
+      },
+    };
+
+    if (dryRun) {
+      res.json({ dryRun: true, ...summary });
+      return;
+    }
+    if (effectivePoints.length === 0) {
+      res.status(400).json({ error: 'Nothing to insert (no gap minutes in window)', ...summary });
+      return;
+    }
+
+    const insertRows = effectivePoints.map((p) => ({
+      channel_id: channel.id,
+      broadcast_day_id: day.id,
+      stage_id: day.stage_id,
+      series_id: day.series_id,
+      timestamp: p.ts,
+      concurrent_viewers: p.viewers,
+      platform: channel.platform,
+      language: channel.language,
+      region: channel.region,
+      stream_id: p.streamId,
+      stream_title: p.title,
+    }));
+
+    let deleted = 0;
+    await db.transaction(async (trx) => {
+      await trx.raw('SET LOCAL statement_timeout = 0');
+      if (mode === 'replace') {
+        deleted = await trx('viewership_snapshots')
+          .where('channel_id', channel.id)
+          .where('broadcast_day_id', day.id)
+          .whereBetween('timestamp', [fromUtc, toUtc])
+          .delete();
+      }
+      await trx.batchInsert('viewership_snapshots', insertRows, 500);
+    });
+
+    const user = (req as Request & { user?: { username?: string } }).user;
+    logger.info(
+      `[Import] Discover backfill (${mode}) by ${user?.username ?? 'unknown'}: ` +
+        `${channel.platform}/${channel.channel_identifier} on "${day.label}" — ` +
+        `deleted ${deleted}, inserted ${insertRows.length} from ${trackerName} ` +
+        `(${summary.range.fromLocal} → ${summary.range.toLocal} ${timezone})`,
+    );
+
+    res.json({ dryRun: false, ...summary, deleted, inserted: insertRows.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

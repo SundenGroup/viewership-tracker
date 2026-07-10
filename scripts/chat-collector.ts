@@ -20,10 +20,14 @@
  *
  * Channel selection (every 2 min): for all game_trackers with
  * status='active', take the channels seen live in game_tracker_snapshots in
- * the last 5 minutes with their latest CCV, keep platforms twitch|kick, and
- * subscribe to the global top N by CCV (N = CHAT_MAX_CHANNELS, default 150).
- * Channels that drop out of the top N stay subscribed for a 5-minute grace
- * period before being parted/unsubscribed.
+ * the last 5 minutes with their latest CCV, keep platforms twitch|kick,
+ * and drop anything below the CCV floor (CHAT_MIN_CCV, default 5 — low on
+ * purpose: capture nearly everyone). Each tracker is then guaranteed
+ * min(CHAT_TRACKER_QUOTA, its live channel count) slots for its top
+ * channels — so a small tracker isn't starved by a giant one — and the
+ * remainder is filled globally by CCV up to N (CHAT_MAX_CHANNELS, default
+ * 600). Channels that drop out of the selection stay subscribed for a
+ * 5-minute grace period before being parted/unsubscribed.
  *
  * Rollup flush (every 60s, aligned just after the minute boundary): one
  * batched upsert per flush —
@@ -40,7 +44,10 @@
  *
  * Environment (from .env or shell):
  *   DATABASE_URL       — Postgres connection string (required)
- *   CHAT_MAX_CHANNELS  — global top-N channels to watch (default 150)
+ *   CHAT_MAX_CHANNELS  — global top-N channels to watch (default 600)
+ *   CHAT_MIN_CCV       — ignore channels below this CCV (default 5)
+ *   CHAT_TRACKER_QUOTA — guaranteed selection slots per active tracker
+ *                        (default 50)
  *   KICK_PUSHER_KEY    — Kick's public Pusher app key (default baked in;
  *                        override when Kick rotates it)
  */
@@ -75,7 +82,14 @@ if (fs.existsSync(envPath)) {
 // ── Config ────────────────────────────────────────────────────────────────
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
-const CHAT_MAX_CHANNELS = clampInt(process.env.CHAT_MAX_CHANNELS, 150, 1, 2000);
+const CHAT_MAX_CHANNELS = clampInt(process.env.CHAT_MAX_CHANNELS, 600, 1, 2000);
+// CCV floor — channels below this never get selected. Deliberately LOW
+// (capture nearly everyone); raise it if connection counts get heavy.
+const CHAT_MIN_CCV = clampInt(process.env.CHAT_MIN_CCV, 5, 0, 1_000_000);
+// Per-tracker fairness: each active tracker is guaranteed
+// min(CHAT_TRACKER_QUOTA, its live channel count) slots before the
+// remainder fills globally by CCV.
+const CHAT_TRACKER_QUOTA = clampInt(process.env.CHAT_TRACKER_QUOTA, 50, 0, 2000);
 // Kick's public Pusher app key (same for every visitor) — overridable for
 // the day they rotate it.
 const KICK_PUSHER_KEY = process.env.KICK_PUSHER_KEY || '32cbd69e4b950bf97679';
@@ -601,15 +615,26 @@ interface SelectionRow {
   platform: string;
   identifier: string;
   kick_chatroom_id: string | null;
+  tracker_slug: string;
+  guaranteed: boolean;
 }
 
-// Latest snapshot per channel across all ACTIVE game trackers within the
-// live window, then global top N by that latest CCV. Snapshot rows are only
-// written for live streams, so "has a row in the window" == "seen live".
+// Latest snapshot per (tracker, channel) across all ACTIVE game trackers
+// within the live window (snapshot rows are only written for live streams,
+// so "has a row in the window" == "seen live"), CCV floor applied, then:
+//   1. rank each tracker's channels by CCV — ranks ≤ CHAT_TRACKER_QUOTA are
+//      that tracker's guaranteed slots (a tracker with fewer live channels
+//      than the quota just gets all of them);
+//   2. collapse to one row per channel (a channel live in several trackers
+//      keeps its best rank — guaranteed anywhere == guaranteed);
+//   3. guaranteed rows first so LIMIT can't cut them, remainder filled
+//      globally by CCV up to CHAT_MAX_CHANNELS.
+// Bindings: [CHAT_MIN_CCV, CHAT_TRACKER_QUOTA, CHAT_TRACKER_QUOTA, CHAT_MAX_CHANNELS]
 const SELECTION_SQL = `
-  SELECT channel_id, ccv, platform, identifier, kick_chatroom_id
-  FROM (
-    SELECT DISTINCT ON (s.channel_id)
+  WITH latest AS (
+    SELECT DISTINCT ON (s.game_tracker_id, s.channel_id)
+           s.game_tracker_id,
+           t.slug                          AS tracker_slug,
            s.channel_id,
            s.concurrent_viewers            AS ccv,
            c.platform::text                AS platform,
@@ -620,9 +645,27 @@ const SELECTION_SQL = `
     JOIN channels c      ON c.id = s.channel_id
     WHERE s."timestamp" > NOW() - INTERVAL '${LIVE_WINDOW_MINUTES} minutes'
       AND c.platform IN ('twitch', 'kick')
-    ORDER BY s.channel_id, s."timestamp" DESC
-  ) latest
-  ORDER BY ccv DESC
+    ORDER BY s.game_tracker_id, s.channel_id, s."timestamp" DESC
+  ),
+  ranked AS (
+    SELECT *,
+           ROW_NUMBER() OVER (
+             PARTITION BY game_tracker_id ORDER BY ccv DESC, channel_id
+           ) AS tracker_rank
+    FROM latest
+    WHERE ccv >= ?
+  ),
+  per_channel AS (
+    SELECT DISTINCT ON (channel_id)
+           channel_id, ccv, platform, identifier, kick_chatroom_id,
+           tracker_slug, tracker_rank
+    FROM ranked
+    ORDER BY channel_id, tracker_rank ASC, ccv DESC
+  )
+  SELECT channel_id, ccv, platform, identifier, kick_chatroom_id,
+         tracker_slug, (tracker_rank <= ?) AS guaranteed
+  FROM per_channel
+  ORDER BY (tracker_rank <= ?) DESC, ccv DESC
   LIMIT ?
 `;
 
@@ -641,16 +684,25 @@ async function runSelection(): Promise<void> {
   }
   selectionRunning = true;
   try {
-    const res = await db.raw(SELECTION_SQL, [CHAT_MAX_CHANNELS]);
+    const res = await db.raw(SELECTION_SQL, [
+      CHAT_MIN_CCV, CHAT_TRACKER_QUOTA, CHAT_TRACKER_QUOTA, CHAT_MAX_CHANNELS,
+    ]);
     const rows = ((res as { rows?: SelectionRow[] }).rows ?? []) as SelectionRow[];
     const now = Date.now();
 
-    // Merge into the tracked set. Rows arrive CCV-descending, so on duplicate
-    // (platform, identifier) pairs — same streamer in two series — the
-    // highest-CCV channel row wins the key.
+    // Merge into the tracked set. Rows arrive guaranteed-first, then
+    // CCV-descending, so on duplicate (platform, identifier) pairs — same
+    // streamer in two series — the best (guaranteed / highest-CCV) channel
+    // row wins the key.
     const selectedKeys = new Set<string>();
+    // Guaranteed quota coverage per tracker, for the selection log. A
+    // channel live in several trackers is attributed to its best-rank one.
+    const quotaBySlug = new Map<string, number>();
     let added = 0;
     for (const row of rows) {
+      if (row.guaranteed) {
+        quotaBySlug.set(row.tracker_slug, (quotaBySlug.get(row.tracker_slug) ?? 0) + 1);
+      }
       const platform = row.platform === 'twitch' || row.platform === 'kick' ? row.platform : null;
       if (!platform) continue;
       const identifier = (row.identifier ?? '').trim();
@@ -725,12 +777,16 @@ async function runSelection(): Promise<void> {
     twitchIrc.setDesired(twitchLogins);
     kickPusher.setDesired(kickRooms);
 
+    const quotaSummary = [...quotaBySlug.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([slug, n]) => `${slug} ${n}/${CHAT_TRACKER_QUOTA}`)
+      .join(', ');
     log(
       `selection: ${twitchLogins.size} twitch / ${kickRooms.size} kick` +
         ` (+${added} new, -${dropped} dropped, ${inGrace} in grace` +
         (kickPending > 0 ? `, ${kickPending} kick awaiting chatroom id` : '') +
         (kickSkippedSlugs.size > 0 ? `, ${kickSkippedSlugs.size} kick skipped` : '') +
-        ')',
+        `) — quota${quotaSummary ? ` ${quotaSummary}` : ' (none live)'}`,
     );
   } finally {
     selectionRunning = false;
@@ -899,6 +955,7 @@ async function main(): Promise<void> {
 
   log(
     `chat collector starting — top ${CHAT_MAX_CHANNELS} live channels (twitch|kick), ` +
+      `ccv floor ${CHAT_MIN_CCV}, ${CHAT_TRACKER_QUOTA} guaranteed slots/tracker, ` +
       `selection every ${SELECTION_INTERVAL_MS / 1000}s, flush every 60s` +
       (process.env.KICK_PUSHER_KEY ? ', KICK_PUSHER_KEY overridden from env' : ''),
   );
