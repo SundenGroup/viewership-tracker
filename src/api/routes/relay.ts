@@ -620,4 +620,74 @@ router.get('/tiktok/channels', requireRelayToken, async (_req: Request, res: Res
   }
 });
 
+// ── Kick chatroom-id resolution via residential relay ────────────────────
+//
+// Kick's unofficial API (the only source of chatroom ids, which the chat
+// collector needs for Pusher subscriptions) hard-403s datacenter IPs, and
+// the official OAuth API doesn't expose chatroom ids at all. Chatroom ids
+// are STATIC per channel, so the residential relay box resolves each one
+// exactly once and pushes it here; the collector picks cached ids up on
+// its next selection cycle automatically.
+
+/**
+ * GET /api/relay/kick/chatroom-pending
+ * Kick channels attached to active game trackers, seen live in the last
+ * 7 days, still missing metadata.kick_chatroom_id. Limit 50 per call.
+ */
+router.get('/kick/chatroom-pending', requireRelayToken, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const rows = await db.raw<{ rows: Array<{ slug: string }> }>(
+      `
+      SELECT DISTINCT LOWER(c.channel_identifier) AS slug
+      FROM channels c
+      WHERE c.platform = 'kick'
+        AND (c.metadata->>'kick_chatroom_id') IS NULL
+        AND EXISTS (
+          SELECT 1 FROM game_tracker_snapshots s
+          JOIN game_trackers t ON t.id = s.game_tracker_id AND t.status = 'active'
+          WHERE s.channel_id = c.id AND s.timestamp > now() - interval '7 days'
+        )
+      LIMIT 50
+      `,
+    );
+    res.json({ slugs: rows.rows.map((r) => r.slug) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/relay/kick/chatroom-ids
+ * Body: { ids: [{ slug, chatroomId }] } — caches each id on EVERY kick
+ * channel row sharing that slug (cross-series duplicates included).
+ */
+router.post('/kick/chatroom-ids', requireRelayToken, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const ids = (req.body?.ids ?? []) as Array<{ slug?: string; chatroomId?: number }>;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      res.status(400).json({ error: 'ids array required' });
+      return;
+    }
+    let updated = 0;
+    for (const entry of ids.slice(0, 100)) {
+      const slug = (entry.slug ?? '').toLowerCase().trim();
+      const chatroomId = Number(entry.chatroomId);
+      if (!/^[a-z0-9_-]+$/.test(slug) || !Number.isInteger(chatroomId) || chatroomId <= 0) continue;
+      const result = await db.raw(
+        `
+        UPDATE channels
+        SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('kick_chatroom_id', ?::int)
+        WHERE platform = 'kick' AND LOWER(channel_identifier) = ?
+        `,
+        [chatroomId, slug],
+      );
+      updated += (result as { rowCount?: number }).rowCount ?? 0;
+    }
+    logger.info(`[Relay] Kick chatroom ids: cached ${ids.length} slug(s) onto ${updated} channel row(s)`);
+    res.json({ received: ids.length, updatedRows: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
