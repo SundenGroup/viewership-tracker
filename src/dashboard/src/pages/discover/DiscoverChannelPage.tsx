@@ -637,7 +637,11 @@ function SessionsTable({
                 )}
               </td>
               <td style={{ ...td, ...numTd, fontWeight: 600 }}>{fmtCompact(s.peak_ccv)}</td>
-              <td style={{ ...td, ...numTd, color: 'var(--fg-muted)' }}>{fmtCompact(s.avg_ccv)}</td>
+              {/* Avg/duration are computed by the close pass — a LIVE row's
+                  zeros aren't data, so show em-dashes instead. */}
+              <td style={{ ...td, ...numTd, color: 'var(--fg-muted)' }}>
+                {s.status === 'live' && Number(s.avg_ccv) === 0 ? '—' : fmtCompact(s.avg_ccv)}
+              </td>
               {showChat && (
                 <td style={{ ...td, ...numTd, color: 'var(--fg-muted)' }}>
                   {Number(s.messages) > 0 ? fmtCompact(Number(s.messages)) : '—'}
@@ -649,7 +653,9 @@ function SessionsTable({
                 </td>
               )}
               <td style={{ ...td, ...numTd, color: 'var(--fg-dim)' }}>
-                {fmtDuration(s.minutes_live * 60_000)}
+                {s.status === 'live'
+                  ? fmtDuration(Math.max(0, Date.now() - new Date(s.started_at).getTime()))
+                  : fmtDuration(s.minutes_live * 60_000)}
               </td>
               {showHealth && (
                 <td style={{ ...td, textAlign: 'center' }}>
