@@ -59,7 +59,16 @@ import axios from 'axios';
 import knex from 'knex';
 import type { Knex } from 'knex';
 import WebSocket from 'ws';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { parsePrivmsg, parsePusherFrame, extractKickChat } from './lib/chat-parse';
+
+// Optional residential/ISP proxy for Kick's chatroom-id REST lookup only.
+// Kick's Cloudflare 403s datacenter IPs on that endpoint (the Pusher chat
+// WS itself is fine from anywhere). With KICK_PROXY_URL set the lookup runs
+// through a residential IP so the whole collector stays server-side — no
+// separate relay box needed. Unset = direct (still 403s from datacenters).
+const KICK_PROXY_URL = process.env.KICK_PROXY_URL?.trim() || '';
+const kickProxyAgent = KICK_PROXY_URL ? new HttpsProxyAgent(KICK_PROXY_URL) : undefined;
 
 // ── Load .env ─────────────────────────────────────────────────────────────
 
@@ -549,13 +558,17 @@ async function resolveKickChatroomId(slug: string): Promise<number | null> {
     const { data } = await axios.get<{ chatroom?: { id?: number } }>(
       `https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`,
       {
-        timeout: 10_000,
+        timeout: 15_000,
         headers: {
           'User-Agent': BROWSER_UA,
           Accept: 'application/json',
           'Accept-Language': 'en-US,en;q=0.9',
           Referer: `https://kick.com/${slug}`,
         },
+        // Route through the residential proxy when configured.
+        ...(kickProxyAgent
+          ? { httpsAgent: kickProxyAgent, httpAgent: kickProxyAgent, proxy: false as const }
+          : {}),
       },
     );
     const id = data?.chatroom?.id;
