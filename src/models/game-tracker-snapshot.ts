@@ -408,9 +408,15 @@ export async function channelSessions(
 
 /**
  * Search by stream title and channel display_name within a tracker.
- * Returns the most-recent matching snapshot per channel — so a streamer
- * who's been live multiple days only appears once with their latest
- * title.
+ * One row per matching channel with its latest title and window peak.
+ *
+ * Runs against stream_sessions (one row per stream, titles jsonb kept as
+ * a change history), NOT the raw snapshot table — an un-indexable ILIKE
+ * over tens of millions of snapshot rows is what used to run this
+ * straight into the statement timeout. Sessions are also retained
+ * forever, so long-window search keeps working after raw retention
+ * purges old snapshots. started_at gets a (window + 2d) prefilter so the
+ * (game_tracker_id, started_at) index does the heavy lifting.
  */
 export async function searchTitlesAndChannels(
   gameTrackerId: string,
@@ -437,40 +443,37 @@ export async function searchTitlesAndChannels(
     }>;
   }>(
     `
-    WITH match_set AS (
-      SELECT DISTINCT s.channel_id,
-        CASE
-          WHEN s.stream_title ILIKE ? THEN 'title'
-          WHEN c.display_name ILIKE ? OR c.channel_identifier ILIKE ? THEN 'channel'
-        END AS matched_field
-      FROM game_tracker_snapshots s
-      JOIN channels c ON c.id = s.channel_id
-      WHERE s.game_tracker_id = ?
-        AND s."timestamp" > NOW() - (?::int * INTERVAL '1 day')
-        AND (
-          s.stream_title ILIKE ?
-          OR c.display_name ILIKE ?
-          OR c.channel_identifier ILIKE ?
-        )
-    )
     SELECT
-      m.channel_id,
-      MAX(s."timestamp") AS last_seen,
-      (array_agg(s.stream_title ORDER BY s."timestamp" DESC) FILTER (WHERE s.stream_title IS NOT NULL))[1] AS stream_title,
-      MAX(s.concurrent_viewers) AS peak_ccv,
-      m.matched_field
-    FROM match_set m
-    JOIN game_tracker_snapshots s ON s.channel_id = m.channel_id AND s.game_tracker_id = ?
-    WHERE s."timestamp" > NOW() - (?::int * INTERVAL '1 day')
-    GROUP BY m.channel_id, m.matched_field
+      ss.channel_id,
+      MAX(ss.last_seen_at) AS last_seen,
+      (array_agg(ss.titles -> (jsonb_array_length(ss.titles) - 1) ->> 'title'
+                 ORDER BY ss.last_seen_at DESC)
+         FILTER (WHERE jsonb_array_length(ss.titles) > 0))[1] AS stream_title,
+      MAX(ss.peak_ccv) AS peak_ccv,
+      CASE WHEN BOOL_OR(c.display_name ILIKE ? OR c.channel_identifier ILIKE ?)
+           THEN 'channel' ELSE 'title' END AS matched_field
+    FROM stream_sessions ss
+    JOIN channels c ON c.id = ss.channel_id
+    WHERE ss.game_tracker_id = ?
+      AND ss.started_at > NOW() - ((?::int + 2) * INTERVAL '1 day')
+      AND ss.last_seen_at > NOW() - (?::int * INTERVAL '1 day')
+      AND (
+        c.display_name ILIKE ?
+        OR c.channel_identifier ILIKE ?
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements(ss.titles) t
+          WHERE t ->> 'title' ILIKE ?
+        )
+      )
+    GROUP BY ss.channel_id
     ORDER BY last_seen DESC
     LIMIT ?
     `,
     [
+      escaped, escaped,
+      gameTrackerId, daysBack, daysBack,
       escaped, escaped, escaped,
-      gameTrackerId, daysBack,
-      escaped, escaped, escaped,
-      gameTrackerId, daysBack, limit,
+      limit,
     ],
   );
   return result.rows.map((r) => ({
