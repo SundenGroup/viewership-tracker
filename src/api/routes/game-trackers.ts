@@ -7,7 +7,6 @@ import * as StreamSessionModel from '../../models/stream-session';
 import * as ChannelModel from '../../models/channel';
 import { requireRole } from '../middleware/auth';
 import type { GameTrackerService } from '../../services/game-tracker-service';
-import { gradeForScore } from '../../services/stream-health';
 import logger from '../../utils/logger';
 
 const router = Router();
@@ -401,8 +400,8 @@ router.get(
  * Channel-level engagement summary: follower count + 7d delta, today's
  * peak rank in the tracker, 30d peak percentile, average chat
  * engagement (chatters per viewer) over the last 30 days, and the 30d
- * health rollup (grade derived from the avg health_score of the
- * channel's scored sessions; null when nothing is scored yet).
+ * health rollup (median flag-gated grade of the channel's scored
+ * sessions; null when nothing is scored yet).
  */
 router.get('/:slug/channels/:channelId/summary', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -425,7 +424,7 @@ router.get('/:slug/channels/:channelId/summary', async (req: Request, res: Respo
       rank,
       peakPercentile30d,
       engagement: { avgChattersPerViewerPct },
-      healthGrade30d: !gated && health.avgScore != null ? gradeForScore(health.avgScore) : null,
+      healthGrade30d: !gated ? health.medianGrade : null,
       healthAvgScore30d: gated ? null : health.avgScore,
       healthScoredSessions30d: health.scoredSessions,
       healthMinSessions: HEALTH_MIN_SESSIONS,

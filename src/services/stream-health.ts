@@ -20,6 +20,17 @@
  * Cohort-relative baselines are the whole point: 3% chat ratio is normal
  * at 50k CCV and damning at 300.
  *
+ * Grades are a SUSPICION verdict, not a class rank (the percentile
+ * subscores are zero-sum — half of all streams are below median by
+ * construction, and that alone must not read as an accusation):
+ *   - no flags        → floor at C ("typical"), A/B still possible
+ *   - D               → requires at least one flag
+ *   - F               → requires ≥2 strong flags (low_engagement,
+ *                       chat_unresponsive, flat_curve), OR a single
+ *                       critical flag: extremely low chat↔viewer ratio
+ *                       (bottom 5% AND under 1/3 of cohort typical) is
+ *                       damning enough on its own.
+ *
  * Subscores (composite = sum, 0-100):
  *   - Engagement (40): percentile of mean(chatters/ccv per minute) within
  *     the cohort, scaled to 40. Cohort < MIN_COHORT_N → neutral 20.
@@ -33,8 +44,8 @@
  *     viewer-minutes vs cohort. Null follower data (or cohort too small)
  *     → neutral 10.
  *   - Spike response (15): Pearson corr of Δccv vs Δchatters across the
- *     session. corr ≥ 0.2 → 15, 0 ≤ corr < 0.2 → 8, corr < 0 with spikes
- *     present → 0, no spikes → neutral 10.
+ *     session. corr ≥ 0.2 → 15, -0.1 ≤ corr < 0.2 → 8 (near-zero is
+ *     noise), corr < -0.1 with spikes present → 0, no spikes → neutral 10.
  *
  * All SQL is set-based (one cohort-stats statement per run); only the
  * per-target curve analysis runs in JS, over per-minute arrays fetched in
@@ -65,11 +76,23 @@ const RESPONSE_MAX = 15;
 const FLAT_CV_RATIO = 0.25;        // session CV < 25% of cohort median CV → flat
 const STEP_DELTA_RATIO = 0.35;     // |Δccv| > 35% of level → step candidate
 const STEP_MAX_GAP_MIN = 2;        // ... when the two samples are ≤ 2 min apart
-const EDGE_MINUTES = 5;            // ignore steps within 5 min of session edges
+const EDGE_START_MINUTES = 15;     // ignore steps/spikes in the first 15 min —
+                                   // scheduled broadcasts ramp in blocks
+const EDGE_END_MINUTES = 5;        // ... and the last 5 min of a session
 const RISE_LEVEL_FLOOR = 50;       // ignore rises off a base < 50 ccv (tiny
                                    // denominators make 10→45 read as +350%)
 const SPIKE_TITLE_WINDOW_MS = 3 * 60_000; // a title change within ±3 min explains a spike
 const FALLBACK_SPIKE_RISE = 0.5;   // spike threshold when the cohort p99 is unavailable
+const CORR_NOISE_FLOOR = -0.1;     // corr in [-0.1, 0) is statistical noise, not
+                                   // "chat moved oppositely" — score it neutral
+
+// ── Grade gating ───────────────────────────────────────────────────────
+/** Flags weighty enough that two together justify an F. */
+const STRONG_FLAGS = new Set(['low_engagement', 'chat_unresponsive', 'flat_curve']);
+/** Extreme chat↔viewer ratio: bottom N% of cohort AND under this fraction
+ *  of the cohort's typical ratio → critical flag → F on its own. */
+const EXTREME_ENG_PCT = 5;
+const EXTREME_ENG_RATIO = 1 / 3;
 
 /** How many target sessions to fetch per-minute arrays for at a time. */
 const CURVE_CHUNK = 200;
@@ -85,6 +108,20 @@ export function gradeForScore(score: number): HealthGrade {
   if (score >= 55) return 'C';
   if (score >= 40) return 'D';
   return 'F';
+}
+
+/**
+ * Flag-gated letter. The score alone can only sink a stream as far as C —
+ * D and F are reserved for streams with actual red flags, because that is
+ * what the letter is for: flagging suspicious / unhealthy streams, not
+ * ranking typical ones.
+ */
+export function assignGrade(score: number, flags: HealthFlag[]): HealthGrade {
+  if (flags.some((f) => f.severity === 'critical')) return 'F';
+  const base = gradeForScore(score);
+  if (flags.length === 0) return base === 'A' || base === 'B' ? base : 'C';
+  if (base === 'F' && flags.filter((f) => STRONG_FLAGS.has(f.kind)).length < 2) return 'D';
+  return base;
 }
 
 export interface ScoreRunResult {
@@ -406,7 +443,7 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
       const { score, evidence } = scoreOne(candidate, stats, cohort, targetBand.get(id) as SizeBand, minutes);
       ids.push(id);
       scores.push(score);
-      grades.push(gradeForScore(score));
+      grades.push(assignGrade(score, evidence.flags));
       evidences.push(JSON.stringify(evidence));
     }
     if (ids.length === 0) continue;
@@ -506,13 +543,20 @@ function scoreOne(
     engagementPts = Math.round((engagementPct / 100) * ENGAGEMENT_MAX);
     if (engagementPct <= 10) {
       const per1k = Math.round(stats.engRatio * 1000);
-      const medianPer1k = Math.round(median(cohort.engs) * 1000);
+      const cohortMedian = median(cohort.engs);
+      const medianPer1k = Math.round(cohortMedian * 1000);
+      const critical =
+        engagementPct <= EXTREME_ENG_PCT && stats.engRatio < EXTREME_ENG_RATIO * cohortMedian;
       flags.push({
         kind: 'low_engagement',
+        ...(critical ? { severity: 'critical' as const } : {}),
         detail:
           `Roughly ${per1k} unique chatters per 1,000 viewers each minute — ` +
           `bottom ${Math.max(engagementPct, 1)}% of ${band}-CCV ${tracker} streams from the ` +
-          `last 30 days (typical is ~${medianPer1k}).`,
+          `last 30 days (typical is ~${medianPer1k}).` +
+          (critical
+            ? ' Chat this quiet for the audience size is the strongest single signal we track.'
+            : ''),
       });
     }
   } else {
@@ -544,8 +588,8 @@ function scoreOne(
   // from session edges. One -10 regardless of how many steps.
   const startMs = new Date(candidate.started_at).getTime();
   const endMs = new Date(candidate.ended_at).getTime();
-  const edgeLo = startMs + EDGE_MINUTES * 60_000;
-  const edgeHi = endMs - EDGE_MINUTES * 60_000;
+  const edgeLo = startMs + EDGE_START_MINUTES * 60_000;
+  const edgeHi = endMs - EDGE_END_MINUTES * 60_000;
   const steps: Array<{ from: number; to: number; t: number; gapMin: number }> = [];
   for (let i = 1; i < minutes.length; i++) {
     const prev = minutes[i - 1] as MinutePoint;
@@ -585,6 +629,7 @@ function scoreOne(
   for (let i = 1; i < minutes.length; i++) {
     const prev = minutes[i - 1] as MinutePoint;
     const cur = minutes[i] as MinutePoint;
+    if (cur.t <= edgeLo || cur.t >= edgeHi) continue; // arrival ramp / wind-down
     if (prev.ccv < RISE_LEVEL_FLOOR || cur.ccv <= prev.ccv) continue;
     const rise = (cur.ccv - prev.ccv) / prev.ccv;
     if (rise > spikeThreshold) spikes.push({ from: prev.ccv, to: cur.ccv, t: cur.t, rise });
@@ -639,8 +684,8 @@ function scoreOne(
       responsePts = 8; // undefined correlation (flat series) ≈ corr 0
     } else if (corr >= 0.2) {
       responsePts = RESPONSE_MAX;
-    } else if (corr >= 0) {
-      responsePts = 8;
+    } else if (corr >= CORR_NOISE_FLOOR) {
+      responsePts = 8; // near-zero either side is noise, not opposition
     } else {
       responsePts = 0;
       flags.push({

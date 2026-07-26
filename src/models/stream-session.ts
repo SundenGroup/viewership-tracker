@@ -26,6 +26,8 @@ export interface TitleEntry {
 export interface HealthFlag {
   kind: string;
   detail: string;
+  /** 'critical' = damning on its own (caps the grade at F). */
+  severity?: 'critical';
 }
 
 export interface HealthEvidence {
@@ -578,18 +580,22 @@ export async function peakPercentile30d(
 
 /**
  * Health rollup over the channel's scored sessions in the last 30 days:
- * average health_score (null when no session has been scored) and how
- * many scored sessions back it.
+ * average health_score, the MEDIAN session grade (letters are flag-gated
+ * per session, so the channel letter must come from the session letters,
+ * not from re-cutting the avg score — A-F sorts correctly as text), and
+ * how many scored sessions back it.
  */
 export async function healthSummary30d(
   gameTrackerId: string,
   channelId: string,
-): Promise<{ avgScore: number | null; scoredSessions: number }> {
+): Promise<{ avgScore: number | null; medianGrade: string | null; scoredSessions: number }> {
   const result = await db.raw<{
-    rows: Array<{ avg_score: number | null; n: string }>;
+    rows: Array<{ avg_score: number | null; median_grade: string | null; n: string }>;
   }>(
     `
-    SELECT ROUND(AVG(health_score))::int AS avg_score, COUNT(*) AS n
+    SELECT ROUND(AVG(health_score))::int AS avg_score,
+           percentile_disc(0.5) WITHIN GROUP (ORDER BY health_grade) AS median_grade,
+           COUNT(*) AS n
     FROM stream_sessions
     WHERE game_tracker_id = ?
       AND channel_id = ?
@@ -601,6 +607,7 @@ export async function healthSummary30d(
   const row = result.rows[0];
   return {
     avgScore: row?.avg_score != null ? Number(row.avg_score) : null,
+    medianGrade: row?.median_grade ?? null,
     scoredSessions: Number(row?.n ?? 0),
   };
 }
