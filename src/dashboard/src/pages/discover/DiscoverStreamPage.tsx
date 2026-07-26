@@ -688,7 +688,7 @@ function StreamHealthPanel({
                     width: 6,
                     height: 6,
                     borderRadius: 999,
-                    background: 'var(--warn)',
+                    background: f.severity === 'critical' ? 'var(--danger)' : 'var(--warn)',
                     flexShrink: 0,
                     marginTop: 5,
                   }}
@@ -706,7 +706,7 @@ function StreamHealthPanel({
         {engagementPct != null && cohort != null && (
           <>Chat engagement in the {ordinal(engagementPct)} percentile of its cohort. </>
         )}
-        Signals, not proof — see methodology.
+        C means typical — D and F appear only when red flags are detected. Signals, not proof.
       </div>
     </Section>
   );

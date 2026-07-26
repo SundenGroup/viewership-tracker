@@ -1412,6 +1412,8 @@ export interface GameTrackerTitleChange {
 export interface GameTrackerHealthFlag {
   kind: string;
   detail: string;
+  /** 'critical' = damning on its own (caps the grade at F). */
+  severity?: 'critical';
 }
 
 export interface GameTrackerHealthEvidence {

@@ -43,10 +43,15 @@ const RANGES: Record<RangePreset, { hours: number; bucketSeconds: number; label:
   '30d': { hours: 24 * 30, bucketSeconds: 3600, label: '30d' },
 };
 
-/** Stream health grade → color. A/B healthy, C caution, D/F review. */
+/**
+ * Stream health grade → color. A/B healthy, C typical (grades are
+ * flag-gated: a clean stream never falls below C, so C is neutral, not a
+ * caution), D flagged, F suspicious.
+ */
 export function healthGradeColor(grade: string): string {
   if (grade === 'A' || grade === 'B') return 'var(--live)';
-  if (grade === 'C') return 'var(--warn)';
+  if (grade === 'C') return 'var(--fg-muted)';
+  if (grade === 'D') return 'var(--warn)';
   return 'var(--danger)';
 }
 
