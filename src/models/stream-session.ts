@@ -38,6 +38,8 @@ export interface HealthEvidence {
   flags: HealthFlag[];
   /** Out of engagement 40 / curve 30 / followers 15 / spikeResponse 15. */
   subscores: { engagement: number; curve: number; followers: number; spikeResponse: number };
+  /** Pre-gate subscore sum, present only when a flag gate moved the score. */
+  rawScore?: number;
 }
 
 export interface StreamSession {

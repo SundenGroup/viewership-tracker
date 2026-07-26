@@ -22,14 +22,18 @@
  *
  * Grades are a SUSPICION verdict, not a class rank (the percentile
  * subscores are zero-sum — half of all streams are below median by
- * construction, and that alone must not read as an accusation):
- *   - no flags        → floor at C ("typical"), A/B still possible
- *   - D               → requires at least one flag
- *   - F               → requires ≥2 strong flags (low_engagement,
+ * construction, and that alone must not read as an accusation). The flag
+ * gates are applied to the STORED SCORE (applyGradeGates) so the letter
+ * is always a pure function of the number — same score, same letter:
+ *   - no flags        → score floored into the C band ("typical")
+ *   - D band          → requires at least one flag
+ *   - F band          → requires ≥2 strong flags (low_engagement,
  *                       chat_unresponsive, flat_curve), OR a single
  *                       critical flag: extremely low chat↔viewer ratio
- *                       (bottom 5% AND under 1/3 of cohort typical) is
- *                       damning enough on its own.
+ *                       (bottom 5% AND under 1/3 of cohort typical) caps
+ *                       the score at 39 on its own.
+ * When a gate moves the score, the pre-gate sum is kept in
+ * evidence.rawScore (subscores may not sum to the stored score).
  *
  * Subscores (composite = sum, 0-100):
  *   - Engagement (40): percentile of mean(chatters/ccv per minute) within
@@ -111,17 +115,20 @@ export function gradeForScore(score: number): HealthGrade {
 }
 
 /**
- * Flag-gated letter. The score alone can only sink a stream as far as C —
- * D and F are reserved for streams with actual red flags, because that is
- * what the letter is for: flagging suspicious / unhealthy streams, not
- * ranking typical ones.
+ * Flag gates, applied to the SCORE so the letter stays a pure function of
+ * the number (a 36 must always be the same letter — score and grade
+ * disagreeing destroys credibility). D and F are reserved for streams
+ * with actual red flags; percentile rank alone can only sink a stream to
+ * the bottom of the C band:
+ *   - critical flag        → capped into the F band (≤39)
+ *   - no flags             → floored into the C band (≥55)
+ *   - no two strong flags  → floored into the D band (≥40)
  */
-export function assignGrade(score: number, flags: HealthFlag[]): HealthGrade {
-  if (flags.some((f) => f.severity === 'critical')) return 'F';
-  const base = gradeForScore(score);
-  if (flags.length === 0) return base === 'A' || base === 'B' ? base : 'C';
-  if (base === 'F' && flags.filter((f) => STRONG_FLAGS.has(f.kind)).length < 2) return 'D';
-  return base;
+export function applyGradeGates(score: number, flags: HealthFlag[]): number {
+  if (flags.some((f) => f.severity === 'critical')) return Math.min(score, 39);
+  if (flags.length === 0) return Math.max(score, 55);
+  if (score < 40 && flags.filter((f) => STRONG_FLAGS.has(f.kind)).length < 2) return 40;
+  return score;
 }
 
 export interface ScoreRunResult {
@@ -441,9 +448,11 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
       if (!candidate || !stats || minutes.length < 3) continue;
       const cohort = cohorts.get(`${candidate.game_tracker_id} ${targetBand.get(id)}`) ?? null;
       const { score, evidence } = scoreOne(candidate, stats, cohort, targetBand.get(id) as SizeBand, minutes);
+      const gated = applyGradeGates(score, evidence.flags);
+      if (gated !== score) evidence.rawScore = score;
       ids.push(id);
-      scores.push(score);
-      grades.push(assignGrade(score, evidence.flags));
+      scores.push(gated);
+      grades.push(gradeForScore(gated));
       evidences.push(JSON.stringify(evidence));
     }
     if (ids.length === 0) continue;
