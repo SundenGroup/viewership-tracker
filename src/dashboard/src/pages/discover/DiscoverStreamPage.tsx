@@ -35,7 +35,7 @@ import {
 import { fmtN, fmtCompact, fmtDuration } from '@/design/format';
 import { downloadCsv, csvStamp } from '@/utils/csv';
 import { Avatar } from './DiscoverDetailPage';
-import { ChannelKpi, healthGradeColor } from './DiscoverChannelPage';
+import { ChannelKpi, healthGradeColor, collectingHealthCopy } from './DiscoverChannelPage';
 
 type TrackerChannelMeta = GameTrackerChannelTimelineResponse['channel'];
 
@@ -168,7 +168,7 @@ export function DiscoverStreamPage() {
     return (
       <div style={{ padding: 32 }}>
         <BackLink slug={slug} channelId={channelId} />
-        <Section style={{ marginTop: 20, color: 'var(--red)' }}>{error}</Section>
+        <Section style={{ marginTop: 20, color: 'var(--danger)' }}>{error}</Section>
       </div>
     );
   }
@@ -294,7 +294,7 @@ export function DiscoverStreamPage() {
       <Row gap={12} wrap style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginBottom: 16 }}>
         <ChannelKpi
           icon={<IconTrophy size={13} />}
-          label="Peak CCV"
+          label="Peak viewers"
           value={fmtN(session.peak_ccv)}
           sub={
             peakPoint
@@ -305,7 +305,7 @@ export function DiscoverStreamPage() {
               : undefined
           }
         />
-        <ChannelKpi icon={<IconUsers size={13} />} label="Avg CCV" value={fmtN(session.avg_ccv)} />
+        <ChannelKpi icon={<IconUsers size={13} />} label="Avg viewers" value={fmtN(session.avg_ccv)} />
         <ChannelKpi
           icon={<IconEye size={13} />}
           label="Hours watched"
@@ -357,19 +357,19 @@ export function DiscoverStreamPage() {
           evidence={session.health_evidence}
         />
       )}
-      {detail?.healthPending && detail.healthPending.scored > 0 && (
+      {session.health_grade == null && detail?.healthPending && (
         <div
           style={{
             padding: '8px 12px',
+            marginBottom: 16,
             fontSize: 11,
             color: 'var(--fg-dim)',
             background: 'var(--bg-sunken)',
             borderRadius: 6,
           }}
         >
-          Stream health: collecting data — {detail.healthPending.scored}/
-          {detail.healthPending.required} sessions scored. Grades appear once
-          enough streams have been measured to be fair.
+          {collectingHealthCopy(detail.healthPending.scored, detail.healthPending.required)}.
+          Grades appear once enough streams have been measured to be fair.
         </div>
       )}
 
@@ -460,6 +460,7 @@ export function DiscoverStreamPage() {
                   stroke="var(--red)"
                   strokeWidth={1.8}
                   dot={false}
+                  isAnimationActive={false}
                 />
               </ComposedChart>
             </ResponsiveContainer>
@@ -467,10 +468,10 @@ export function DiscoverStreamPage() {
         )}
       </Section>
 
-      {/* Prev/next footer */}
+      {/* Prev/next footer — same wording as the top chevrons' tooltips */}
       <Row justify="space-between" align="center">
-        <FooterNavLink to={prevTo} state={navState} label="← previous stream" />
-        <FooterNavLink to={nextTo} state={navState} label="next stream →" />
+        <FooterNavLink to={prevTo} state={navState} label="‹ Previous stream" disabledHint="No earlier stream tracked" />
+        <FooterNavLink to={nextTo} state={navState} label="Next stream ›" disabledHint="No later stream tracked" />
       </Row>
     </div>
   );
@@ -530,7 +531,11 @@ function NavChevron({
   );
   if (!to) {
     return (
-      <span style={style} aria-disabled="true">
+      <span
+        style={{ ...style, cursor: 'not-allowed' }}
+        aria-disabled="true"
+        title={dir === 'prev' ? 'No earlier stream tracked' : 'No later stream tracked'}
+      >
         {icon}
       </span>
     );
@@ -546,19 +551,26 @@ function FooterNavLink({
   to,
   state,
   label,
+  disabledHint,
 }: {
   to: string | null;
   state?: { channel: TrackerChannelMeta };
   label: string;
+  disabledHint?: string;
 }) {
   if (!to) {
-    return <span style={{ fontSize: 12, color: 'var(--fg-faint)' }}>{label}</span>;
+    return (
+      <span title={disabledHint} style={{ fontSize: 12, color: 'var(--fg-faint)', cursor: 'not-allowed' }}>
+        {label}
+      </span>
+    );
   }
   return (
     <Link
       to={to}
       state={state}
-      style={{ fontSize: 12, color: 'var(--fg-muted)', textDecoration: 'none' }}
+      className="btn btn-xs"
+      style={{ fontSize: 12, textDecoration: 'none' }}
     >
       {label}
     </Link>

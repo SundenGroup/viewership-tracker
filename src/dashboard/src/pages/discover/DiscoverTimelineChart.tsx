@@ -8,6 +8,7 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from 'recharts';
+import { fmtCompact, fmtN } from '@/design/format';
 
 interface Bucket {
   ts: string;
@@ -25,9 +26,15 @@ interface Props {
   height?: number;
   selection: Selection | null;
   onPick: (sel: Selection) => void;
+  /** Range fetch in flight — dims the chart and blocks the empty state. */
+  loading?: boolean;
 }
 
 const DRAG_THRESHOLD_PX = 6;
+// Plot-area bounds for pointer→bucket mapping and the selection overlays.
+// Must match the chart config below: margin.left 5 + YAxis width 50.
+const PLOT_LEFT = 55;
+const PLOT_RIGHT = 20;
 
 /**
  * Lightweight drag-to-select timeseries for Discover trends. Click a
@@ -36,7 +43,7 @@ const DRAG_THRESHOLD_PX = 6;
  * Mirrors the InteractiveMainChart UX in spirit but keeps the surface
  * small: one series, one set of overlays, no scope/series complexity.
  */
-export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick }: Props) {
+export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick, loading }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ startIdx: number; currentIdx: number; startX: number } | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -46,10 +53,6 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
       const el = containerRef.current;
       if (!el || buckets.length === 0) return 0;
       const rect = el.getBoundingClientRect();
-      // Recharts default left margin is 5px and the YAxis label area is
-      // ~30px. Approximate the plot area as bbox minus those.
-      const PLOT_LEFT = 35;
-      const PLOT_RIGHT = 20;
       const usable = rect.width - PLOT_LEFT - PLOT_RIGHT;
       const x = Math.max(0, Math.min(usable, clientX - rect.left - PLOT_LEFT));
       const ratio = usable > 0 ? x / usable : 0;
@@ -128,8 +131,44 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
         height,
         cursor: drag ? 'grabbing' : 'crosshair',
         userSelect: 'none',
+        // let vertical page-scroll gestures through on touch; horizontal
+        // drags still select
+        touchAction: 'pan-y',
+        opacity: loading ? 0.45 : 1,
+        transition: 'opacity 160ms',
       }}
     >
+      {loading && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 12,
+            color: 'var(--fg-muted)',
+            zIndex: 1,
+          }}
+        >
+          Loading range…
+        </div>
+      )}
+      {!loading && buckets.length === 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 12,
+            color: 'var(--fg-muted)',
+          }}
+        >
+          No data in this range.
+        </div>
+      )}
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={buckets} margin={{ top: 8, right: 20, bottom: 5, left: 5 }}>
           <CartesianGrid stroke="var(--border-faint)" strokeDasharray="3 3" />
@@ -143,7 +182,12 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
             fontSize={11}
             minTickGap={40}
           />
-          <YAxis stroke="var(--fg-dim)" fontSize={11} width={50} />
+          <YAxis
+            stroke="var(--fg-dim)"
+            fontSize={11}
+            width={50}
+            tickFormatter={(v: number) => fmtCompact(v)}
+          />
           <Tooltip
             contentStyle={{
               background: 'color-mix(in oklab, var(--bg-card) 95%, transparent)',
@@ -153,15 +197,16 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
               padding: '8px 10px',
             }}
             labelFormatter={(v: string) => new Date(v).toLocaleString()}
-            formatter={(value: number, name: string) => [value.toLocaleString(), name]}
+            formatter={(value: number, name: string) => [fmtN(value), name]}
           />
           <Line
             type="monotone"
             dataKey="total_ccv"
-            name="Total CCV"
+            name="Total viewers"
             stroke="var(--red)"
             strokeWidth={2}
             dot={false}
+            isAnimationActive={false}
           />
         </LineChart>
       </ResponsiveContainer>
@@ -173,7 +218,7 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
             position: 'absolute',
             top: 0,
             bottom: 0,
-            left: `calc(35px + ${idxToPercent(selectedAnchorIdx)}% * (100% - 55px) / 100%)`,
+            left: `calc(${PLOT_LEFT}px + ${idxToPercent(selectedAnchorIdx)}% * (100% - ${PLOT_LEFT + PLOT_RIGHT}px) / 100%)`,
             width: 1,
             background: 'var(--red)',
             pointerEvents: 'none',
@@ -188,8 +233,8 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
             position: 'absolute',
             top: 8,
             bottom: 26,
-            left: `calc(35px + ${idxToPercent(selectedRange[0])}% * (100% - 55px) / 100%)`,
-            width: `calc(${idxToPercent(selectedRange[1]) - idxToPercent(selectedRange[0])}% * (100% - 55px) / 100%)`,
+            left: `calc(${PLOT_LEFT}px + ${idxToPercent(selectedRange[0])}% * (100% - ${PLOT_LEFT + PLOT_RIGHT}px) / 100%)`,
+            width: `calc(${(idxToPercent(selectedRange[1]) - idxToPercent(selectedRange[0]))}% * (100% - ${PLOT_LEFT + PLOT_RIGHT}px) / 100%)`,
             background: 'color-mix(in oklab, var(--red) 12%, transparent)',
             borderLeft: '1px solid var(--red)',
             borderRight: '1px solid var(--red)',
@@ -205,8 +250,8 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
             position: 'absolute',
             top: 8,
             bottom: 26,
-            left: `calc(35px + ${idxToPercent(dragRange[0])}% * (100% - 55px) / 100%)`,
-            width: `calc(${idxToPercent(dragRange[1]) - idxToPercent(dragRange[0])}% * (100% - 55px) / 100%)`,
+            left: `calc(${PLOT_LEFT}px + ${idxToPercent(dragRange[0])}% * (100% - ${PLOT_LEFT + PLOT_RIGHT}px) / 100%)`,
+            width: `calc(${(idxToPercent(dragRange[1]) - idxToPercent(dragRange[0]))}% * (100% - ${PLOT_LEFT + PLOT_RIGHT}px) / 100%)`,
             background: 'color-mix(in oklab, var(--red) 18%, transparent)',
             pointerEvents: 'none',
           }}
@@ -220,7 +265,7 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
             position: 'absolute',
             top: 8,
             bottom: 26,
-            left: `calc(35px + ${idxToPercent(hoverIdx)}% * (100% - 55px) / 100%)`,
+            left: `calc(${PLOT_LEFT}px + ${idxToPercent(hoverIdx)}% * (100% - ${PLOT_LEFT + PLOT_RIGHT}px) / 100%)`,
             width: 1,
             background: 'var(--fg-dim)',
             opacity: 0.4,

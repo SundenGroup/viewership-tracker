@@ -13,9 +13,11 @@ import {
   Col,
   Section,
   Pill,
-  Kpi,
   PlatformPip,
   ChannelNameWithLink,
+  RangePill,
+  TableScroll,
+  rowLinkProps,
   IconCalendar,
   IconBolt,
   IconTrophy,
@@ -25,6 +27,7 @@ import {
 import { fmtCompact, fmtN } from '@/design/format';
 import { downloadCsv, csvStamp } from '@/utils/csv';
 import { Avatar } from './DiscoverDetailPage';
+import { ChannelKpi } from './DiscoverChannelPage';
 import { DiscoverTimelineChart } from './DiscoverTimelineChart';
 
 type RangePreset = '1h' | '6h' | '24h' | '7d' | '30d';
@@ -59,6 +62,7 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
     return RANGE_OPTIONS.some((o) => o.key === r) ? (r as RangePreset) : '24h';
   });
   const [buckets, setBuckets] = useState<GameTrackerRangeBucket[]>([]);
+  const [bucketsLoading, setBucketsLoading] = useState(true);
   const [selection, setSelection] = useState<Selection | null>(() => {
     const at = searchParams.get('at');
     if (at && !Number.isNaN(Date.parse(at))) return { fromIso: at, toIso: null };
@@ -122,6 +126,7 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
       setRangeRows(null);
     }
 
+    setBucketsLoading(true);
     Promise.all([
       api.getGameTrackerRange(slug, from, to, range.bucketSeconds),
       api.getGameTrackerBreakdown(slug, from, to),
@@ -130,9 +135,13 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
         if (cancelled) return;
         setBuckets(rangeRes.buckets);
         setBreakdown({ platform: breakdownRes.platform, language: breakdownRes.language });
+        setBucketsLoading(false);
       })
       .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
+        if (!cancelled) {
+          setError(err.message);
+          setBucketsLoading(false);
+        }
       });
 
     return () => {
@@ -206,17 +215,17 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
       </Row>
 
       {error && (
-        <Section style={{ color: 'var(--red)' }}>{error}</Section>
+        <Section style={{ color: 'var(--danger)' }}>{error}</Section>
       )}
 
       {/* Aggregate KPIs */}
       <Row gap={12} wrap style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-        <TrendKpi
+        <ChannelKpi
           icon={<IconBolt size={13} />}
-          label={`Avg CCV (${range.label})`}
+          label={`Avg viewers (${range.label.toUpperCase()})`}
           value={fmtN(totalAvgCcv)}
         />
-        <TrendKpi
+        <ChannelKpi
           icon={<IconTrophy size={13} />}
           label="Peak"
           value={fmtN(peakCcv)}
@@ -231,15 +240,6 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
               : null
           }
         />
-        <TrendKpi
-          label="Resolution"
-          value={
-            range.bucketSeconds < 60
-              ? `${range.bucketSeconds}s`
-              : `${range.bucketSeconds / 60}m`
-          }
-          sub={`${buckets.length} buckets`}
-        />
       </Row>
 
       {/* Drag-to-select chart */}
@@ -247,21 +247,24 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
         title="Total concurrent viewers"
         eyebrow="TIMELINE"
         right={
-          <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
-            click a point or drag to inspect
+          <span style={{ fontSize: 11, color: 'var(--fg-dim)', whiteSpace: 'nowrap' }}>
+            click a point or drag to inspect ·{' '}
+            {range.bucketSeconds < 60 ? `${range.bucketSeconds}s` : `${range.bucketSeconds / 60}m`}{' '}
+            buckets
           </span>
         }
       >
         <DiscoverTimelineChart
           buckets={buckets}
+          loading={bucketsLoading}
           selection={selection}
           onPick={setSelection}
           height={300}
         />
       </Section>
 
-      {/* Side-by-side: selected detail + breakdowns */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      {/* Side-by-side on wide screens, stacked on phones */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
         <SelectedPanel
           slug={slug}
           selection={selection}
@@ -276,38 +279,6 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
 }
 
 // ── Sub-components ────────────────────────────────────────────────────
-
-function RangePill({
-  children,
-  active,
-  onClick,
-}: {
-  children: React.ReactNode;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: '4px 12px',
-        fontSize: 11,
-        fontFamily: 'var(--font-mono)',
-        fontWeight: 600,
-        textTransform: 'uppercase',
-        letterSpacing: '0.06em',
-        borderRadius: 999,
-        border: `1px solid ${active ? 'var(--red)' : 'var(--border)'}`,
-        background: active ? 'var(--red-wash, color-mix(in oklab, var(--red) 12%, transparent))' : 'transparent',
-        color: active ? 'var(--red)' : 'var(--fg-muted)',
-        cursor: 'pointer',
-      }}
-    >
-      {children}
-    </button>
-  );
-}
 
 const TRENDING_HOURS_OPTIONS = [
   { label: '24h', hours: 24 },
@@ -362,7 +333,7 @@ function TrendingSection({ slug }: { slug: string }) {
         </Row>
       }
     >
-      {error && <div style={{ color: 'var(--red)', fontSize: 12 }}>{error}</div>}
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</div>}
       {!error && rows === null && (
         <div style={{ color: 'var(--fg-muted)', fontSize: 12 }}>Loading…</div>
       )}
@@ -372,7 +343,8 @@ function TrendingSection({ slug }: { slug: string }) {
         </div>
       )}
       {rows !== null && rows.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <TableScroll>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 480 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border-faint)' }}>
               <th style={{ ...miniTh, width: 30 }}>#</th>
@@ -387,10 +359,12 @@ function TrendingSection({ slug }: { slug: string }) {
               const delta = r.cur_peak - r.prev_peak;
               const spike = !r.is_new && r.prev_peak > 0 && r.cur_peak >= 3 * r.prev_peak;
               const profilePic = r.channel?.metadata?.profile_image_url as string | undefined;
+              const open = () => navigate(`/discover/${slug}/channel/${r.channel_id}`);
               return (
                 <tr
                   key={r.channel_id}
-                  onClick={() => navigate(`/discover/${slug}/channel/${r.channel_id}`)}
+                  onClick={open}
+                  {...rowLinkProps(`Open ${r.channel?.display_name ?? 'channel'} details`, open)}
                   style={{ borderBottom: '1px solid var(--border-faint)', cursor: 'pointer' }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.background = 'var(--bg-sunken)';
@@ -426,7 +400,7 @@ function TrendingSection({ slug }: { slug: string }) {
                       ...miniTd,
                       ...numericTd,
                       fontWeight: 600,
-                      color: delta >= 0 ? 'var(--live)' : 'var(--red)',
+                      color: delta >= 0 ? 'var(--live)' : 'var(--danger)',
                     }}
                   >
                     {delta >= 0 ? '+' : ''}
@@ -434,7 +408,12 @@ function TrendingSection({ slug }: { slug: string }) {
                   </td>
                   <td style={{ ...miniTd, textAlign: 'right' }}>
                     {r.is_new ? (
-                      <Pill tone="red">NEW</Pill>
+                      // Neutral, not alarming — "no snapshots in the prior
+                      // window" is common for daily-broadcast games and the
+                      // red NEW badge on most rows read as a warning wall.
+                      <span title="No snapshots in the prior window — first appearance at this level">
+                        <Pill>new</Pill>
+                      </span>
                     ) : spike ? (
                       <Pill tone="warn">×{(r.cur_peak / r.prev_peak).toFixed(1)}</Pill>
                     ) : null}
@@ -444,46 +423,9 @@ function TrendingSection({ slug }: { slug: string }) {
             })}
           </tbody>
         </table>
+        </TableScroll>
       )}
     </Section>
-  );
-}
-
-function TrendKpi({
-  icon,
-  label,
-  value,
-  sub,
-}: {
-  icon?: React.ReactNode;
-  label: React.ReactNode;
-  value: React.ReactNode;
-  sub?: React.ReactNode;
-}) {
-  return (
-    <div
-      className="card"
-      style={{
-        padding: '22px 22px',
-        position: 'relative',
-        overflow: 'hidden',
-      }}
-    >
-      <div
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: 'var(--red)' }}
-      />
-      <Kpi
-        size="md"
-        label={
-          <Row gap={5} align="center" style={{ color: 'var(--fg-muted)' }}>
-            {icon}
-            {label}
-          </Row>
-        }
-        value={<span style={{ fontWeight: 600 }}>{value}</span>}
-        sub={sub ? <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>{sub}</span> : undefined}
-      />
-    </div>
   );
 }
 
@@ -586,13 +528,72 @@ function SelectedPanel({
       style={{ padding: 0 }}
     >
       <div style={{ maxHeight: 360, overflowY: 'auto', margin: -16, marginTop: 0 }}>
-        {isRange ? <RangeRowsTable rows={rangeRows} /> : <PointSnapshotTable rows={pointSnapshot} />}
+        {isRange ? (
+          <RangeRowsTable rows={rangeRows} slug={slug} />
+        ) : (
+          <PointSnapshotTable rows={pointSnapshot} slug={slug} />
+        )}
       </div>
     </Section>
   );
 }
 
-function PointSnapshotTable({ rows }: { rows: GameTrackerLeaderboardRow[] | null }) {
+/** Clickable drill-in row shared by the two selection tables — the
+ *  channel list you get from inspecting the chart used to be a dead end. */
+function SnapshotRow({
+  slug,
+  channelId,
+  channel,
+  platform,
+  cells,
+  index,
+}: {
+  slug: string;
+  channelId: string;
+  channel: GameTrackerLeaderboardRow['channel'];
+  platform: string;
+  cells: React.ReactNode;
+  index: number;
+}) {
+  const navigate = useNavigate();
+  const to = `/discover/${slug}/channel/${channelId}`;
+  const open = () => navigate(to);
+  return (
+    <tr
+      onClick={open}
+      {...rowLinkProps(`Open ${channel?.display_name ?? 'channel'} details`, open)}
+      style={{ borderBottom: '1px solid var(--border-faint)', cursor: 'pointer' }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = 'var(--bg-sunken)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'transparent';
+      }}
+    >
+      <td style={{ ...miniTd, color: 'var(--fg-dim)', width: 30, fontFamily: 'var(--font-mono)' }}>
+        {index + 1}
+      </td>
+      <td style={miniTd}>
+        <Row gap={8} align="center">
+          <PlatformPip id={platform} size={11} />
+          {channel ? (
+            <ChannelNameWithLink
+              name={channel.display_name}
+              platform={platform}
+              channelIdentifier={channel.channel_identifier}
+              to={to}
+            />
+          ) : (
+            <span style={{ color: 'var(--fg-muted)' }}>{channelId.slice(0, 8)}</span>
+          )}
+        </Row>
+      </td>
+      {cells}
+    </tr>
+  );
+}
+
+function PointSnapshotTable({ rows, slug }: { rows: GameTrackerLeaderboardRow[] | null; slug: string }) {
   if (rows === null) {
     return <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 12 }}>Loading…</div>;
   }
@@ -605,49 +606,40 @@ function PointSnapshotTable({ rows }: { rows: GameTrackerLeaderboardRow[] | null
         <tr style={{ borderBottom: '1px solid var(--border-faint)' }}>
           <th style={miniTh}>#</th>
           <th style={miniTh}>Channel</th>
-          <th style={{ ...miniTh, textAlign: 'right' }}>CCV</th>
+          <th style={{ ...miniTh, textAlign: 'right' }}>Viewers</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((r, i) => (
-          <tr key={r.channel_id} style={{ borderBottom: '1px solid var(--border-faint)' }}>
-            <td style={{ ...miniTd, color: 'var(--fg-dim)', width: 30, fontFamily: 'var(--font-mono)' }}>
-              {i + 1}
-            </td>
-            <td style={miniTd}>
-              <Row gap={8} align="center">
-                <PlatformPip id={r.platform} size={11} />
-                {r.channel ? (
-                  <ChannelNameWithLink
-                    name={r.channel.display_name}
-                    platform={r.platform}
-                    channelIdentifier={r.channel.channel_identifier}
-                  />
-                ) : (
-                  <span style={{ color: 'var(--fg-muted)' }}>{r.channel_id.slice(0, 8)}</span>
-                )}
-              </Row>
-            </td>
-            <td
-              style={{
-                ...miniTd,
-                textAlign: 'right',
-                fontFamily: 'var(--font-mono)',
-                fontVariantNumeric: 'tabular-nums',
-                fontWeight: 500,
-                color: 'var(--fg)',
-              }}
-            >
-              {fmtCompact(r.concurrent_viewers)}
-            </td>
-          </tr>
+          <SnapshotRow
+            key={r.channel_id}
+            slug={slug}
+            channelId={r.channel_id}
+            channel={r.channel}
+            platform={r.platform}
+            index={i}
+            cells={
+              <td
+                style={{
+                  ...miniTd,
+                  textAlign: 'right',
+                  fontFamily: 'var(--font-mono)',
+                  fontVariantNumeric: 'tabular-nums',
+                  fontWeight: 500,
+                  color: 'var(--fg)',
+                }}
+              >
+                {fmtCompact(r.concurrent_viewers)}
+              </td>
+            }
+          />
         ))}
       </tbody>
     </table>
   );
 }
 
-function RangeRowsTable({ rows }: { rows: GameTrackerRangeLeaderboardRow[] | null }) {
+function RangeRowsTable({ rows, slug }: { rows: GameTrackerRangeLeaderboardRow[] | null; slug: string }) {
   if (rows === null) {
     return <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 12 }}>Loading…</div>;
   }
@@ -662,35 +654,30 @@ function RangeRowsTable({ rows }: { rows: GameTrackerRangeLeaderboardRow[] | nul
           <th style={miniTh}>Channel</th>
           <th style={{ ...miniTh, textAlign: 'right' }}>Peak</th>
           <th style={{ ...miniTh, textAlign: 'right' }}>Avg</th>
-          <th style={{ ...miniTh, textAlign: 'right' }}>Min</th>
+          <th style={{ ...miniTh, textAlign: 'right' }}>Hours</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((r, i) => (
-          <tr key={r.channel_id} style={{ borderBottom: '1px solid var(--border-faint)' }}>
-            <td style={{ ...miniTd, color: 'var(--fg-dim)', width: 30, fontFamily: 'var(--font-mono)' }}>
-              {i + 1}
-            </td>
-            <td style={miniTd}>
-              <Row gap={8} align="center">
-                <PlatformPip id={r.platform} size={11} />
-                {r.channel ? (
-                  <ChannelNameWithLink
-                    name={r.channel.display_name}
-                    platform={r.platform}
-                    channelIdentifier={r.channel.channel_identifier}
-                  />
-                ) : (
-                  <span style={{ color: 'var(--fg-muted)' }}>{r.channel_id.slice(0, 8)}</span>
-                )}
-              </Row>
-            </td>
-            <td style={{ ...miniTd, ...numericTd, fontWeight: 600 }}>{fmtCompact(r.peak_ccv)}</td>
-            <td style={{ ...miniTd, ...numericTd, color: 'var(--fg-muted)' }}>
-              {fmtCompact(r.avg_ccv)}
-            </td>
-            <td style={{ ...miniTd, ...numericTd, color: 'var(--fg-dim)' }}>{r.minutes_live}</td>
-          </tr>
+          <SnapshotRow
+            key={r.channel_id}
+            slug={slug}
+            channelId={r.channel_id}
+            channel={r.channel}
+            platform={r.platform}
+            index={i}
+            cells={
+              <>
+                <td style={{ ...miniTd, ...numericTd, fontWeight: 600 }}>{fmtCompact(r.peak_ccv)}</td>
+                <td style={{ ...miniTd, ...numericTd, color: 'var(--fg-muted)' }}>
+                  {fmtCompact(r.avg_ccv)}
+                </td>
+                <td style={{ ...miniTd, ...numericTd, color: 'var(--fg-dim)' }}>
+                  {(r.minutes_live / 60).toFixed(1)}h
+                </td>
+              </>
+            }
+          />
         ))}
       </tbody>
     </table>
@@ -717,7 +704,7 @@ function BreakdownPanel({
 
   return (
     <Section title="Breakdown" eyebrow="DISTRIBUTION">
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 22 }}>
         <BreakdownGroup
           title="Platform"
           rows={breakdown.platform.map((p) => ({
@@ -786,7 +773,7 @@ function BreakdownGroup({
 const miniTh: React.CSSProperties = {
   padding: '8px 12px',
   textAlign: 'left',
-  fontSize: 9,
+  fontSize: 10.5,
   fontWeight: 600,
   color: 'var(--fg-muted)',
   textTransform: 'uppercase',

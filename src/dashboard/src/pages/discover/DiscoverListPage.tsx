@@ -172,7 +172,7 @@ export function DiscoverListPage() {
                 </div>
                 <Row gap={6} align="center">
                   <Pill tone={t.status === 'active' ? 'live' : 'default'}>
-                    {t.status === 'active' ? '● Live' : t.status}
+                    {t.status === 'active' ? '● Live' : t.status.charAt(0).toUpperCase() + t.status.slice(1)}
                   </Pill>
                   {isAdmin && (
                     <button
@@ -205,11 +205,13 @@ export function DiscoverListPage() {
                   </Row>
                 )}
               </Col>
-              <Row gap={10} style={{ marginTop: 12, fontSize: 11, color: 'var(--fg-dim)' }}>
-                <span>poll {t.polling_interval_seconds}s</span>
-                <span>·</span>
-                <span>min {t.min_ccv_threshold} CCV</span>
-              </Row>
+              {isAdmin && (
+                <Row gap={10} style={{ marginTop: 12, fontSize: 11, color: 'var(--fg-dim)' }}>
+                  <span>poll {t.polling_interval_seconds}s</span>
+                  <span>·</span>
+                  <span>min {t.min_ccv_threshold} CCV</span>
+                </Row>
+              )}
             </div>
           </Link>
         ))}

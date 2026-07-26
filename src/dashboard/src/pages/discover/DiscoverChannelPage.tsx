@@ -24,6 +24,12 @@ import {
   Pill,
   PlatformPip,
   ChannelNameWithLink,
+  RangePill,
+  TableScroll,
+  rowLinkProps,
+  thStyle as th,
+  tdStyle as td,
+  numTdStyle as numTd,
   IconBolt,
   IconUsers,
   IconUser,
@@ -32,16 +38,21 @@ import {
   IconChev,
   IconList,
 } from '@/components/design';
-import { fmtN, fmtCompact, fmtDuration } from '@/design/format';
-import { Avatar } from './DiscoverDetailPage';
+import { fmtN, fmtCompact, fmtDuration, fmtRelative } from '@/design/format';
+import { Avatar, FreshnessIndicator } from './DiscoverDetailPage';
 
 type RangePreset = '24h' | '7d' | '30d';
 
 const RANGES: Record<RangePreset, { hours: number; bucketSeconds: number; label: string }> = {
-  '24h': { hours: 24, bucketSeconds: 300, label: '24h' },
-  '7d': { hours: 24 * 7, bucketSeconds: 1800, label: '7d' },
-  '30d': { hours: 24 * 30, bucketSeconds: 3600, label: '30d' },
+  '24h': { hours: 24, bucketSeconds: 300, label: '24H' },
+  '7d': { hours: 24 * 7, bucketSeconds: 1800, label: '7D' },
+  '30d': { hours: 24 * 30, bucketSeconds: 3600, label: '30D' },
 };
+
+/** One copy of the evidence-gate copy (channel pill + stream page). */
+export function collectingHealthCopy(scored: number, required: number): string {
+  return `Collecting health data — ${scored}/${required} streams scored`;
+}
 
 /**
  * Stream health grade → color. A/B healthy, C typical (grades are
@@ -53,6 +64,34 @@ export function healthGradeColor(grade: string): string {
   if (grade === 'C') return 'var(--fg-muted)';
   if (grade === 'D') return 'var(--warn)';
   return 'var(--danger)';
+}
+
+/** Hero pill for the channel-level (30d median) grade — colors via
+ *  healthGradeColor so it can never contradict the per-session chips. */
+function HealthPill({ grade }: { grade: string }) {
+  const color = healthGradeColor(grade);
+  return (
+    <span
+      title="Median stream-health grade over the channel's scored sessions (30d)"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '2px 8px',
+        borderRadius: 999,
+        background: `color-mix(in oklab, ${color} 14%, transparent)`,
+        border: `1px solid color-mix(in oklab, ${color} 30%, transparent)`,
+        color,
+        fontSize: 10.5,
+        fontFamily: 'var(--font-mono)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.08em',
+        fontWeight: 600,
+      }}
+    >
+      Health {grade} (30d)
+    </span>
+  );
 }
 
 /** Slim colored grade letter for table cells and compact rows. */
@@ -93,6 +132,8 @@ export function DiscoverChannelPage() {
   const { slug, channelId } = useParams<{ slug: string; channelId: string }>();
   const [rangeKey, setRangeKey] = useState<RangePreset>('24h');
   const [data, setData] = useState<GameTrackerChannelTimelineResponse | null>(null);
+  const [timelineLoading, setTimelineLoading] = useState(true);
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
   const [sessionsData, setSessionsData] = useState<GameTrackerChannelSessionsResponse | null>(null);
   const [summary, setSummary] = useState<GameTrackerChannelSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -103,13 +144,22 @@ export function DiscoverChannelPage() {
     const r = RANGES[rangeKey];
     const from = new Date(Date.now() - r.hours * 60 * 60_000);
     const to = new Date();
+    // Keep the previous range's data on screen (dimmed) instead of
+    // flashing an empty chart while the new window loads.
+    setTimelineLoading(true);
     api
       .getGameTrackerChannelTimeline(slug, channelId, from, to, r.bucketSeconds)
       .then((res) => {
-        if (!cancelled) setData(res);
+        if (cancelled) return;
+        setData(res);
+        setFetchedAt(Date.now());
+        setTimelineLoading(false);
       })
       .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
+        if (!cancelled) {
+          setError(err.message);
+          setTimelineLoading(false);
+        }
       });
     return () => {
       cancelled = true;
@@ -214,7 +264,7 @@ export function DiscoverChannelPage() {
     return (
       <div style={{ padding: 32 }}>
         <BackLink slug={slug} />
-        <Section style={{ marginTop: 20, color: 'var(--red)' }}>{error}</Section>
+        <Section style={{ marginTop: 20, color: 'var(--danger)' }}>{error}</Section>
       </div>
     );
   }
@@ -234,19 +284,23 @@ export function DiscoverChannelPage() {
       </Row>
 
       {/* Hero */}
-      <Row gap={16} align="center" style={{ marginTop: 16, marginBottom: 28 }}>
+      <Row gap={16} align="center" wrap style={{ marginTop: 16, marginBottom: 28 }}>
         <Avatar src={profilePic} name={data.channel.display_name} size={64} />
-        <Col gap={6}>
-          <Row gap={10} align="center">
+        <Col gap={6} style={{ minWidth: 0 }}>
+          <Row gap={10} align="center" wrap style={{ minWidth: 0 }}>
             <h1
               style={{
                 fontFamily: 'var(--font-display, var(--font-sans))',
-                fontSize: 36,
+                fontSize: 'clamp(24px, 5.5vw, 36px)',
                 fontWeight: 700,
                 color: 'var(--fg)',
                 margin: 0,
                 letterSpacing: '-0.02em',
                 lineHeight: 1,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                maxWidth: '100%',
               }}
             >
               {data.channel.display_name}
@@ -281,7 +335,7 @@ export function DiscoverChannelPage() {
                     <span
                       className="tabular"
                       style={{
-                        color: summary.followers.delta7d >= 0 ? 'var(--live)' : 'var(--red)',
+                        color: summary.followers.delta7d >= 0 ? 'var(--live)' : 'var(--danger)',
                       }}
                     >
                       ({summary.followers.delta7d >= 0 ? '+' : ''}
@@ -292,17 +346,10 @@ export function DiscoverChannelPage() {
               )}
               {engagementPct != null && <Pill>{engagementPct}% chatters/viewer</Pill>}
               {summary?.healthGrade30d != null ? (
-                <Pill
-                  tone={
-                    summary.healthGrade30d === 'A' || summary.healthGrade30d === 'B'
-                      ? 'live'
-                      : summary.healthGrade30d === 'C'
-                        ? 'warn'
-                        : 'red'
-                  }
-                >
-                  Health {summary.healthGrade30d} (30d)
-                </Pill>
+                // Same color semantics as the per-session chips: A/B green,
+                // C neutral (typical), D amber, F red — the pill previously
+                // painted C amber and merged D+F, contradicting the table.
+                <HealthPill grade={summary.healthGrade30d} />
               ) : summary != null &&
                 summary.healthScoredSessions30d > 0 &&
                 summary.healthMinSessions != null &&
@@ -310,7 +357,7 @@ export function DiscoverChannelPage() {
                 // Evidence gate: grades stay silent until enough sessions are
                 // scored — one odd stream must not read as a verdict.
                 <Pill>
-                  Health: collecting {summary.healthScoredSessions30d}/{summary.healthMinSessions}
+                  {collectingHealthCopy(summary.healthScoredSessions30d, summary.healthMinSessions)}
                 </Pill>
               ) : null}
             </Row>
@@ -345,7 +392,7 @@ export function DiscoverChannelPage() {
       <Row gap={12} wrap style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', marginBottom: 16 }}>
         <ChannelKpi
           icon={<IconTrophy size={13} />}
-          label="Peak CCV"
+          label={`Peak viewers (${RANGES[rangeKey].label})`}
           value={fmtN(peakCcv)}
           sub={
             peakBucket
@@ -360,7 +407,7 @@ export function DiscoverChannelPage() {
         />
         <ChannelKpi
           icon={<IconUsers size={13} />}
-          label={`Avg CCV (${RANGES[rangeKey].label})`}
+          label={`Avg viewers (${RANGES[rangeKey].label})`}
           value={fmtN(avgCcv)}
         />
         <ChannelKpi
@@ -373,14 +420,14 @@ export function DiscoverChannelPage() {
           <ChannelKpi
             icon={<IconList size={13} />}
             label={`Messages (${RANGES[rangeKey].label})`}
-            value={fmtCompact(rangeStats.messages)}
+            value={fmtN(rangeStats.messages)}
           />
         )}
         {rangeStats.chatters > 0 && (
           <ChannelKpi
             icon={<IconUsers size={13} />}
             label={`Unique chatters (${RANGES[rangeKey].label})`}
-            value={fmtCompact(rangeStats.chatters)}
+            value={fmtN(rangeStats.chatters)}
             sub={rangeStats.count > 1 ? `summed across ${rangeStats.count} sessions` : undefined}
           />
         )}
@@ -391,7 +438,7 @@ export function DiscoverChannelPage() {
             value={
               <span
                 style={{
-                  color: rangeStats.followersDelta >= 0 ? 'var(--live)' : 'var(--red)',
+                  color: rangeStats.followersDelta >= 0 ? 'var(--live)' : 'var(--danger)',
                 }}
               >
                 {rangeStats.followersDelta >= 0 ? '+' : ''}
@@ -404,53 +451,87 @@ export function DiscoverChannelPage() {
 
       {/* Timeline chart */}
       <Section
-        title="Concurrent viewers"
+        title="Viewers over time"
         eyebrow="TIMELINE"
         style={{ marginBottom: 16 }}
+        right={<FreshnessIndicator at={fetchedAt} />}
       >
-        <div style={{ height: 280 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data.timeline} margin={{ top: 8, right: 16, bottom: 5, left: 5 }}>
-              <CartesianGrid stroke="var(--border-faint)" strokeDasharray="3 3" />
-              <XAxis
-                dataKey="ts"
-                tickFormatter={(v: string) => {
-                  const d = new Date(v);
-                  return rangeKey === '24h'
-                    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-                }}
-                stroke="var(--fg-dim)"
-                fontSize={11}
-                minTickGap={40}
-              />
-              <YAxis
-                stroke="var(--fg-dim)"
-                fontSize={11}
-                width={50}
-                tickFormatter={(v: number) => fmtCompact(v)}
-              />
-              <Tooltip
-                contentStyle={{
-                  background: 'color-mix(in oklab, var(--bg-card) 95%, transparent)',
-                  border: '1px solid var(--border-strong)',
-                  borderRadius: 6,
-                  fontSize: 11.5,
-                  padding: '8px 10px',
-                }}
-                labelFormatter={(v: string) => new Date(v).toLocaleString()}
-                formatter={(value: number) => [value.toLocaleString(), 'CCV']}
-              />
-              <Line
-                type="monotone"
-                dataKey="concurrent_viewers"
-                name="CCV"
-                stroke="var(--red)"
-                strokeWidth={2}
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+        <div style={{ height: 280, position: 'relative', opacity: timelineLoading ? 0.45 : 1, transition: 'opacity 160ms' }}>
+          {timelineLoading && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 12,
+                color: 'var(--fg-muted)',
+                zIndex: 1,
+              }}
+            >
+              Loading {RANGES[rangeKey].label} of data…
+            </div>
+          )}
+          {!timelineLoading && data.timeline.length === 0 ? (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 12,
+                color: 'var(--fg-muted)',
+              }}
+            >
+              No streams in the last {RANGES[rangeKey].label} — pick a longer range.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data.timeline} margin={{ top: 8, right: 16, bottom: 5, left: 5 }}>
+                <CartesianGrid stroke="var(--border-faint)" strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="ts"
+                  tickFormatter={(v: string) => {
+                    const d = new Date(v);
+                    return rangeKey === '24h'
+                      ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                      : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+                  }}
+                  stroke="var(--fg-dim)"
+                  fontSize={11}
+                  minTickGap={40}
+                />
+                <YAxis
+                  stroke="var(--fg-dim)"
+                  fontSize={11}
+                  width={50}
+                  tickFormatter={(v: number) => fmtCompact(v)}
+                />
+                <Tooltip
+                  contentStyle={{
+                    background: 'color-mix(in oklab, var(--bg-card) 95%, transparent)',
+                    border: '1px solid var(--border-strong)',
+                    borderRadius: 6,
+                    fontSize: 11.5,
+                    padding: '8px 10px',
+                  }}
+                  labelFormatter={(v: string) => new Date(v).toLocaleString()}
+                  formatter={(value: number) => [fmtN(value), 'Viewers']}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="concurrent_viewers"
+                  name="Viewers"
+                  stroke="var(--red)"
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </Section>
 
@@ -488,7 +569,7 @@ function BackLink({ slug }: { slug: string | undefined }) {
       <span style={{ display: 'inline-block', transform: 'rotate(180deg)' }}>
         <IconChev size={12} />
       </span>
-      back to tracker
+      back to {slug ?? 'Discover'}
     </Link>
   );
 }
@@ -563,7 +644,8 @@ function SessionsTable({
   // Same pattern for health grades — unscored channels keep the old shape.
   const showHealth = sessions.some((s) => s.health_grade != null);
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+    <TableScroll>
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: showChat ? 720 : 520 }}>
       <thead>
         <tr style={{ borderBottom: '1px solid var(--border)' }}>
           <th style={th}>Started</th>
@@ -584,10 +666,14 @@ function SessionsTable({
             slug && channelId && s.stream_id
               ? `/discover/${slug}/channel/${channelId}/stream/${s.stream_id}`
               : null;
+          const openStream = to ? () => navigate(to, { state: { channel } }) : null;
           return (
             <tr
               key={s.id}
-              onClick={to ? () => navigate(to, { state: { channel } }) : undefined}
+              onClick={openStream ?? undefined}
+              {...(openStream
+                ? rowLinkProps(`Open stream from ${new Date(s.started_at).toLocaleDateString()}`, openStream)
+                : {})}
               style={{
                 borderBottom: '1px solid var(--border-faint)',
                 cursor: to ? 'pointer' : 'default',
@@ -676,60 +762,6 @@ function SessionsTable({
         })}
       </tbody>
     </table>
+    </TableScroll>
   );
 }
-
-function RangePill({
-  children,
-  active,
-  onClick,
-}: {
-  children: React.ReactNode;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: '4px 12px',
-        fontSize: 11,
-        fontFamily: 'var(--font-mono)',
-        fontWeight: 600,
-        textTransform: 'uppercase',
-        letterSpacing: '0.06em',
-        borderRadius: 999,
-        border: `1px solid ${active ? 'var(--red)' : 'var(--border)'}`,
-        background: active
-          ? 'color-mix(in oklab, var(--red) 12%, transparent)'
-          : 'transparent',
-        color: active ? 'var(--red)' : 'var(--fg-muted)',
-        cursor: 'pointer',
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-const th: React.CSSProperties = {
-  padding: '8px 6px',
-  textAlign: 'left',
-  fontSize: 10.5,
-  fontWeight: 600,
-  color: 'var(--fg-muted)',
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-};
-
-const td: React.CSSProperties = {
-  padding: '12px 6px',
-};
-
-const numTd: React.CSSProperties = {
-  textAlign: 'right',
-  fontFamily: 'var(--font-mono)',
-  fontVariantNumeric: 'tabular-nums',
-  color: 'var(--fg)',
-};

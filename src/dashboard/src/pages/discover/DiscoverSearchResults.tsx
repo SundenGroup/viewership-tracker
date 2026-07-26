@@ -9,10 +9,12 @@ import {
   Pill,
   PlatformPip,
   ChannelNameWithLink,
+  TableScroll,
+  rowLinkProps,
   IconSearch,
   IconX,
 } from '@/components/design';
-import { fmtCompact } from '@/design/format';
+import { fmtCompact, fmtRelative } from '@/design/format';
 import { Avatar } from './DiscoverDetailPage';
 
 type SortKey = 'last_seen' | 'peak_ccv';
@@ -146,7 +148,7 @@ export function DiscoverSearchResults({ slug, query }: { slug: string; query: st
         <div style={{ padding: 24, color: 'var(--fg-muted)', fontSize: 13 }}>Searching…</div>
       )}
       {error && (
-        <div style={{ padding: 24, color: 'var(--red)', fontSize: 13 }}>{error}</div>
+        <div style={{ padding: 24, color: 'var(--danger)', fontSize: 13 }}>{error}</div>
       )}
       {sortedRows && sortedRows.length === 0 && (
         <div style={{ padding: 32, textAlign: 'center', color: 'var(--fg-muted)' }}>
@@ -154,39 +156,39 @@ export function DiscoverSearchResults({ slug, query }: { slug: string; query: st
         </div>
       )}
       {sortedRows && sortedRows.length > 0 && (
-        <div style={{ margin: -16, marginTop: 0 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <TableScroll style={{ margin: -16, marginTop: 0 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 560 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
                 <th style={{ ...thStyle, width: 36 }}>#</th>
                 <th style={{ ...thStyle, width: 56 }}></th>
                 <th style={thStyle}>Channel</th>
                 <th style={{ ...thStyle, width: 80 }}>Match</th>
-                <th
-                  style={{ ...thStyle, textAlign: 'right', width: 110, cursor: 'pointer' }}
+                <SortableTh
+                  label="Peak viewers"
+                  active={sortKey === 'peak_ccv'}
+                  width={110}
                   onClick={() => setSortKey('peak_ccv')}
-                >
-                  Peak CCV {sortKey === 'peak_ccv' && '↓'}
-                </th>
-                <th
-                  style={{ ...thStyle, textAlign: 'right', width: 100, cursor: 'pointer' }}
+                />
+                <SortableTh
+                  label="Last seen"
+                  active={sortKey === 'last_seen'}
+                  width={100}
                   onClick={() => setSortKey('last_seen')}
-                >
-                  Last seen {sortKey === 'last_seen' && '↓'}
-                </th>
+                />
               </tr>
             </thead>
             <tbody>
               {sortedRows.map((row, i) => {
                 if (!row.channel) return null;
                 const profilePic = row.channel.metadata.profile_image_url as string | undefined;
-                const ageMins = Math.floor((Date.now() - new Date(row.last_seen).getTime()) / 60_000);
                 const onClick = () =>
                   navigate(`/discover/${slug}/channel/${row.channel_id}`);
                 return (
                   <tr
                     key={row.channel_id}
                     onClick={onClick}
+                    {...rowLinkProps(`Open ${row.channel.display_name} details`, onClick)}
                     style={{
                       borderBottom: '1px solid var(--border-faint)',
                       cursor: 'pointer',
@@ -212,13 +214,12 @@ export function DiscoverSearchResults({ slug, query }: { slug: string; query: st
                           size={32}
                         />
                         <Col gap={2} style={{ minWidth: 0, flex: 1 }}>
-                          <div onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex' }}>
-                            <ChannelNameWithLink
-                              name={row.channel.display_name}
-                              platform={row.channel.platform}
-                              channelIdentifier={row.channel.channel_identifier}
-                            />
-                          </div>
+                          <ChannelNameWithLink
+                            name={row.channel.display_name}
+                            platform={row.channel.platform}
+                            channelIdentifier={row.channel.channel_identifier}
+                            to={`/discover/${slug}/channel/${row.channel_id}`}
+                          />
                           <div
                             title={row.stream_title ?? ''}
                             style={{
@@ -237,7 +238,7 @@ export function DiscoverSearchResults({ slug, query }: { slug: string; query: st
                     </td>
                     <td style={tdStyle}>
                       <Pill tone={row.matched_field === 'title' ? 'red' : 'default'}>
-                        {row.matched_field}
+                        {row.matched_field === 'title' ? 'in title' : 'channel'}
                       </Pill>
                     </td>
                     <td
@@ -260,20 +261,52 @@ export function DiscoverSearchResults({ slug, query }: { slug: string; query: st
                         fontSize: 11,
                       }}
                     >
-                      {ageMins < 60
-                        ? `${ageMins}m ago`
-                        : ageMins < 60 * 24
-                        ? `${Math.floor(ageMins / 60)}h ago`
-                        : `${Math.floor(ageMins / (60 * 24))}d ago`}
+                      {fmtRelative(row.last_seen)}
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       )}
     </Section>
+  );
+}
+
+function SortableTh({
+  label,
+  active,
+  width,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  width: number;
+  onClick: () => void;
+}) {
+  return (
+    <th
+      style={{
+        ...thStyle,
+        textAlign: 'right',
+        width,
+        cursor: 'pointer',
+        color: active ? 'var(--fg)' : 'var(--fg-muted)',
+        whiteSpace: 'nowrap',
+      }}
+      title={`Sort by ${label.toLowerCase()}`}
+      aria-sort={active ? 'descending' : 'none'}
+      onClick={onClick}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.color = 'var(--fg)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.color = active ? 'var(--fg)' : 'var(--fg-muted)';
+      }}
+    >
+      {label} {active ? '↓' : '↕'}
+    </th>
   );
 }
 

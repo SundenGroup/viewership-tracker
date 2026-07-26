@@ -1,24 +1,23 @@
 /**
- * DiscoverAskBox — natural-language "Ask" for Discover tracker pages.
+ * Discover "Ask" — natural-language Q&A for tracker pages.
  *
- * Mirrors ExploreAskBox (components/editor/ExploreAskBox.tsx) with a simpler
- * contract: Discover answers are read-only, so the envelope is only ever
- *   • answer  — numbers straight from Postgres, rendered as a card of stat
- *               blocks / a compact table below the hero. An answer may carry
- *               a deepLink ("Open in Channels tab") rendered as an → Open
- *               button, plus an optional data-honesty footnote.
- *   • refusal — muted message + suggestion chips that refill the input.
- * No URL patches in v1, no ⌘K binding (plain focus only) — the box lives in
- * the header row next to the tracker search.
- *
- * State lives in `useDiscoverAsk` so the input can sit in the header while
- * results render between the hero and the tab bar — two components, one
- * brain (same pattern as Explore).
+ * The Ask INPUT no longer exists as a separate box: the tracker search
+ * field is a single omnibox (DiscoverSearch) that offers an "✦ Ask AI"
+ * action in its dropdown (or ⌘/Ctrl+Enter). This file keeps the shared
+ * controller (`useDiscoverAsk`) and the results card rendered between
+ * the hero and the tab bar. Envelope contract:
+ *   • answer  — numbers straight from Postgres: stat blocks / a compact
+ *               table, optional deepLink ("Open in Channels tab") and a
+ *               data-honesty footnote.
+ *   • refusal — muted message + suggestion chips (chips re-ask directly).
+ *   • error   — rendered as a dismissible card in the SAME place answers
+ *               appear (it used to hide in the header while the user
+ *               watched the body).
  */
 
 import { useCallback, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Row, Col, IconSparkle, IconX } from '@/components/design';
+import { Row, Col, IconX } from '@/components/design';
 import { fmtN } from '@/design/format';
 import * as api from '@/services/api';
 import { ApiError } from '@/services/api';
@@ -32,7 +31,8 @@ export interface DiscoverAskController {
   error: string | null;
   answer: Extract<api.DiscoverAskEnvelope, { kind: 'answer' }> | null;
   refusal: Extract<api.DiscoverAskEnvelope, { kind: 'refusal' }> | null;
-  submit: () => void;
+  /** Submit `q` when given (avoids setState-then-submit races), else the stored question. */
+  submit: (q?: string) => void;
   dismiss: () => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
 }
@@ -57,39 +57,43 @@ export function useDiscoverAsk({
     setError(null);
   }, []);
 
-  const submit = useCallback(async () => {
-    const q = question.trim();
-    if (!q || pending || !slug) return;
-    // Only ONE result at a time — a new question replaces whatever is shown.
-    dismiss();
-    setPending(true);
-    try {
-      const envelope = await api.askDiscover(slug, q, getViewState());
-      if (envelope.kind === 'answer') setAnswer(envelope);
-      else setRefusal(envelope);
-    } catch (e) {
-      if (e instanceof ApiError) {
-        // Prefer the server's own message (e.g. the 502 "AI backend is
-        // unavailable" explanation) over canned per-status text.
-        const body = e.body as { message?: unknown } | undefined;
-        const serverMessage = typeof body?.message === 'string' ? body.message : null;
-        setError(
-          serverMessage ??
-            (e.status === 429
-              ? 'Ask limit reached — try again in a little while.'
-              : e.status === 501
-                ? 'Ask isn’t configured on this server.'
-                : e.status === 502
-                  ? 'The AI backend is unavailable — simple leaderboard questions still work.'
-                  : 'Ask hit a snag — try again.'),
-        );
-      } else {
-        setError('Ask hit a snag — try again.');
+  const submit = useCallback(
+    async (qOverride?: string) => {
+      const q = (qOverride ?? question).trim();
+      if (!q || pending || !slug) return;
+      if (qOverride != null) setQuestion(qOverride);
+      // Only ONE result at a time — a new question replaces whatever is shown.
+      dismiss();
+      setPending(true);
+      try {
+        const envelope = await api.askDiscover(slug, q, getViewState());
+        if (envelope.kind === 'answer') setAnswer(envelope);
+        else setRefusal(envelope);
+      } catch (e) {
+        if (e instanceof ApiError) {
+          // Prefer the server's own message (e.g. the 502 "AI backend is
+          // unavailable" explanation) over canned per-status text.
+          const body = e.body as { message?: unknown } | undefined;
+          const serverMessage = typeof body?.message === 'string' ? body.message : null;
+          setError(
+            serverMessage ??
+              (e.status === 429
+                ? 'Ask limit reached — try again in a little while.'
+                : e.status === 501
+                  ? 'Ask isn’t configured on this server.'
+                  : e.status === 502
+                    ? 'The AI backend is unavailable — simple leaderboard questions still work.'
+                    : 'Ask hit a snag — try again.'),
+          );
+        } else {
+          setError('Ask hit a snag — try again.');
+        }
+      } finally {
+        setPending(false);
       }
-    } finally {
-      setPending(false);
-    }
-  }, [question, pending, slug, getViewState, dismiss]);
+    },
+    [question, pending, slug, getViewState, dismiss],
+  );
 
   return {
     question,
@@ -98,85 +102,38 @@ export function useDiscoverAsk({
     error,
     answer,
     refusal,
-    submit: () => void submit(),
+    submit: (q?: string) => void submit(q),
     dismiss,
     inputRef,
   };
 }
 
-// ── Input (lives in the Discover header row) ──────────────────────────────
-
-export function DiscoverAskBox({ ask }: { ask: DiscoverAskController }) {
-  return (
-    <div style={{ flex: 1, maxWidth: 420, minWidth: 200 }}>
-      <Row
-        gap={7}
-        align="center"
-        style={{
-          padding: '7px 10px',
-          background: 'var(--bg-card)',
-          border: '1px solid var(--border)',
-          borderRadius: 7,
-          opacity: ask.pending ? 0.75 : 1,
-        }}
-      >
-        <IconSparkle size={12} style={{ color: 'var(--fg-dim)', flexShrink: 0 }} />
-        <input
-          ref={ask.inputRef}
-          value={ask.question}
-          disabled={ask.pending}
-          onChange={(e) => ask.setQuestion(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') ask.submit();
-            if (e.key === 'Escape') (e.currentTarget as HTMLInputElement).blur();
-          }}
-          placeholder={'Ask about this game — e.g. "top 10 turkish streamers in may"'}
-          aria-label="Ask about this game"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            border: 0,
-            outline: 'none',
-            background: 'transparent',
-            color: 'var(--fg)',
-            fontSize: 12,
-          }}
-        />
-        {ask.pending && <PendingDots />}
-      </Row>
-      {ask.error && (
-        <div style={{ fontSize: 10.5, color: 'var(--fg-dim)', marginTop: 3, paddingLeft: 2 }}>
-          {ask.error}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Inline three-dot shimmer shown while a question is compiling. */
-function PendingDots() {
-  return (
-    <span style={{ display: 'inline-flex', gap: 3, flexShrink: 0 }} aria-label="Thinking…">
-      <style>{`@keyframes discoverAskDotPulse { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }`}</style>
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          style={{
-            width: 4,
-            height: 4,
-            borderRadius: '50%',
-            background: 'var(--fg-muted)',
-            animation: `discoverAskDotPulse 1.1s ease-in-out ${i * 0.18}s infinite`,
-          }}
-        />
-      ))}
-    </span>
-  );
-}
-
 // ── Results (render between the hero and the tab bar) ─────────────────────
 
 export function DiscoverAskResults({ ask }: { ask: DiscoverAskController }) {
+  if (ask.error) {
+    return (
+      <div className="card" style={{ padding: '12px 16px', marginBottom: 20 }}>
+        <Row justify="space-between" align="center" style={{ gap: 10 }}>
+          <span style={{ fontSize: 12.5, color: 'var(--danger)' }}>
+            ✦ {ask.error}
+          </span>
+          <Row gap={8} align="center">
+            <button
+              type="button"
+              className="btn btn-xs"
+              style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
+              onClick={() => ask.submit()}
+            >
+              Retry
+            </button>
+            <CloseButton onClick={ask.dismiss} />
+          </Row>
+        </Row>
+      </div>
+    );
+  }
+
   if (ask.refusal) {
     return (
       <div className="card" style={{ padding: '12px 16px', marginBottom: 20 }}>
@@ -190,10 +147,7 @@ export function DiscoverAskResults({ ask }: { ask: DiscoverAskController }) {
               <button
                 key={s}
                 type="button"
-                onClick={() => {
-                  ask.setQuestion(s);
-                  ask.inputRef.current?.focus();
-                }}
+                onClick={() => ask.submit(s)}
                 style={{
                   padding: '4px 10px',
                   borderRadius: 999,

@@ -9,10 +9,10 @@ import type {
 import { DiscoverSearch } from './DiscoverSearch';
 import { DiscoverSearchResults } from './DiscoverSearchResults';
 import {
-  DiscoverAskBox,
   DiscoverAskResults,
   useDiscoverAsk,
 } from '@/components/discover/DiscoverAskBox';
+import { useAuth } from '@/hooks/useAuth';
 import {
   Row,
   Col,
@@ -22,6 +22,10 @@ import {
   Tab,
   PlatformPip,
   ChannelNameWithLink,
+  TableScroll,
+  rowLinkProps,
+  thStyle,
+  tdStyle,
   IconBolt,
   IconUsers,
   IconEye,
@@ -31,7 +35,7 @@ import {
   IconChev,
   IconDownload,
 } from '@/components/design';
-import { fmtN, fmtCompact } from '@/design/format';
+import { fmtN, fmtCompact, fmtRelative } from '@/design/format';
 import { downloadCsv, csvStamp } from '@/utils/csv';
 import { DiscoverTrendsTab } from './DiscoverTrendsTab';
 import { DiscoverChannelsTab } from './DiscoverChannelsTab';
@@ -69,6 +73,7 @@ export function DiscoverDetailPage() {
     [searchParams],
   );
   const ask = useDiscoverAsk({ slug: slug ?? '', getViewState: getAskViewState });
+  const isAdmin = useAuth().user?.role === 'admin';
 
   useEffect(() => {
     if (!slug) return;
@@ -104,11 +109,30 @@ export function DiscoverDetailPage() {
     () => (leaderboard ?? []).reduce((max, row) => Math.max(max, row.concurrent_viewers), 0),
     [leaderboard],
   );
-  const platforms = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of leaderboard ?? []) set.add(r.platform);
-    return Array.from(set).sort();
+  // Top language by summed live CCV — a KPI that actually changes, unlike
+  // the "Platforms: 2" tile it replaces.
+  const topLanguage = useMemo(() => {
+    const byLang = new Map<string, number>();
+    let total = 0;
+    for (const r of leaderboard ?? []) {
+      const lang = r.language?.toUpperCase() ?? '—';
+      byLang.set(lang, (byLang.get(lang) ?? 0) + r.concurrent_viewers);
+      total += r.concurrent_viewers;
+    }
+    let best: { lang: string; ccv: number } | null = null;
+    for (const [lang, ccv] of byLang) {
+      if (lang !== '—' && (!best || ccv > best.ccv)) best = { lang, ccv };
+    }
+    if (!best || total === 0) return null;
+    return { lang: best.lang, sharePct: Math.round((best.ccv / total) * 100) };
   }, [leaderboard]);
+
+  // A search takeover replaces the body — clear any lingering Ask card so
+  // the two result surfaces never stack.
+  useEffect(() => {
+    if (searchQuery) ask.dismiss();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
 
   const setTab = (next: TabKey) => {
     const params = new URLSearchParams(searchParams);
@@ -121,7 +145,7 @@ export function DiscoverDetailPage() {
     return (
       <div style={{ padding: 32 }}>
         <BackLink />
-        <Section style={{ marginTop: 20, color: 'var(--red)' }}>{error}</Section>
+        <Section style={{ marginTop: 20, color: 'var(--danger)' }}>{error}</Section>
       </div>
     );
   }
@@ -136,22 +160,17 @@ export function DiscoverDetailPage() {
 
   return (
     <div style={{ padding: '32px 24px 64px', maxWidth: 1320, margin: '0 auto' }}>
-      <Row justify="space-between" align="center" gap={16}>
-        <BackLink />
-        <Row gap={10} align="center" style={{ flex: 1, justifyContent: 'flex-end' }}>
-          <DiscoverAskBox ask={ask} />
-          <DiscoverSearch slug={slug ?? ''} />
-        </Row>
-      </Row>
+      <BackLink />
 
-      {/* ── Hero ──────────────────────────────────────────────────────── */}
+      {/* ── Hero — the page leads with WHAT this is; tools sit beside it
+             and wrap below on narrow screens ─────────────────────────── */}
       <Row justify="space-between" align="flex-end" wrap style={{ marginTop: 14, marginBottom: 24, gap: 16 }}>
-        <Col gap={10}>
-          <Row gap={10} align="center">
+        <Col gap={10} style={{ minWidth: 0 }}>
+          <Row gap={10} align="center" wrap>
             <h1
               style={{
                 fontFamily: 'var(--font-display, var(--font-sans))',
-                fontSize: 44,
+                fontSize: 'clamp(28px, 6vw, 44px)',
                 fontWeight: 700,
                 color: 'var(--fg)',
                 margin: 0,
@@ -162,7 +181,9 @@ export function DiscoverDetailPage() {
               {detail.name}
             </h1>
             <Pill tone={detail.status === 'active' ? 'live' : 'default'}>
-              {detail.status === 'active' ? '● Live' : detail.status}
+              {detail.status === 'active'
+                ? '● Live'
+                : detail.status.charAt(0).toUpperCase() + detail.status.slice(1)}
             </Pill>
           </Row>
           <Row gap={14} wrap style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
@@ -178,16 +199,20 @@ export function DiscoverDetailPage() {
                 <span>{detail.kick_category_slug}</span>
               </Row>
             )}
-            <span>
-              <span style={{ color: 'var(--fg-dim)' }}>min CCV</span>{' '}
-              <span style={{ color: 'var(--fg)' }}>{detail.min_ccv_threshold}</span>
-            </span>
-            <span>
-              <span style={{ color: 'var(--fg-dim)' }}>poll every</span>{' '}
-              <span style={{ color: 'var(--fg)' }}>{detail.polling_interval_seconds}s</span>
-            </span>
+            {/* Polling config is operator detail — admins only */}
+            {isAdmin && (
+              <span>
+                <span style={{ color: 'var(--fg-dim)' }}>min CCV</span>{' '}
+                <span style={{ color: 'var(--fg)' }}>{detail.min_ccv_threshold}</span>
+                <span style={{ color: 'var(--fg-dim)' }}> · poll every </span>
+                <span style={{ color: 'var(--fg)' }}>{detail.polling_interval_seconds}s</span>
+              </span>
+            )}
           </Row>
         </Col>
+        <div style={{ flex: '1 1 320px', maxWidth: 520, minWidth: 240 }}>
+          <DiscoverSearch slug={slug ?? ''} ask={ask} />
+        </div>
       </Row>
 
       {/* Ask results — answer card / refusal, between the hero and the
@@ -233,10 +258,12 @@ export function DiscoverDetailPage() {
               totalCcvNow={totalCcvNow}
               peakNow={peakNow}
               activeChannelCount={detail.active_channel_count}
-              platformCount={platforms.length}
+              topLanguage={topLanguage}
               leaderboard={leaderboard}
               lastCycle={detail.last_cycle}
               lastUpdatedAt={lastUpdatedAt}
+              isAdmin={isAdmin}
+              onViewAll={() => setTab('channels')}
             />
           )}
           {tab === 'trends' && <DiscoverTrendsTab slug={slug} />}
@@ -275,19 +302,23 @@ function LiveTab({
   totalCcvNow,
   peakNow,
   activeChannelCount,
-  platformCount,
+  topLanguage,
   leaderboard,
   lastCycle,
   lastUpdatedAt,
+  isAdmin,
+  onViewAll,
 }: {
   slug: string;
   totalCcvNow: number;
   peakNow: number;
   activeChannelCount: number;
-  platformCount: number;
+  topLanguage: { lang: string; sharePct: number } | null;
   leaderboard: GameTrackerLeaderboardRow[] | null;
   lastCycle: GameTrackerDetail['last_cycle'];
   lastUpdatedAt: number | null;
+  isAdmin: boolean;
+  onViewAll: () => void;
 }) {
   const exportCsv = () => {
     if (!leaderboard || leaderboard.length === 0) return;
@@ -310,7 +341,7 @@ function LiveTab({
       <Row gap={12} wrap style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
         <KpiCard
           icon={<IconUsers size={14} />}
-          label="Total CCV (now)"
+          label="Viewers now"
           value={fmtN(totalCcvNow)}
         />
         <KpiCard
@@ -326,8 +357,9 @@ function LiveTab({
         />
         <KpiCard
           icon={<IconGrid size={14} />}
-          label="Platforms"
-          value={String(platformCount)}
+          label="Top language"
+          value={topLanguage?.lang ?? '—'}
+          sub={topLanguage ? `${topLanguage.sharePct}% of viewers` : null}
         />
       </Row>
 
@@ -354,10 +386,28 @@ function LiveTab({
         }
       >
         <LeaderboardTable rows={leaderboard} trackerSlug={slug} />
+        {activeChannelCount > (leaderboard?.length ?? 0) && (
+          <button
+            type="button"
+            onClick={onViewAll}
+            style={{
+              alignSelf: 'flex-start',
+              padding: '6px 0',
+              border: 'none',
+              background: 'transparent',
+              color: 'var(--red)',
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+          >
+            View all {fmtN(activeChannelCount)} live channels →
+          </button>
+        )}
       </Section>
 
-      {/* Footer cycle status */}
-      {lastCycle && (
+      {/* Scheduler telemetry is operator detail — admins only */}
+      {isAdmin && lastCycle && (
         <Row justify="flex-end" style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
           last cycle: {lastCycle.snapshotsWritten} snapshots in {lastCycle.durationMs}ms
           {lastCycle.bumpedMismatch > 0 && ` · ${lastCycle.bumpedMismatch} bumped`}
@@ -454,14 +504,6 @@ export function FreshnessIndicator({ at }: { at: number | null }) {
   );
 }
 
-/** "3h ago"-style recency for discovery chips. */
-function timeAgo(iso: string): string {
-  const mins = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60_000));
-  if (mins < 60) return `${mins}m ago`;
-  if (mins < 60 * 24) return `${Math.floor(mins / 60)}h ago`;
-  return `${Math.floor(mins / (60 * 24))}d ago`;
-}
-
 /**
  * Compact wrap of chips for channels the tracker discovered in the last
  * 48h — each links to the channel detail page. Renders nothing while
@@ -492,6 +534,7 @@ function RecentlyDiscoveredStrip({ slug }: { slug: string }) {
           <Link
             key={r.channel_id}
             to={`/discover/${slug}/channel/${r.channel_id}`}
+            aria-label={`${r.display_name} — discovered ${fmtRelative(r.joined_at)}, peak ${fmtCompact(r.peak)}`}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -522,7 +565,7 @@ function RecentlyDiscoveredStrip({ slug }: { slug: string }) {
               peak {fmtCompact(r.peak)}
             </span>
             <span style={{ color: 'var(--fg-dim)' }}>·</span>
-            <span style={{ color: 'var(--fg-dim)' }}>{timeAgo(r.joined_at)}</span>
+            <span style={{ color: 'var(--fg-dim)' }}>{fmtRelative(r.joined_at)}</span>
           </Link>
         ))}
       </Row>
@@ -546,7 +589,8 @@ export function LeaderboardTable({
   const navigate = useNavigate();
   const colCount = showRangeStats ? 7 : 5;
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+    <TableScroll>
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: showRangeStats ? 640 : 480 }}>
       <thead>
         <tr style={{ borderBottom: '1px solid var(--border)' }}>
           <th style={{ ...thStyle, width: 36 }}>#</th>
@@ -575,11 +619,13 @@ export function LeaderboardTable({
         )}
         {(rows ?? []).map((row, i) => {
           const profilePic = row.channel?.metadata?.profile_image_url as string | undefined;
-          const onRowClick = () => navigate(`/discover/${trackerSlug}/channel/${row.channel_id}`);
+          const channelTo = `/discover/${trackerSlug}/channel/${row.channel_id}`;
+          const onRowClick = () => navigate(channelTo);
           return (
             <tr
               key={row.channel_id}
               onClick={onRowClick}
+              {...rowLinkProps(`Open ${row.channel?.display_name ?? 'channel'} details`, onRowClick)}
               style={{
                 borderBottom: '1px solid var(--border-faint)',
                 cursor: 'pointer',
@@ -602,16 +648,12 @@ export function LeaderboardTable({
                   <Row gap={10} align="center">
                     <Avatar src={profilePic ?? null} name={row.channel.display_name} size={32} />
                     <Col gap={2} style={{ minWidth: 0, flex: 1 }}>
-                      <div
-                        onClick={(e) => e.stopPropagation()}
-                        style={{ display: 'inline-flex' }}
-                      >
-                        <ChannelNameWithLink
-                          name={row.channel.display_name}
-                          platform={row.platform}
-                          channelIdentifier={row.channel.channel_identifier}
-                        />
-                      </div>
+                      <ChannelNameWithLink
+                        name={row.channel.display_name}
+                        platform={row.platform}
+                        channelIdentifier={row.channel.channel_identifier}
+                        to={channelTo}
+                      />
                       <div
                         title={row.stream_title ?? ''}
                         style={{
@@ -677,6 +719,7 @@ export function LeaderboardTable({
         })}
       </tbody>
     </table>
+    </TableScroll>
   );
 }
 
@@ -689,6 +732,9 @@ export function Avatar({
   name: string;
   size?: number;
 }) {
+  // A broken/blocked profile image degrades to initials instead of a
+  // blank dark circle (the Trends tab shipped rows of black dots).
+  const [broken, setBroken] = useState(false);
   const initials = name
     .split(/\s+/)
     .map((s) => s[0])
@@ -696,32 +742,13 @@ export function Avatar({
     .slice(0, 2)
     .join('')
     .toUpperCase();
-  if (src) {
-    return (
-      <img
-        src={src}
-        alt=""
-        loading="lazy"
-        width={size}
-        height={size}
-        style={{
-          width: size,
-          height: size,
-          borderRadius: '50%',
-          background: 'var(--bg-sunken)',
-          objectFit: 'cover',
-          flexShrink: 0,
-        }}
-      />
-    );
-  }
-  return (
+  const fallback = (
     <div
       style={{
         width: size,
         height: size,
         borderRadius: '50%',
-        background: 'var(--bg-sunken)',
+        background: 'color-mix(in oklab, var(--info) 14%, var(--bg-sunken))',
         color: 'var(--fg-muted)',
         display: 'flex',
         alignItems: 'center',
@@ -734,18 +761,23 @@ export function Avatar({
       {initials || '?'}
     </div>
   );
+  if (!src || broken) return fallback;
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      width={size}
+      height={size}
+      onError={() => setBroken(true)}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: '50%',
+        background: 'color-mix(in oklab, var(--info) 10%, var(--bg-sunken))',
+        objectFit: 'cover',
+        flexShrink: 0,
+      }}
+    />
+  );
 }
-
-const thStyle: React.CSSProperties = {
-  padding: '8px 6px',
-  textAlign: 'left',
-  fontSize: 10.5,
-  fontWeight: 600,
-  color: 'var(--fg-muted)',
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-};
-
-const tdStyle: React.CSSProperties = {
-  padding: '12px 6px',
-};

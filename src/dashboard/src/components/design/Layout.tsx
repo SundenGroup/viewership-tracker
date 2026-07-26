@@ -84,7 +84,9 @@ export function Section({
         ...style,
       }}
     >
-      <Row justify="space-between" align="flex-start">
+      {/* wrap: on narrow screens the right-side toolbar drops below the
+          title instead of colliding with it */}
+      <Row justify="space-between" align="flex-start" wrap gap={8}>
         <Col gap={2}>
           {eyebrow && <div className="eyebrow">{eyebrow}</div>}
           {title && <h3>{title}</h3>}

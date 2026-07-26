@@ -8,13 +8,17 @@ import {
   Pill,
   PlatformPip,
   IconSearch,
+  IconSparkle,
   IconX,
 } from '@/components/design';
-import { fmtCompact } from '@/design/format';
+import { fmtCompact, fmtRelative } from '@/design/format';
 import { Avatar } from './DiscoverDetailPage';
+import type { DiscoverAskController } from '@/components/discover/DiscoverAskBox';
 
 interface Props {
   slug: string;
+  /** When provided, the box is an omnibox: search AND natural-language Ask. */
+  ask?: DiscoverAskController;
   /** Hint for the input placeholder. */
   placeholder?: string;
 }
@@ -22,12 +26,23 @@ interface Props {
 const DEBOUNCE_MS = 250;
 const DROPDOWN_LIMIT = 10;
 
+/** Heuristic: does the query read like a question rather than a term? */
+function looksLikeQuestion(q: string): boolean {
+  const t = q.trim().toLowerCase();
+  if (t.split(/\s+/).length >= 4) return true;
+  return /^(top|how|what|who|which|when|compare|most|best|average|avg|peak|total)\b/.test(t);
+}
+
 /**
- * Search streams within a tracker by title or channel name. Live
- * dropdown of matches, click a row to jump to that streamer's channel
- * page. Shows last-seen + most recent title + peak CCV per match.
+ * The Discover omnibox: ONE input for both literal search and Ask AI.
+ *
+ * Typing → instant dropdown of channel/title matches (as before).
+ * Enter → full search results page. The dropdown carries a pinned
+ * "✦ Ask AI" action (also ⌘/Ctrl+Enter) that routes the raw text to the
+ * natural-language Ask instead — replacing the confusing twin-input
+ * layout where Ask and Search sat side by side looking identical.
  */
-export function DiscoverSearch({ slug, placeholder }: Props) {
+export function DiscoverSearch({ slug, ask, placeholder }: Props) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const urlQuery = searchParams.get('q') ?? '';
@@ -74,11 +89,21 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
     return () => clearTimeout(handle);
   }, [slug, query]);
 
-  const submit = (q: string) => {
+  const submitSearch = (q: string) => {
     const trimmed = q.trim();
     if (trimmed.length < 2) return;
     setOpen(false);
+    // A search takeover replaces the body — clear any lingering Ask card
+    // so the two result surfaces can't stack.
+    ask?.dismiss();
     navigate(`/discover/${slug}?q=${encodeURIComponent(trimmed)}`);
+  };
+
+  const submitAsk = (q: string) => {
+    const trimmed = q.trim();
+    if (!ask || trimmed.length < 2 || ask.pending) return;
+    setOpen(false);
+    ask.submit(trimmed);
   };
 
   // Click outside to close.
@@ -91,8 +116,11 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [open]);
 
+  const askable = !!ask && query.trim().length >= 2;
+  const questionish = askable && looksLikeQuestion(query);
+
   return (
-    <div ref={containerRef} style={{ position: 'relative', width: '100%', maxWidth: 460 }}>
+    <div ref={containerRef} style={{ position: 'relative', width: '100%', maxWidth: 520 }}>
       <div
         style={{
           position: 'relative',
@@ -115,6 +143,7 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
         <input
           type="text"
           value={query}
+          ref={ask?.inputRef}
           onChange={(e) => {
             setQuery(e.target.value);
             setOpen(true);
@@ -123,13 +152,20 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
-              submit(query);
+              if ((e.metaKey || e.ctrlKey) && ask) submitAsk(query);
+              else submitSearch(query);
             } else if (e.key === 'Escape') {
               setOpen(false);
               (e.target as HTMLInputElement).blur();
             }
           }}
-          placeholder={placeholder ?? 'Search titles or channels (e.g. "drops")'}
+          placeholder={
+            placeholder ??
+            (ask
+              ? 'Search channels & titles, or ask — e.g. "top 10 turkish streamers in may"'
+              : 'Search titles or channels (e.g. "drops")')
+          }
+          aria-label={ask ? 'Search or ask about this game' : 'Search titles or channels'}
           style={{
             width: '100%',
             padding: '8px 32px 8px 32px',
@@ -141,31 +177,37 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
             outline: 'none',
           }}
         />
-        {query && (
-          <button
-            type="button"
-            onClick={() => {
-              setQuery('');
-              setRows(null);
-              if (urlQuery) navigate(`/discover/${slug}`);
-            }}
-            aria-label="Clear search"
-            style={{
-              position: 'absolute',
-              right: 8,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 20,
-              height: 20,
-              border: 'none',
-              background: 'transparent',
-              color: 'var(--fg-dim)',
-              cursor: 'pointer',
-            }}
-          >
-            <IconX size={12} />
-          </button>
+        {ask?.pending ? (
+          <span style={{ position: 'absolute', right: 10, display: 'inline-flex' }}>
+            <PendingDots />
+          </span>
+        ) : (
+          query && (
+            <button
+              type="button"
+              onClick={() => {
+                setQuery('');
+                setRows(null);
+                if (urlQuery) navigate(`/discover/${slug}`);
+              }}
+              aria-label="Clear search"
+              style={{
+                position: 'absolute',
+                right: 8,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 20,
+                height: 20,
+                border: 'none',
+                background: 'transparent',
+                color: 'var(--fg-dim)',
+                cursor: 'pointer',
+              }}
+            >
+              <IconX size={12} />
+            </button>
+          )
         )}
       </div>
 
@@ -187,11 +229,12 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
             <div style={{ padding: 14, fontSize: 12, color: 'var(--fg-muted)' }}>Searching…</div>
           )}
           {error && (
-            <div style={{ padding: 14, fontSize: 12, color: 'var(--red)' }}>{error}</div>
+            <div style={{ padding: 14, fontSize: 12, color: 'var(--danger)' }}>{error}</div>
           )}
           {rows !== null && rows.length === 0 && (
             <div style={{ padding: 14, fontSize: 12, color: 'var(--fg-muted)' }}>
-              No matches in the last 30 days.
+              No channel or title matches in the last 30 days.
+              {questionish && ' Looks like a question — try Ask below.'}
             </div>
           )}
           {rows !== null && rows.length > 0 && (
@@ -222,8 +265,6 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
                 {rows.map((r) => {
                   if (!r.channel) return null;
                   const profilePic = r.channel.metadata.profile_image_url as string | undefined;
-                  const lastSeen = new Date(r.last_seen);
-                  const ageMins = Math.floor((Date.now() - lastSeen.getTime()) / 60_000);
                   return (
                     <Link
                       key={r.channel_id}
@@ -267,7 +308,7 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
                               {r.channel.display_name}
                             </span>
                             <Pill tone={r.matched_field === 'title' ? 'red' : 'default'}>
-                              {r.matched_field}
+                              {r.matched_field === 'title' ? 'in title' : 'channel'}
                             </Pill>
                           </Row>
                           {r.stream_title && (
@@ -304,11 +345,7 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
                               letterSpacing: '0.04em',
                             }}
                           >
-                            {ageMins < 60
-                              ? `${ageMins}m ago`
-                              : ageMins < 60 * 24
-                              ? `${Math.floor(ageMins / 60)}h ago`
-                              : `${Math.floor(ageMins / (60 * 24))}d ago`}
+                            {fmtRelative(r.last_seen)}
                           </span>
                         </Col>
                       </div>
@@ -316,34 +353,105 @@ export function DiscoverSearch({ slug, placeholder }: Props) {
                   );
                 })}
               </Col>
-              <button
-                type="button"
-                onClick={() => submit(query)}
-                style={{
-                  width: '100%',
-                  padding: '10px 14px',
-                  border: 'none',
-                  borderTop: '1px solid var(--border-faint)',
-                  background: 'transparent',
-                  color: 'var(--red)',
-                  fontSize: 12,
-                  fontWeight: 500,
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'var(--bg-sunken)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'transparent';
-                }}
-              >
-                See all matches for &ldquo;{query.trim()}&rdquo; →
-              </button>
             </>
+          )}
+
+          {/* Pinned actions: Ask AI (when wired) + full search results.
+              Always in the same order/place so muscle memory forms. */}
+          {askable && (
+            <button
+              type="button"
+              onClick={() => submitAsk(query)}
+              disabled={ask?.pending}
+              style={{
+                width: '100%',
+                padding: '10px 14px',
+                border: 'none',
+                borderTop: '1px solid var(--border-faint)',
+                background: questionish
+                  ? 'color-mix(in oklab, var(--info) 8%, transparent)'
+                  : 'transparent',
+                color: 'var(--info)',
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: 'pointer',
+                textAlign: 'left',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--bg-sunken)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = questionish
+                  ? 'color-mix(in oklab, var(--info) 8%, transparent)'
+                  : 'transparent';
+              }}
+            >
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                <IconSparkle size={12} />
+                <span
+                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                >
+                  Ask AI: &ldquo;{query.trim()}&rdquo;
+                </span>
+              </span>
+              <span className="mono" style={{ fontSize: 10, color: 'var(--fg-dim)', flexShrink: 0 }}>
+                ⌘⏎
+              </span>
+            </button>
+          )}
+          {rows !== null && rows.length > 0 && (
+            <button
+              type="button"
+              onClick={() => submitSearch(query)}
+              style={{
+                width: '100%',
+                padding: '10px 14px',
+                border: 'none',
+                borderTop: '1px solid var(--border-faint)',
+                background: 'transparent',
+                color: 'var(--red)',
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--bg-sunken)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+              }}
+            >
+              See all matches for &ldquo;{query.trim()}&rdquo; →
+            </button>
           )}
         </div>
       )}
     </div>
+  );
+}
+
+/** Inline three-dot shimmer shown while an Ask question is compiling. */
+function PendingDots() {
+  return (
+    <span style={{ display: 'inline-flex', gap: 3, flexShrink: 0 }} aria-label="Thinking…">
+      <style>{`@keyframes discoverAskDotPulse { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }`}</style>
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          style={{
+            width: 4,
+            height: 4,
+            borderRadius: '50%',
+            background: 'var(--fg-muted)',
+            animation: `discoverAskDotPulse 1.1s ease-in-out ${i * 0.18}s infinite`,
+          }}
+        />
+      ))}
+    </span>
   );
 }

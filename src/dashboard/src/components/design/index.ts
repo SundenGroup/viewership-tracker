@@ -17,6 +17,8 @@ export * from './CollapsibleSection';
 export * from './InteractiveMainChart';
 export * from './ThemeToggle';
 export * from './ChannelNameWithLink';
+export * from './RangePill';
+export * from './tableStyles';
 export * from './SettingsShell';
 export * from './PublicLinkButton';
 export * from './FilterMultiSelect';

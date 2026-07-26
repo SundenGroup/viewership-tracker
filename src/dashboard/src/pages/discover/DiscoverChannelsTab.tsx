@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import * as api from '@/services/api';
-import { Row, Section, IconFilter, IconDownload } from '@/components/design';
+import { Row, RangePill, Section, IconFilter, IconDownload } from '@/components/design';
 import { downloadCsv, csvStamp } from '@/utils/csv';
 import { LeaderboardTable, FreshnessIndicator, type LeaderboardRow } from './DiscoverDetailPage';
 
@@ -255,9 +255,9 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
             Platform
           </span>
           {(['all', 'twitch', 'kick'] as const).map((p) => (
-            <Pill key={p} active={platform === p} onClick={() => setPlatform(p)}>
+            <RangePill key={p} active={platform === p} onClick={() => setPlatform(p)}>
               {p}
-            </Pill>
+            </RangePill>
           ))}
           <span style={{ fontSize: 11, color: 'var(--fg-dim)', marginLeft: 6 }}>
             {range ? `${filtered.length} on page ${page + 1}` : `${filtered.length} live`}
@@ -282,9 +282,9 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
             When
           </span>
           {(['now', '24h', '7d', 'custom'] as const).map((d) => (
-            <Pill key={d} active={dateMode === d} onClick={() => setDateMode(d)}>
+            <RangePill key={d} active={dateMode === d} onClick={() => setDateMode(d)}>
               {d === 'now' ? 'Now' : d === 'custom' ? 'Custom' : d}
-            </Pill>
+            </RangePill>
           ))}
           {dateMode === 'custom' && (
             <Row gap={4} align="center">
@@ -327,12 +327,12 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
           <span className="eyebrow" style={{ fontSize: 10, color: 'var(--fg-muted)' }}>
             Sort
           </span>
-          <Pill active={sort === 'ccv'} onClick={() => setSort('ccv')}>
-            CCV
-          </Pill>
-          <Pill active={sort === 'lang'} onClick={() => setSort('lang')}>
+          <RangePill active={sort === 'ccv'} onClick={() => setSort('ccv')}>
+            Viewers
+          </RangePill>
+          <RangePill active={sort === 'lang'} onClick={() => setSort('lang')}>
             Lang
-          </Pill>
+          </RangePill>
         </Row>
       </Row>
 
@@ -341,7 +341,7 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
           Pick a start and end date to load the range.
         </div>
       )}
-      {error && <div style={{ color: 'var(--red)', fontSize: 13 }}>{error}</div>}
+      {error && <div style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</div>}
 
       {/* Table sits within the section padding (no edge bleed) so its left
           and right line up with the header + the rest of the page — matching
@@ -349,7 +349,7 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
       <LeaderboardTable
         rows={filtered}
         trackerSlug={slug}
-        metricLabel={range ? 'Peak CCV' : 'Live CCV'}
+        metricLabel={range ? 'Peak viewers' : 'Viewers'}
         showRangeStats={!!range}
       />
 
@@ -357,18 +357,18 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
       {range && (page > 0 || hasNextPage) && (
         <Row gap={10} align="center" justify="center">
           {page > 0 && (
-            <Pill active={false} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+            <RangePill active={false} onClick={() => setPage((p) => Math.max(0, p - 1))}>
               ‹ Prev
-            </Pill>
+            </RangePill>
           )}
           <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
             Page {page + 1}{pageCount != null ? ` of ${pageCount}` : ''}
             {total != null ? ` · ${total} streamers` : ''}
           </span>
           {hasNextPage && (
-            <Pill active={false} onClick={() => setPage((p) => p + 1)}>
+            <RangePill active={false} onClick={() => setPage((p) => p + 1)}>
               Next ›
-            </Pill>
+            </RangePill>
           )}
         </Row>
       )}
@@ -384,37 +384,3 @@ const dateInputStyle: React.CSSProperties = {
   background: 'var(--bg-sunken)',
   color: 'var(--fg)',
 };
-
-function Pill({
-  children,
-  active,
-  onClick,
-}: {
-  children: React.ReactNode;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: '3px 10px',
-        fontSize: 10.5,
-        fontFamily: 'var(--font-mono)',
-        fontWeight: 600,
-        textTransform: 'uppercase',
-        letterSpacing: '0.08em',
-        borderRadius: 999,
-        border: `1px solid ${active ? 'var(--red)' : 'var(--border)'}`,
-        background: active
-          ? 'var(--red-wash, color-mix(in oklab, var(--red) 12%, transparent))'
-          : 'var(--bg-sunken)',
-        color: active ? 'var(--red)' : 'var(--fg-muted)',
-        cursor: 'pointer',
-      }}
-    >
-      {children}
-    </button>
-  );
-}
