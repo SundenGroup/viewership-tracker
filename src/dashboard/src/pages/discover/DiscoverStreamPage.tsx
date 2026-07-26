@@ -706,6 +706,9 @@ function StreamHealthPanel({
         {engagementPct != null && cohort != null && (
           <>Chat engagement in the {ordinal(engagementPct)} percentile of its cohort. </>
         )}
+        {evidence?.rawScore != null && (
+          <>Red-flag rules adjusted this score from a base of {evidence.rawScore}. </>
+        )}
         C means typical — D and F appear only when red flags are detected. Signals, not proof.
       </div>
     </Section>

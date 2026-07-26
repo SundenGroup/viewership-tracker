@@ -1427,6 +1427,8 @@ export interface GameTrackerHealthEvidence {
     followers: number;
     spikeResponse: number;
   } | null;
+  /** Pre-gate subscore sum, present only when a flag gate moved the score. */
+  rawScore?: number;
 }
 
 export interface GameTrackerStreamSessionRow {
