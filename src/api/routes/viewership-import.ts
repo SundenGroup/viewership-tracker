@@ -9,6 +9,10 @@
  * Supported CSV shapes (header-detected, column order doesn't matter):
  *   - Twitch "Stream Session" export:  Timestamp ("10:30 AM"), Average Viewers
  *   - YouTube analytics export:        Date time / Time, Concurrent viewers
+ *   - YouTube per-video live export:   "Live stream position (seconds)" +
+ *     "Live concurrent viewers" — relative offsets, anchored to the stream's
+ *     real start via `streamStart` (ISO or HH:MM in `timezone` on `date`) or
+ *     `videoUrl` (we scrape liveBroadcastDetails.startTimestamp off the VOD)
  *   - Generic:                         any time-ish column + any viewers-ish column
  *
  * Times without a date part (Twitch) need the `date` param; all local times
@@ -66,19 +70,40 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
-function detectColumns(headers: string[]): { timeIdx: number; viewersIdx: number } | null {
+export type TimeMode = 'clock' | 'offsetSeconds';
+
+export function detectColumns(
+  headers: string[],
+): { timeIdx: number; viewersIdx: number; timeMode: TimeMode } | null {
   const norm = headers.map((h) => h.trim().toLowerCase());
-  const timeIdx = norm.findIndex((h) =>
-    /^(timestamp|time|date ?time|datetime|date)$/.test(h) || /^time \(/.test(h),
+
+  // YouTube per-video live export: times are offsets from stream start.
+  const offsetIdx = norm.findIndex(
+    (h) => /^live stream position/.test(h) || /position \(seconds\)/.test(h),
   );
+  let timeMode: TimeMode = 'clock';
+  let timeIdx: number;
+  if (offsetIdx !== -1) {
+    timeMode = 'offsetSeconds';
+    timeIdx = offsetIdx;
+  } else {
+    timeIdx = norm.findIndex(
+      (h) => /^(timestamp|time|date ?time|datetime|date)$/.test(h) || /^time \(/.test(h),
+    );
+  }
+
   // Prefer the platform-official columns; fall back to anything viewer-ish
-  // that isn't "live views" (Twitch's cumulative view count).
+  // that isn't "live views" (Twitch's cumulative view count). "Live
+  // concurrent viewers" (instantaneous sample) beats "Average concurrent
+  // viewers" (within-minute mean) for our per-minute snapshot semantics.
   let viewersIdx = norm.findIndex((h) => h === 'average viewers' || h === 'concurrent viewers');
+  if (viewersIdx === -1) viewersIdx = norm.findIndex((h) => h === 'live concurrent viewers');
+  if (viewersIdx === -1) viewersIdx = norm.findIndex((h) => h === 'average concurrent viewers');
   if (viewersIdx === -1) {
     viewersIdx = norm.findIndex((h) => /^(viewers|ccv|concurrent_viewers)$/.test(h));
   }
   if (timeIdx === -1 || viewersIdx === -1) return null;
-  return { timeIdx, viewersIdx };
+  return { timeIdx, viewersIdx, timeMode };
 }
 
 // ── Time handling ────────────────────────────────────────────────────────
@@ -176,6 +201,98 @@ function zonedToUtc(dateStr: string, h: number, m: number, s: number, timeZone: 
   return new Date(guess - off2 * 60_000);
 }
 
+/** Extract a YouTube video id from a URL or accept a bare 11-char id. */
+export function parseVideoId(input: string): string | null {
+  const t = input.trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(t)) return t;
+  const m =
+    t.match(/[?&]v=([A-Za-z0-9_-]{11})/) ||
+    t.match(/youtu\.be\/([A-Za-z0-9_-]{11})/) ||
+    t.match(/\/(?:live|shorts|embed)\/([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+/**
+ * Resolve a stream's real start time from its watch page
+ * (microformat liveBroadcastDetails.startTimestamp). Works for VODs of
+ * past live streams; costs zero API quota.
+ */
+async function fetchStreamStartFromVideo(videoId: string): Promise<Date | null> {
+  const resp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+    headers: {
+      'Accept-Language': 'en',
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+    },
+  });
+  if (!resp.ok) return null;
+  const html = await resp.text();
+  const m = html.match(/"startTimestamp":"([^"]+)"/);
+  if (!m) return null;
+  const d = new Date(m[1]);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Resolve the anchor instant for offset-seconds CSVs.
+ *   - streamStart: full ISO datetime (with date), or a bare clock time
+ *     interpreted on `date` in `timezone`
+ *   - videoUrl: YouTube URL / video id → scrape startTimestamp
+ */
+export async function resolveAnchor(
+  streamStart: string | undefined,
+  videoUrl: string | undefined,
+  date: string | undefined,
+  timezone: string,
+): Promise<{ anchor: Date; source: string } | { error: string }> {
+  if (streamStart && streamStart.trim()) {
+    // Full ISO with explicit offset/Z ("2026-07-21T10:01:23+00:00") —
+    // unambiguous, take it directly.
+    if (/[Tt].*(Z|[+-]\d{2}:?\d{2})$/.test(streamStart.trim())) {
+      const d = new Date(streamStart.trim());
+      if (!Number.isNaN(d.getTime())) return { anchor: d, source: 'streamStart param (ISO)' };
+    }
+    const pt = parseTimeCell(streamStart);
+    if (!pt) return { error: `Could not parse streamStart "${streamStart}"` };
+    const anchorDate = pt.date ?? date;
+    if (!anchorDate) {
+      return { error: 'streamStart has no date part — set the CSV date or pass a full ISO datetime' };
+    }
+    const anchor = pt.utc
+      ? new Date(Date.UTC(
+          parseInt(anchorDate.slice(0, 4), 10),
+          parseInt(anchorDate.slice(5, 7), 10) - 1,
+          parseInt(anchorDate.slice(8, 10), 10),
+          pt.h, pt.m, pt.s,
+        ))
+      : zonedToUtc(anchorDate, pt.h, pt.m, pt.s, timezone);
+    return { anchor, source: 'streamStart param' };
+  }
+  if (videoUrl && videoUrl.trim()) {
+    const vid = parseVideoId(videoUrl);
+    if (!vid) return { error: `Could not extract a video id from "${videoUrl}"` };
+    try {
+      const anchor = await fetchStreamStartFromVideo(vid);
+      if (!anchor) {
+        return {
+          error:
+            `Could not read the stream start time from video ${vid} — ` +
+            'pass streamStart explicitly (the "Stream started" time from YouTube Studio).',
+        };
+      }
+      return { anchor, source: `videoUrl ${vid} (scraped startTimestamp)` };
+    } catch (e) {
+      return { error: `Fetching video ${vid} failed: ${(e as Error).message}` };
+    }
+  }
+  return {
+    error:
+      'This CSV uses "Live stream position (seconds)" — relative offsets. ' +
+      'Provide the stream start: paste the VOD URL (videoUrl) or the exact ' +
+      'start time (streamStart).',
+  };
+}
+
 function parseViewersCell(raw: string): number | null {
   const t = raw.trim().replace(/[,\s]/g, '');
   if (!t) return null;
@@ -202,6 +319,10 @@ interface ImportBody {
   timezone?: string;
   startTime?: string;
   endTime?: string;
+  /** Anchor for offset-seconds CSVs: ISO datetime, or clock time on `date`. */
+  streamStart?: string;
+  /** Alternative anchor: YouTube VOD URL / video id — start time is scraped. */
+  videoUrl?: string;
   dryRun?: boolean;
 }
 
@@ -215,6 +336,8 @@ router.post('/csv', async (req: Request, res: Response, next: NextFunction) => {
       timezone = 'Europe/Berlin',
       startTime,
       endTime,
+      streamStart,
+      videoUrl,
       dryRun = true,
     } = (req.body ?? {}) as ImportBody;
 
@@ -277,7 +400,40 @@ router.post('/csv', async (req: Request, res: Response, next: NextFunction) => {
     // timestamp-ms -> viewers (last value wins for duplicate times)
     const byTs = new Map<number, number>();
     let needsDateParam = false;
+    let anchorInfo: { utc: string; source: string } | null = null;
 
+    if (cols.timeMode === 'offsetSeconds') {
+      // Relative offsets (YouTube per-video live export) — anchor to the
+      // stream's real start, then each row is anchor + N seconds.
+      const resolved = await resolveAnchor(streamStart, videoUrl, date || undefined, timezone);
+      if ('error' in resolved) {
+        res.status(400).json({ error: resolved.error });
+        return;
+      }
+      anchorInfo = { utc: resolved.anchor.toISOString(), source: resolved.source };
+      const anchorMs = resolved.anchor.getTime();
+      for (let i = 1; i < table.length; i++) {
+        const rawTime = (table[i][cols.timeIdx] ?? '').trim();
+        const rawViewers = table[i][cols.viewersIdx] ?? '';
+        const seconds = Number(rawTime.replace(/[,\s]/g, ''));
+        const viewers = parseViewersCell(rawViewers);
+        if (!Number.isFinite(seconds) || seconds < 0 || viewers === null) {
+          skipped++;
+          if (warnings.length < 5) warnings.push(`Row ${i + 1}: could not parse "${rawTime}" / "${rawViewers}"`);
+          continue;
+        }
+        const ts = anchorMs + seconds * 1000;
+        // Optional local-time window, evaluated in `timezone`
+        if (startMin !== null || endMin !== null) {
+          const off = tzOffsetMinutes(timezone, ts);
+          const local = new Date(ts + off * 60_000);
+          const localMin = local.getUTCHours() * 60 + local.getUTCMinutes();
+          if (startMin !== null && localMin < startMin) { skipped++; continue; }
+          if (endMin !== null && localMin > endMin) { skipped++; continue; }
+        }
+        byTs.set(ts, viewers);
+      }
+    } else {
     for (let i = 1; i < table.length; i++) {
       const rawTime = table[i][cols.timeIdx] ?? '';
       const rawViewers = table[i][cols.viewersIdx] ?? '';
@@ -307,6 +463,7 @@ router.post('/csv', async (req: Request, res: Response, next: NextFunction) => {
           )
         : zonedToUtc(rowDate, pt.h, pt.m, pt.s, timezone).getTime();
       byTs.set(ts, viewers);
+    }
     }
 
     if (needsDateParam) {
@@ -355,6 +512,8 @@ router.post('/csv', async (req: Request, res: Response, next: NextFunction) => {
       skipped,
       warnings,
       timezone,
+      timeMode: cols.timeMode,
+      anchor: anchorInfo,
       range: {
         fromUtc: fromUtc.toISOString(),
         toUtc: toUtc.toISOString(),
