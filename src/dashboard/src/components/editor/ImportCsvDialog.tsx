@@ -56,6 +56,9 @@ export function ImportCsvDialog({
   const [timezone, setTimezone] = useState('Europe/Berlin');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
+  // Anchor for YouTube "Live stream position (seconds)" exports: a VOD
+  // URL/video id (server scrapes the start time) or an explicit time.
+  const [streamAnchor, setStreamAnchor] = useState('');
   const [preview, setPreview] = useState<api.CsvImportResult | null>(null);
   const [result, setResult] = useState<api.CsvImportResult | null>(null);
   const [dPreview, setDPreview] = useState<api.DiscoverBackfillResult | null>(null);
@@ -77,6 +80,7 @@ export function ImportCsvDialog({
       setTimezone('Europe/Berlin');
       setStartTime('');
       setEndTime('');
+      setStreamAnchor('');
       setPreview(null);
       setResult(null);
       setDPreview(null);
@@ -169,6 +173,9 @@ export function ImportCsvDialog({
     setError(null);
     try {
       if (source === 'csv') {
+        const anchor = streamAnchor.trim();
+        const anchorIsVideo =
+          /youtu\.?be/i.test(anchor) || /^[A-Za-z0-9_-]{11}$/.test(anchor);
         const res = await api.importViewershipCsv({
           channelId,
           broadcastDayId: dayId,
@@ -177,6 +184,8 @@ export function ImportCsvDialog({
           timezone: timezone || undefined,
           startTime: startTime || undefined,
           endTime: endTime || undefined,
+          videoUrl: anchor && anchorIsVideo ? anchor : undefined,
+          streamStart: anchor && !anchorIsVideo ? anchor : undefined,
           dryRun,
         });
         if (dryRun) {
@@ -510,6 +519,26 @@ export function ImportCsvDialog({
                 : 'Leave From/To empty to cover the whole scheduled broadcast window. Set them (local time in the selected timezone, on the date above) to target a specific stretch — e.g. a 16:00–16:22 crash gap.'}
             </div>
 
+            {source === 'csv' && (
+              <Field label="Stream start — VOD URL or time (for 'position (seconds)' exports)">
+                <input
+                  type="text"
+                  placeholder='e.g. https://www.youtube.com/watch?v=… — or "10:01:23" (in the timezone above), or full ISO'
+                  value={streamAnchor}
+                  onChange={(e) => {
+                    setStreamAnchor(e.target.value);
+                    invalidate();
+                  }}
+                  style={inputStyle}
+                />
+                <div style={{ fontSize: 10.5, color: 'var(--fg-dim)', marginTop: 4 }}>
+                  YouTube's per-video live CSV counts seconds from stream start. Paste the
+                  VOD link and the server reads the exact start time itself; or type the
+                  start time from YouTube Studio. Not needed for wall-clock CSVs.
+                </div>
+              </Field>
+            )}
+
             {/* Preview panel */}
             {preview && (
               <div
@@ -534,6 +563,12 @@ export function ImportCsvDialog({
                     Range: <b>{preview.range.fromLocal}</b> → <b>{preview.range.toLocal}</b>{' '}
                     ({preview.timezone})
                   </span>
+                  {preview.anchor && (
+                    <span style={{ color: 'var(--fg-muted)' }}>
+                      Anchored to stream start <b>{preview.anchor.utc.replace('T', ' ').slice(0, 19)} UTC</b>{' '}
+                      ({preview.anchor.source})
+                    </span>
+                  )}
                   <span style={{ color: 'var(--danger)' }}>
                     Will DELETE {preview.existingRowsInRange} existing rows in this range on
                     "{preview.day.label}" and insert {preview.parsed} official values.

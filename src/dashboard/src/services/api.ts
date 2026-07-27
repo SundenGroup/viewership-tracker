@@ -569,6 +569,8 @@ export interface CsvImportResult {
   skipped: number;
   warnings: string[];
   timezone: string;
+  timeMode?: 'clock' | 'offsetSeconds';
+  anchor?: { utc: string; source: string } | null;
   range: { fromUtc: string; toUtc: string; fromLocal: string; toLocal: string };
   existingRowsInRange: number;
   sample: {
@@ -588,6 +590,8 @@ export function importViewershipCsv(payload: {
   timezone?: string;
   startTime?: string;
   endTime?: string;
+  streamStart?: string;
+  videoUrl?: string;
   dryRun: boolean;
 }) {
   return request<CsvImportResult>('/api/import/csv', {
