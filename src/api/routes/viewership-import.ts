@@ -213,11 +213,33 @@ export function parseVideoId(input: string): string | null {
 }
 
 /**
- * Resolve a stream's real start time from its watch page
- * (microformat liveBroadcastDetails.startTimestamp). Works for VODs of
- * past live streams; costs zero API quota.
+ * Resolve a stream's real start time. Primary: YouTube Data API
+ * liveStreamingDetails.actualStartTime (1 quota unit, works from the
+ * datacenter). Fallback: scrape the watch page's
+ * liveBroadcastDetails.startTimestamp (datacenter responses often omit
+ * it, but keep it for keyless setups).
  */
 async function fetchStreamStartFromVideo(videoId: string): Promise<Date | null> {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (apiKey) {
+    try {
+      const resp = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${videoId}&key=${apiKey}`,
+      );
+      if (resp.ok) {
+        const body = (await resp.json()) as {
+          items?: Array<{ liveStreamingDetails?: { actualStartTime?: string } }>;
+        };
+        const t = body.items?.[0]?.liveStreamingDetails?.actualStartTime;
+        if (t) {
+          const d = new Date(t);
+          if (!Number.isNaN(d.getTime())) return d;
+        }
+      }
+    } catch {
+      // fall through to scrape
+    }
+  }
   const resp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
     headers: {
       'Accept-Language': 'en',
