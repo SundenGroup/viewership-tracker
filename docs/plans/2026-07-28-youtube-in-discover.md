@@ -251,6 +251,92 @@ Discovery cadence is deliberately decoupled from the tracker's poll interval
 (`youtube_config.discoveryIntervalSeconds`, default 600s, floor 120s): the
 official APIs may be called every cycle, an unofficial page should not be.
 
+## 9. Gating v2 — signals, scale, and the two questions it answers
+
+v1 matched titles only and tracked nothing until a human approved it. Both
+were wrong, for reasons worth recording.
+
+**Titles alone are a bad signal.** An esports watch party titled "PNC 2026
+Day 3" names no game. So matching now runs over **title + tags +
+description**, all free in the `videos.list` call we already make. `tags`
+turned out to be the strongest signal available — creator-declared, and
+the official PUBG stream carries `["pubg","esports","battlegrounds",…]`.
+
+Exclusion is deliberately **asymmetric**:
+- an excluded word in the **title** → deny (the title says what they're
+  streaming *right now*)
+- an excluded word in the **tags** → downgrade to review only (streamers
+  tag every game they've ever played)
+- description is never used to exclude, only to include — descriptions are
+  long, boilerplate-heavy and full of unrelated game names
+
+**Approving everything doesn't scale.** The fix is to weight review effort
+by *impact*: a wrongly-included 20-viewer channel changes nothing, a
+wrongly-included 10k channel ruins the tracker. So:
+
+| Match | Below `autoAllowWeakBelowCcv` (200) | Above `alwaysReviewAboveCcv` (1000) |
+|---|---|---|
+| **Strong** (tag / distinctive phrase) | auto-allow | review |
+| **Weak** (loose keyword anywhere) | auto-allow | review |
+| Weak + excluded tag | review | review |
+| No match | deny | deny |
+
+Measured effect on PUBG, same minute: v1 `allow 0 / review 7 / deny 34` →
+v2 `allow 25 / review 0 / deny 27`. Humans now see only what is *both*
+uncertain and material.
+
+**Tuning per game.** The same dials cover very different situations
+without code changes:
+- *distinctive name* (PUBG): defaults are fine — trust the rules, review
+  the big ones.
+- *generic name* (GOALS, see §10): set `autoAllowWeakBelowCcv: 0` so weak
+  matches NEVER auto-allow. The tracker becomes curated-first: only strong
+  tag matches flow automatically, everything else waits for a human.
+
+**Approved channels no longer get lost.** Keyword rules decided membership
+every cycle, so an approved streamer whose title stopped matching would
+silently drop out. Allowed channels are now watched directly through their
+RSS feed (`/feeds/videos.xml?channel_id=…`, zero quota, no redirect risk —
+`youtube-channel-watch.ts`). A human vouched for the channel; we shouldn't
+re-litigate that from today's title.
+
+## 10. Generic game names (GOALS)
+
+"GOALS" is the hard case: keyword discovery on the word *goals* matches
+every football-highlights video on YouTube. Recommended shape:
+
+- **`categoryId` is a real discriminator here** — football highlights are
+  usually category 17 (Sports); the game is 20 (Gaming). The existing
+  category gate already does this work.
+- **`strongTags: ['goals']`** — a tag *plus* Gaming category is a much
+  narrower claim than the word appearing in a title.
+- **`autoAllowWeakBelowCcv: 0`** — curated-first, per §9.
+- **`exclude`**: `highlights, fifa, ea fc, efootball, pes, football manager,
+  match, vs` — the vocabulary of the content we don't want.
+- Lean on the **RSS watchlist**: for a small game, a curated set of known
+  channels plus their feeds gives better coverage than any search.
+
+The honest summary: for generic names, discovery is seeded and curated,
+not inferred. That is a property of the name, not a gap in the system.
+
+## 11. "Can we catch everyone in the Gaming category, then filter?"
+
+**No — and nobody can.** There is no YouTube API that enumerates live
+streams in a category:
+- `search.list` returns a capped, ranked slice (not an enumeration), costs
+  100 units, and since 2026-06-01 draws on a bucket worth ~100 searches/day.
+- The gaming hub and game pages are curated shelves, not indexes.
+- Playboard doesn't enumerate either. They accumulate a **channel index**
+  over years of crawling and re-poll it — which is why they can appear
+  exhaustive without any "list everything" endpoint existing.
+
+The scalable equivalent, and the direction this design already points:
+**remember every channel you ever confirm, and keep watching it.** The
+watchlist (§9) is step one. Coverage then accumulates instead of depending
+on what a keyword search happens to surface on a given day, and the
+marginal cost of a remembered channel is one zero-quota RSS read plus a
+share of a 50-id `videos.list` call.
+
 ### Next — the open problem
 
 Keyword gating carries the load today and it is blunt: it denied
