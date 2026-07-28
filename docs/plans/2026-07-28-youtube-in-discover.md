@@ -1,6 +1,15 @@
 # YouTube live tracking in Discover — how Playboard does it, and how we can
 
-> Status: proposal. Supersedes the "Phase 5 — YouTube reintroduction" stub in
+> **Status: SHIPPED 2026-07-28** (phases 1–4). Live on `pubg-battlegrounds`.
+> First production cycle: roster 46 → 41 live → **1 quota unit**, gating split
+> allow 0 / review 7 / deny 34. The deny pile was almost entirely BGMI —
+> including a 10,857-viewer mobile stream that would otherwise have landed in
+> the PC tracker, which is the whole argument for §4 in one row.
+> Verified end-to-end: snapshots → stream_sessions (language detected: ru, vi)
+> → chat pool opening InnerTube sessions. Remaining: §6 phase 3 (shadow-mode
+> comparison) and better game/category classification — see "Next" at the end.
+>
+> Original status: proposal. Supersedes the "Phase 5 — YouTube reintroduction" stub in
 > `2026-05-05-live-game-tracker.md`, whose blocking assumption (quota
 > competition) no longer holds and whose proposed gating mechanism
 > (`topicDetails`) is empirically dead. All numbers below were verified against
@@ -221,3 +230,43 @@ fail-soft, like the Kick resolver.
   `min_ccv_threshold` and retention policy matter more here.
 - **Quota is shared.** A runaway YouTube tracker could starve tournament
   polling — hence per-tracker budgets and the yield rule.
+
+## 8. What shipped (2026-07-28)
+
+| Piece | Where |
+|---|---|
+| Schema: `youtube_enabled`, `youtube_config`, gating table | `migrations/20260728120000_youtube_discover.ts` |
+| Batched live details + channel stats | `src/adapters/youtube.ts` (`getLiveVideos`, `getChannelStats`) |
+| Live-search discovery (zero quota) | `src/services/youtube-live-discovery.ts` |
+| Roster → track → gate | `src/services/youtube-game-tracker.ts` |
+| Cycle integration, subs, avatars | `src/services/game-tracker-service.ts` |
+| Gating decisions model + admin API | `src/models/game-tracker-youtube-channel.ts`, `src/api/routes/game-trackers.ts` |
+| Review queue UI (admin) | `pages/discover/DiscoverYouTubeGating.tsx` |
+| InnerTube chat pool | `scripts/lib/youtube-chat.ts` + `scripts/chat-collector.ts` |
+
+Measured quota: **1 unit per poll cycle** for ~40 streams, i.e. ~1,440
+units/day at 60s cadence — well inside one key, exactly as §2 predicted.
+
+Discovery cadence is deliberately decoupled from the tracker's poll interval
+(`youtube_config.discoveryIntervalSeconds`, default 600s, floor 120s): the
+official APIs may be called every cycle, an unofficial page should not be.
+
+### Next — the open problem
+
+Keyword gating carries the load today and it is blunt: it denied
+`WarriorislivE` and `HEADSHOT KING` for "no include keyword" when they may
+well be PC players, and it would wave through a mobile stream that simply
+never types "BGMI". Ideas worth testing, cheapest first:
+
+1. **Channel-level memory is already doing the heavy lifting** — one decision
+   per channel, forever. Most of the tail is repeat channels, so the queue
+   should shrink fast. Measure that before building anything cleverer.
+2. **Signals we already fetch but ignore:** `defaultAudioLanguage` (BGMI skews
+   hi/ur), title emoji/hashtag patterns (`#bgmilive`), channel subscriber
+   profile, whether the same channel also streams to Twitch/Kick under a
+   known category.
+3. **The watch page's game card** (`richMetadataRenderer`) is authoritative
+   when present — absent on small streams, but a cheap confirm for big ones.
+4. **Ask-style LLM classification** of ambiguous titles, run once per channel
+   (not per poll) and written into the gating row as a suggestion for the
+   human, never as an auto-allow.
