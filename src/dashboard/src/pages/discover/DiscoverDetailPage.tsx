@@ -77,6 +77,17 @@ export function DiscoverDetailPage() {
   const ask = useDiscoverAsk({ slug: slug ?? '', getViewState: getAskViewState });
   const isAdmin = useAuth().user?.role === 'admin';
 
+  // Platform filter lives at PAGE level so Live, Trends and Channels all
+  // answer to one control (and one shareable ?platform= URL) instead of
+  // each tab inventing its own.
+  const platform = searchParams.get('platform') ?? 'all';
+  const setPlatform = (next: string) => {
+    const params = new URLSearchParams(searchParams);
+    if (next === 'all') params.delete('platform');
+    else params.set('platform', next);
+    setSearchParams(params, { replace: true });
+  };
+
   useEffect(() => {
     if (!slug) return;
     let cancelled = false;
@@ -128,6 +139,16 @@ export function DiscoverDetailPage() {
     if (!best || total === 0) return null;
     return { lang: best.lang, sharePct: Math.round((best.ccv / total) * 100) };
   }, [leaderboard]);
+
+  // Platforms this tracker is configured to cover — deterministic, so the
+  // control doesn't flicker as small streams enter and leave the top 25.
+  const trackedPlatforms = useMemo(() => {
+    const out: string[] = [];
+    if (detail?.twitch_game_id) out.push('twitch');
+    if (detail?.kick_category_id) out.push('kick');
+    if (detail?.youtube_enabled) out.push('youtube');
+    return out;
+  }, [detail?.twitch_game_id, detail?.kick_category_id, detail?.youtube_enabled]);
 
   // A search takeover replaces the body — clear any lingering Ask card so
   // the two result surfaces never stack.
@@ -261,6 +282,15 @@ export function DiscoverDetailPage() {
             <Tab active={tab === 'channels'} onClick={() => setTab('channels')} icon={<IconList size={13} />}>
               Channels
             </Tab>
+            {trackedPlatforms.length > 1 && (
+              <Row gap={4} align="center" style={{ marginLeft: 'auto', paddingBottom: 6 }} wrap>
+                {(['all', ...trackedPlatforms]).map((p) => (
+                  <RangePill key={p} active={platform === p} onClick={() => setPlatform(p)}>
+                    {p}
+                  </RangePill>
+                ))}
+              </Row>
+            )}
           </Row>
 
           {/* ── Tab content ──────────────────────────────────────────── */}
@@ -275,14 +305,15 @@ export function DiscoverDetailPage() {
               lastCycle={detail.last_cycle}
               lastUpdatedAt={lastUpdatedAt}
               isAdmin={isAdmin}
+              platform={platform}
               onViewAll={() => setTab('channels')}
             />
           )}
-          {tab === 'trends' && <DiscoverTrendsTab slug={slug} />}
+          {tab === 'trends' && <DiscoverTrendsTab slug={slug} platform={platform} />}
           {tab === 'channels' && (
             <Col gap={16}>
               {isAdmin && detail.youtube_enabled && <DiscoverYouTubeGating slug={slug} />}
-              <DiscoverChannelsTab slug={slug} />
+              <DiscoverChannelsTab slug={slug} platform={platform} onPlatformChange={setPlatform} />
             </Col>
           )}
         </>
@@ -324,6 +355,7 @@ function LiveTab({
   lastCycle,
   lastUpdatedAt,
   isAdmin,
+  platform,
   onViewAll,
 }: {
   slug: string;
@@ -335,24 +367,17 @@ function LiveTab({
   lastCycle: GameTrackerDetail['last_cycle'];
   lastUpdatedAt: number | null;
   isAdmin: boolean;
+  platform: string;
   onViewAll: () => void;
 }) {
-  // Which platforms actually appear in this tracker's live set — the filter
-  // only offers what exists, so an empty "YouTube" tab can't confuse anyone.
-  const platformsPresent = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of leaderboard ?? []) set.add(r.platform);
-    return [...set].sort();
-  }, [leaderboard]);
-  const [platformFilter, setPlatformFilter] = useState<string>('all');
   const shown = useMemo(
     () =>
       leaderboard == null
         ? null
-        : platformFilter === 'all'
+        : platform === 'all'
           ? leaderboard
-          : leaderboard.filter((r) => r.platform === platformFilter),
-    [leaderboard, platformFilter],
+          : leaderboard.filter((r) => r.platform === platform),
+    [leaderboard, platform],
   );
 
   const exportCsv = () => {
@@ -407,19 +432,6 @@ function LiveTab({
         eyebrow="LIVE LEADERBOARD"
         right={
           <Row gap={10} align="center" wrap>
-            {platformsPresent.length > 1 && (
-              <Row gap={4} align="center">
-                {(['all', ...platformsPresent] as string[]).map((p) => (
-                  <RangePill
-                    key={p}
-                    active={platformFilter === p}
-                    onClick={() => setPlatformFilter(p)}
-                  >
-                    {p}
-                  </RangePill>
-                ))}
-              </Row>
-            )}
             <FreshnessIndicator at={lastUpdatedAt} />
             <button
               type="button"

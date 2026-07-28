@@ -52,7 +52,14 @@ interface Selection {
   toIso: string | null;
 }
 
-export function DiscoverTrendsTab({ slug }: { slug: string }) {
+export function DiscoverTrendsTab({
+  slug,
+  platform = 'all',
+}: {
+  slug: string;
+  /** Shared page-level platform filter. */
+  platform?: string;
+}) {
   // Range + chart selection are mirrored into URL search params (?range,
   // ?at / ?sel_from+?sel_to) so a pasted link reproduces the view. State
   // initializes from the URL on mount; the sync effect below writes back.
@@ -191,7 +198,7 @@ export function DiscoverTrendsTab({ slug }: { slug: string }) {
   return (
     <Col gap={16}>
       {/* Risers & anomalies */}
-      <TrendingSection slug={slug} />
+      <TrendingSection slug={slug} platform={platform} />
 
       {/* Range picker */}
       <Row gap={8} align="center">
@@ -291,7 +298,7 @@ const TRENDING_HOURS_OPTIONS = [
  * before. NEW = channel had no snapshots in the prior window; the amber
  * ×N pill flags a ≥3× spike over the prior peak.
  */
-function TrendingSection({ slug }: { slug: string }) {
+function TrendingSection({ slug, platform }: { slug: string; platform: string }) {
   const navigate = useNavigate();
   const [hours, setHours] = useState<number>(24);
   const [rows, setRows] = useState<GameTrackerTrendingRow[] | null>(null);
@@ -313,6 +320,14 @@ function TrendingSection({ slug }: { slug: string }) {
       cancelled = true;
     };
   }, [slug, hours]);
+
+  const shown = useMemo(
+    () =>
+      platform === 'all'
+        ? (rows ?? [])
+        : (rows ?? []).filter((r) => (r.channel?.platform ?? '') === platform),
+    [rows, platform],
+  );
 
   return (
     <Section
@@ -337,12 +352,14 @@ function TrendingSection({ slug }: { slug: string }) {
       {!error && rows === null && (
         <div style={{ color: 'var(--fg-muted)', fontSize: 12 }}>Loading…</div>
       )}
-      {rows !== null && rows.length === 0 && (
+      {rows !== null && shown.length === 0 && (
         <div style={{ color: 'var(--fg-muted)', fontSize: 12, padding: '4px 0' }}>
-          No risers in this window.
+          {rows.length === 0
+            ? 'No risers in this window.'
+            : `No ${platform} risers in this window.`}
         </div>
       )}
-      {rows !== null && rows.length > 0 && (
+      {rows !== null && shown.length > 0 && (
         <TableScroll>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 480 }}>
           <thead>
@@ -355,7 +372,7 @@ function TrendingSection({ slug }: { slug: string }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => {
+            {shown.map((r, i) => {
               const delta = r.cur_peak - r.prev_peak;
               const spike = !r.is_new && r.prev_peak > 0 && r.cur_peak >= 3 * r.prev_peak;
               const profilePic = r.channel?.metadata?.profile_image_url as string | undefined;

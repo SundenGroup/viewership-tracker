@@ -12,7 +12,16 @@ type SortKey = 'ccv' | 'lang';
 
 const PAGE_SIZE = 50;
 
-export function DiscoverChannelsTab({ slug }: { slug: string }) {
+export function DiscoverChannelsTab({
+  slug,
+  platform,
+  onPlatformChange,
+}: {
+  slug: string;
+  /** Shared page-level filter (also drives Live + Trends). */
+  platform: string;
+  onPlatformChange: (p: string) => void;
+}) {
   // Filters/pagination are mirrored into URL search params so views are
   // shareable — state initializes from the URL on mount, then a sync
   // effect below writes changes back (merging, never clobbering ?q/&tab).
@@ -20,10 +29,7 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
   const [rows, setRows] = useState<LeaderboardRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
-  const [platform, setPlatform] = useState<PlatformFilter>(() => {
-    const p = searchParams.get('platform');
-    return p === 'twitch' || p === 'kick' || p === 'youtube' ? p : 'all';
-  });
+
   const [lang, setLang] = useState<string>(() => searchParams.get('language') ?? 'all');
   const [sort, setSort] = useState<SortKey>('ccv');
   const [dateMode, setDateMode] = useState<DateMode>(() => {
@@ -52,7 +58,6 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
         setOrDelete('mode', dateMode === 'now' ? null : dateMode);
         setOrDelete('from', dateMode === 'custom' ? fromDate : null);
         setOrDelete('to', dateMode === 'custom' ? toDate : null);
-        setOrDelete('platform', platform === 'all' ? null : platform);
         setOrDelete('language', lang === 'all' ? null : lang);
         setOrDelete('page', page > 0 ? String(page + 1) : null);
         return p;
@@ -247,18 +252,6 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
       compact
       right={
         <Row gap={6} align="center">
-          <span
-            className="eyebrow"
-            style={{ fontSize: 10, color: 'var(--fg-muted)', display: 'inline-flex', alignItems: 'center', gap: 5 }}
-          >
-            <IconFilter size={11} />
-            Platform
-          </span>
-          {(['all', 'twitch', 'kick', 'youtube'] as const).map((p) => (
-            <RangePill key={p} active={platform === p} onClick={() => setPlatform(p)}>
-              {p}
-            </RangePill>
-          ))}
           <span style={{ fontSize: 11, color: 'var(--fg-dim)', marginLeft: 6 }}>
             {range ? `${filtered.length} on page ${page + 1}` : `${filtered.length} live`}
           </span>
