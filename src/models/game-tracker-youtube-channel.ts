@@ -69,7 +69,7 @@ export async function counts(gameTrackerId: string): Promise<Record<GatingDecisi
  * overwritten — only the evidence (what they were streaming, when, how big)
  * is refreshed so the review queue shows current context.
  */
-export async function observe(rows: Array<{
+export async function observe(inputRows: Array<{
   gameTrackerId: string;
   channelIdentifier: string;
   displayName: string | null;
@@ -79,7 +79,22 @@ export async function observe(rows: Array<{
   sampleVideoId: string | null;
   sampleCcv: number | null;
 }>): Promise<void> {
-  if (rows.length === 0) return;
+  if (inputRows.length === 0) return;
+
+  // A channel can run several simultaneous streams (esports channels do it
+  // constantly: main + map view). That would put the same conflict key in
+  // one INSERT twice, which Postgres rejects outright with "ON CONFLICT DO
+  // UPDATE command cannot affect row a second time" — failing the WHOLE
+  // batch, not just the duplicate. Collapse to one row per channel first,
+  // keeping the biggest stream: it's the one that represents what the
+  // channel is predominantly broadcasting.
+  const byChannel = new Map<string, (typeof inputRows)[number]>();
+  for (const r of inputRows) {
+    const key = `${r.gameTrackerId}:${r.channelIdentifier}`;
+    const prev = byChannel.get(key);
+    if (!prev || (r.sampleCcv ?? 0) > (prev.sampleCcv ?? 0)) byChannel.set(key, r);
+  }
+  const rows = [...byChannel.values()];
   const now = new Date();
   await db.raw(
     `
