@@ -1144,11 +1144,19 @@ export interface YouTubeTrackerConfig {
 
 export type YouTubeGatingDecision = 'allow' | 'deny' | 'pending';
 
+/**
+ * How much of an approved channel counts.
+ *   matching — variety streamer: only their streams about this game
+ *   all      — dedicated channel (org/tournament): everything they stream
+ */
+export type YouTubeGatingScope = 'matching' | 'all';
+
 export interface YouTubeGatingRow {
   id: string;
   channel_identifier: string;
   display_name: string | null;
   decision: YouTubeGatingDecision;
+  scope: YouTubeGatingScope;
   reason: string | null;
   sample_title: string | null;
   sample_video_id: string | null;
@@ -1178,10 +1186,11 @@ export function decideYouTubeGating(
   channelIdentifier: string,
   decision: 'allow' | 'deny' | 'reset',
   note?: string,
+  scope: YouTubeGatingScope = 'matching',
 ) {
   return request<YouTubeGatingRow | { ok: true }>(
     `/api/game-trackers/${encodeURIComponent(slug)}/youtube/gating/${encodeURIComponent(channelIdentifier)}`,
-    { method: 'POST', body: JSON.stringify({ decision, note }) },
+    { method: 'POST', body: JSON.stringify({ decision, note, scope }) },
   );
 }
 

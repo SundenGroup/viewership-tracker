@@ -48,10 +48,14 @@ export function DiscoverYouTubeGating({ slug }: { slug: string }) {
     void load();
   }, [load]);
 
-  const decide = async (channelIdentifier: string, decision: 'allow' | 'deny' | 'reset') => {
+  const decide = async (
+    channelIdentifier: string,
+    decision: 'allow' | 'deny' | 'reset',
+    scope: api.YouTubeGatingScope = 'matching',
+  ) => {
     setBusy(channelIdentifier);
     try {
-      await api.decideYouTubeGating(slug, channelIdentifier, decision);
+      await api.decideYouTubeGating(slug, channelIdentifier, decision, undefined, scope);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Decision failed');
@@ -86,6 +90,10 @@ export function DiscoverYouTubeGating({ slug }: { slug: string }) {
       <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', lineHeight: 1.6 }}>
         YouTube doesn't say which game a stream is playing, so channels wait here until you
         decide. <b>Pending channels are not counted</b> in this tracker's numbers.
+        <br />
+        <b>Track matching</b> — a variety streamer: only counts their streams whose title
+        matches this game. <b>Track all</b> — a dedicated channel (an org or tournament
+        channel): counts everything they stream in Gaming.
         {(cfg.include?.length || cfg.exclude?.length) && (
           <>
             {' '}Rules —{' '}
@@ -116,7 +124,7 @@ export function DiscoverYouTubeGating({ slug }: { slug: string }) {
                 <th style={thStyle}>Last seen streaming</th>
                 <th style={{ ...thStyle, textAlign: 'right', width: 90 }}>Peak seen</th>
                 <th style={{ ...thStyle, width: 96 }}>Seen</th>
-                <th style={{ ...thStyle, textAlign: 'right', width: 170 }}>Decision</th>
+                <th style={{ ...thStyle, textAlign: 'right', width: 240 }}>Decision</th>
               </tr>
             </thead>
             <tbody>
@@ -164,6 +172,11 @@ export function DiscoverYouTubeGating({ slug }: { slug: string }) {
                     {r.reason && (
                       <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>{r.reason}</div>
                     )}
+                    {r.decision === 'allow' && (
+                      <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>
+                        tracking {r.scope === 'all' ? 'all their streams' : 'matching streams only'}
+                      </div>
+                    )}
                   </td>
                   <td style={{ ...tdStyle, ...numTdStyle }}>{fmtCompact(r.sample_ccv ?? 0)}</td>
                   <td style={{ ...tdStyle, fontSize: 11, color: 'var(--fg-dim)' }}>
@@ -171,15 +184,28 @@ export function DiscoverYouTubeGating({ slug }: { slug: string }) {
                   </td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>
                     <Row gap={6} justify="flex-end">
-                      {r.decision !== 'allow' && (
+                      {!(r.decision === 'allow' && r.scope === 'matching') && (
                         <button
                           type="button"
                           className="btn btn-xs"
                           disabled={busy === r.channel_identifier}
-                          onClick={() => void decide(r.channel_identifier, 'allow')}
+                          onClick={() => void decide(r.channel_identifier, 'allow', 'matching')}
                           style={{ cursor: 'pointer', color: 'var(--live)' }}
+                          title="Count only this channel's streams that match this game — use for variety streamers"
                         >
-                          Track
+                          Track matching
+                        </button>
+                      )}
+                      {!(r.decision === 'allow' && r.scope === 'all') && (
+                        <button
+                          type="button"
+                          className="btn btn-xs"
+                          disabled={busy === r.channel_identifier}
+                          onClick={() => void decide(r.channel_identifier, 'allow', 'all')}
+                          style={{ cursor: 'pointer', color: 'var(--live)' }}
+                          title="Count everything this channel streams in Gaming — use for an org or tournament channel that only broadcasts this game"
+                        >
+                          Track all
                         </button>
                       )}
                       {r.decision !== 'deny' && (
