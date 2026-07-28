@@ -138,6 +138,65 @@ timestamp)` with `stream_id`/`stream_title`. Sessions, health scoring, chat
 rollups, day-stats, retention, the whole Discover UI are platform-agnostic.
 YouTube rows flow through unchanged.
 
+## 5b. Per-stream depth — can we match Twitch/Kick? (verified 2026-07-28)
+
+Live viewer counts alone would be a thin Discover. Everything else we show per
+stream is reachable, and nearly all of it rides along in the *same* 1-unit call.
+
+**Free in the `videos.list` call we're already making** (verified on 6 live
+strangers' streams):
+
+| Field | Gives us |
+|---|---|
+| `concurrentViewers` | the CCV curve → peak / avg / viewer-minutes / duration, computed exactly as today |
+| `snippet.title` | title-change history by poll-over-poll diff, same as Twitch/Kick |
+| `liveStreamingDetails.actualStartTime` | **exact** stream start (better than Twitch, where we infer it) |
+| `snippet.defaultAudioLanguage` | language attribution (`en`, `hi`, `ru`, `zxx` observed) |
+| `snippet.categoryId` | coarse category (20 = Gaming) |
+| `liveStreamingDetails.activeLiveChatId` | present on **every** live stream — chat is addressable |
+
+**Subscribers — the one genuine downgrade.** `channels.list?part=statistics`
+costs 1 unit per 50 channels, but YouTube rounds public subscriber counts to
+three significant figures (observed: 61000, 105000, 901000, 350000, 74200).
+Per-stream follower delta — which we chart for Twitch/Kick — is therefore
+**invisible for any channel above ~1k subs**. Options: keep the tile hidden on
+YouTube rows, or show only long-horizon (weekly) growth where the rounding
+step is finally crossed. Do not fabricate precision here.
+
+**Chat — works, and InnerTube is the only viable path.**
+- The official `liveChatMessages.list` must be polled every few seconds per
+  stream; at ~5s that is **17,280 units/day for a single stream**. Non-viable.
+- The InnerTube endpoint YouTube's own chat iframe uses costs zero quota.
+  Verified from our datacenter server: `GET /live_chat?v=<id>` yields the
+  InnerTube key + continuation token, then
+  `POST /youtubei/v1/live_chat/get_live_chat` returns 200 with chat actions,
+  a next continuation and a `timeoutMs` (10s observed). Real messages with
+  `authorExternalChannelId` extracted successfully → feeds
+  `chat_minute_rollup` (messages + unique chatters) unchanged, which unlocks
+  engagement metrics and **health scoring on YouTube streams**.
+
+**Scaling caveat for chat.** The shape differs from our existing collectors:
+Twitch IRC multiplexes hundreds of channels over one connection, Kick Pusher
+likewise; YouTube needs **one long-poll loop per stream** (~1 request/10s
+each). 100 streams ≈ 10 req/s — real but manageable, and it must be selective.
+The existing dials already cover this: `CHAT_MIN_CCV`, `CHAT_MAX_CHANNELS`,
+`CHAT_TRACKER_QUOTA`. Add politeness/backoff; treat it as unofficial and
+fail-soft, like the Kick resolver.
+
+**Net position vs Twitch/Kick:**
+
+| Per-stream metric | Twitch / Kick today | YouTube |
+|---|---|---|
+| CCV curve, peak, avg, hours watched | ✓ | ✓ (same 1-unit call) |
+| Title + change history | ✓ | ✓ (free) |
+| Exact stream start | inferred | ✓ **better** |
+| Language | ✓ | ✓ (free) |
+| Game/category | authoritative ID | ✗ our gating rules (§4) |
+| Follower/sub delta | exact | ⚠ rounded to 3 s.f. |
+| Chat messages / unique chatters | IRC / Pusher | ✓ InnerTube (proven) |
+| Health score + evidence | ✓ | ✓ once chat lands |
+| Session lifecycle, rollups, retention | ✓ | ✓ unchanged (platform-agnostic) |
+
 ## 6. Phasing
 
 1. **YouTube roster + poller** behind a per-tracker `youtube_enabled` flag:
