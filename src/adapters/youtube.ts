@@ -55,6 +55,9 @@ interface YouTubeVideoItem {
     channelId: string;
     channelTitle: string;
     title: string;
+    description?: string;
+    /** Creator-declared keywords — the strongest game signal YouTube has. */
+    tags?: string[];
     defaultAudioLanguage?: string;
     defaultLanguage?: string;
     /** 20 = Gaming. The only category signal YouTube gives us. */
@@ -77,6 +80,8 @@ export interface YouTubeLiveVideo {
   channelId: string;
   channelTitle: string;
   title: string;
+  description: string;
+  tags: string[];
   concurrentViewers: number;
   language: string | null;
   categoryId: string | null;
@@ -1268,6 +1273,8 @@ export class YouTubeAdapter implements PlatformAdapter {
         channelId: v.snippet.channelId,
         channelTitle: v.snippet.channelTitle,
         title: v.snippet.title,
+        description: v.snippet.description ?? '',
+        tags: v.snippet.tags ?? [],
         concurrentViewers: ccv,
         language: normalizeLanguageCode(v.snippet.defaultAudioLanguage ?? v.snippet.defaultLanguage ?? null),
         categoryId: v.snippet.categoryId ?? null,

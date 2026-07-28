@@ -29,6 +29,7 @@ import type { DiscoveredStream } from '../adapters/types';
 import type { GameTracker } from '../models/game-tracker';
 import * as GatingModel from '../models/game-tracker-youtube-channel';
 import { discoverLive } from './youtube-live-discovery';
+import { watchlistVideoIds } from './youtube-channel-watch';
 
 /** Gaming. The only category signal YouTube exposes. */
 const GAMING_CATEGORY_ID = '20';
@@ -48,15 +49,35 @@ const MIN_DISCOVERY_INTERVAL_S = 120;
 export interface YouTubeTrackerConfig {
   /** Search phrases for discovery, e.g. ["PUBG BATTLEGROUNDS", "PUBG PC"]. */
   queries?: string[];
-  /** Title must contain at least one of these (case-insensitive). */
+  /**
+   * STRONG signals — high confidence this is the tracked game:
+   *   strongTags     exact match against the creator's own tags ("pubg")
+   *   strongPhrases  distinctive title phrase ("pubg: battlegrounds")
+   * A strong match is auto-allowed (below the always-review ceiling).
+   */
+  strongTags?: string[];
+  strongPhrases?: string[];
+  /** WEAK signals — matched against title, tags AND description. */
   include?: string[];
-  /** Title containing any of these is auto-denied. */
+  /** Auto-deny when found in the TITLE; downgrades to review when in tags. */
   exclude?: string[];
+  /**
+   * Scalability dials. Reviewing every channel doesn't scale, but the
+   * damage from a wrong include scales with audience size — so only
+   * channels that are BOTH uncertain AND material need a human.
+   */
+  /** Weak matches below this CCV are auto-allowed (0 = always review). */
+  autoAllowWeakBelowCcv?: number;
+  /** Above this CCV a human always confirms, however strong the match. */
+  alwaysReviewAboveCcv?: number;
   /** Cap on ids polled per cycle. */
   maxRoster?: number;
   /** Seconds between Live-search scrapes (default 600, floor 120). */
   discoveryIntervalSeconds?: number;
 }
+
+const DEFAULT_AUTO_ALLOW_WEAK_BELOW_CCV = 200;
+const DEFAULT_ALWAYS_REVIEW_ABOVE_CCV = 1_000;
 
 export interface YouTubeCycleResult {
   rosterSize: number;
@@ -74,37 +95,104 @@ interface GateOutcome {
 }
 
 /**
- * Apply the tracker's rules to one live video. Keyword rules can DENY
- * outright (clear negative signal) but never auto-ALLOW: an unknown
- * channel that merely looks right goes to review.
+ * Decide whether one live video belongs to this tracker.
+ *
+ * Two problems shaped this. First, a title alone is a poor signal — an
+ * esports watch party may be titled "PNC 2026 Day 3" and never say the
+ * game — so tags (creator-declared) and the description are matched too.
+ * Second, asking a human to approve every channel before anything is
+ * tracked does not scale past one game.
+ *
+ * The resolution: weight review effort by IMPACT. A wrongly-included
+ * 20-viewer channel changes nothing; a wrongly-included 10k channel ruins
+ * the tracker. So confident matches are tracked immediately, small
+ * uncertain ones are tracked provisionally, and a human is asked only
+ * about streams that are BOTH uncertain AND large enough to matter —
+ * plus every large stream, however confident, as a backstop.
  */
 export function gateVideo(
   video: YouTubeLiveVideo,
   cfg: YouTubeTrackerConfig,
   existing: GatingModel.GatingDecision | undefined,
 ): GateOutcome {
-  // A recorded decision always wins — that's the point of recording it.
+  // A recorded human decision always wins — that's the point of recording it.
   if (existing === 'allow') return { decision: 'allow', reason: 'channel allowed' };
   if (existing === 'deny') return { decision: 'deny', reason: 'channel denied' };
 
   const title = (video.title ?? '').toLowerCase();
-  const exclude = (cfg.exclude ?? []).map((s) => s.toLowerCase()).filter(Boolean);
-  const include = (cfg.include ?? []).map((s) => s.toLowerCase()).filter(Boolean);
+  const description = (video.description ?? '').toLowerCase();
+  const tags = (video.tags ?? []).map((t) => t.toLowerCase());
+  const ccv = video.concurrentViewers;
 
-  const hitExclude = exclude.find((kw) => title.includes(kw));
-  if (hitExclude) return { decision: 'deny', reason: `title excluded by "${hitExclude}"` };
+  const lower = (xs?: string[]) => (xs ?? []).map((s) => s.toLowerCase()).filter(Boolean);
+  const exclude = lower(cfg.exclude);
+  const include = lower(cfg.include);
+  const strongTags = lower(cfg.strongTags);
+  const strongPhrases = lower(cfg.strongPhrases);
+
+  const weakCeiling = cfg.autoAllowWeakBelowCcv ?? DEFAULT_AUTO_ALLOW_WEAK_BELOW_CCV;
+  const reviewFloor = cfg.alwaysReviewAboveCcv ?? DEFAULT_ALWAYS_REVIEW_ABOVE_CCV;
+
+  // ── Negative signals ────────────────────────────────────────────────
+  // The title says what they're streaming RIGHT NOW — trust it to deny.
+  const titleExclude = exclude.find((kw) => title.includes(kw));
+  if (titleExclude) return { decision: 'deny', reason: `title excluded by "${titleExclude}"` };
 
   if (video.categoryId != null && video.categoryId !== GAMING_CATEGORY_ID) {
     return { decision: 'deny', reason: `category ${video.categoryId} is not Gaming` };
   }
 
-  if (include.length > 0) {
-    const hit = include.find((kw) => title.includes(kw));
-    if (!hit) return { decision: 'deny', reason: 'title matched no include keyword' };
-    return { decision: 'pending', reason: `title matched "${hit}" — awaiting review` };
+  // Tags are aspirational (streamers tag every game they play), so an
+  // excluded tag only casts doubt — it doesn't convict.
+  const tagExclude = exclude.find((kw) => tags.some((t) => t.includes(kw)));
+
+  // ── Positive signals, strongest first ───────────────────────────────
+  const tagHit = strongTags.find((t) => tags.includes(t));
+  const phraseHit = strongPhrases.find((p) => title.includes(p));
+  const strong = tagHit ?? phraseHit ?? null;
+
+  const weakIn = include.find((kw) => title.includes(kw));
+  const weakTag = include.find((kw) => tags.some((t) => t.includes(kw)));
+  const weakDesc = include.find((kw) => description.includes(kw));
+  const weak = weakIn ?? weakTag ?? weakDesc ?? null;
+
+  if (!strong && !weak) {
+    return {
+      decision: 'deny',
+      reason: include.length > 0 ? 'no game keyword in title, tags or description' : 'no match',
+    };
   }
 
-  return { decision: 'pending', reason: 'awaiting review' };
+  const where = strong
+    ? tagHit
+      ? `tag "${tagHit}"`
+      : `title phrase "${phraseHit}"`
+    : weakIn
+      ? `title "${weakIn}"`
+      : weakTag
+        ? `tag "${weakTag}"`
+        : `description "${weakDesc}"`;
+
+  // Anything big gets a human look regardless of confidence — this is the
+  // backstop that keeps a 10k mis-match out of the numbers.
+  if (ccv >= reviewFloor) {
+    return {
+      decision: 'pending',
+      reason: `${strong ? 'strong' : 'weak'} match on ${where}, but ${ccv} viewers — confirm before counting`,
+    };
+  }
+
+  if (strong) return { decision: 'allow', reason: `strong match on ${where}` };
+
+  if (tagExclude) {
+    return { decision: 'pending', reason: `weak match on ${where} but tagged "${tagExclude}"` };
+  }
+
+  if (ccv < weakCeiling) {
+    return { decision: 'allow', reason: `weak match on ${where} (${ccv} viewers — auto)` };
+  }
+
+  return { decision: 'pending', reason: `weak match on ${where} — awaiting review` };
 }
 
 export class YouTubeGameTracker {
@@ -148,6 +236,21 @@ export class YouTubeGameTracker {
     // ── 1. Roster ──────────────────────────────────────────────────────
     const roster = new Set(await this.recentRoster(tracker.id));
 
+    // Channels a human already approved are watched directly via their RSS
+    // feed, so they keep being tracked on days their title matches nothing
+    // (e.g. an esports watch party titled "PNC Day 3").
+    const decisions = await GatingModel.decisionMap(tracker.id);
+    const allowedChannelIds = [...decisions.entries()]
+      .filter(([, d]) => d === 'allow')
+      .map(([channelId]) => channelId);
+    if (allowedChannelIds.length > 0) {
+      try {
+        for (const id of await watchlistVideoIds(allowedChannelIds)) roster.add(id);
+      } catch (err) {
+        logger.debug(`[YT:${tracker.slug}] watchlist failed: ${(err as Error).message}`);
+      }
+    }
+
     const discoveryEverySeconds = Math.max(
       MIN_DISCOVERY_INTERVAL_S,
       cfg.discoveryIntervalSeconds ?? DEFAULT_DISCOVERY_INTERVAL_S,
@@ -175,7 +278,6 @@ export class YouTubeGameTracker {
     result.liveFound = live.length;
 
     // ── 3. Gate ────────────────────────────────────────────────────────
-    const decisions = await GatingModel.decisionMap(tracker.id);
     const streams: DiscoveredStream[] = [];
     const observations: Parameters<typeof GatingModel.observe>[0] = [];
 
