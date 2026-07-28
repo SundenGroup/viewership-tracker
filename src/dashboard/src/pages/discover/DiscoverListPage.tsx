@@ -204,6 +204,12 @@ export function DiscoverListPage() {
                     <span>{t.kick_category_slug}</span>
                   </Row>
                 )}
+                {t.youtube_enabled && (
+                  <Row gap={6} align="center">
+                    <PlatformPip id="youtube" size={11} />
+                    <span>reviewed channels</span>
+                  </Row>
+                )}
               </Col>
               {isAdmin && (
                 <Row gap={10} style={{ marginTop: 12, fontSize: 11, color: 'var(--fg-dim)' }}>

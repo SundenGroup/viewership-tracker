@@ -1113,6 +1113,7 @@ export interface GameTracker {
   discovery_interval_seconds: number;
   polling_interval_seconds: number;
   max_active_channels: number;
+  youtube_enabled?: boolean;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -1120,7 +1121,6 @@ export interface GameTracker {
 
 export interface GameTrackerDetail extends GameTracker {
   active_channel_count: number;
-  youtube_enabled?: boolean;
   youtube_config?: YouTubeTrackerConfig;
   last_cycle: {
     snapshotsWritten: number;

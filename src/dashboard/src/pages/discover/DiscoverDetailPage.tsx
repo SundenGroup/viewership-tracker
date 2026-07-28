@@ -22,6 +22,7 @@ import {
   Tab,
   PlatformPip,
   ChannelNameWithLink,
+  RangePill,
   TableScroll,
   rowLinkProps,
   thStyle,
@@ -200,6 +201,16 @@ export function DiscoverDetailPage() {
                 <span>{detail.kick_category_slug}</span>
               </Row>
             )}
+            {/* YouTube has no category id to show — membership is decided by
+                our own gating rules, so name that instead of faking one. */}
+            {detail.youtube_enabled && (
+              <Row gap={6} align="center">
+                <PlatformPip id="youtube" size={12} />
+                <span title="YouTube streams are matched by title rules and reviewed per channel">
+                  reviewed channels
+                </span>
+              </Row>
+            )}
             {/* Polling config is operator detail — admins only */}
             {isAdmin && (
               <span>
@@ -326,6 +337,24 @@ function LiveTab({
   isAdmin: boolean;
   onViewAll: () => void;
 }) {
+  // Which platforms actually appear in this tracker's live set — the filter
+  // only offers what exists, so an empty "YouTube" tab can't confuse anyone.
+  const platformsPresent = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of leaderboard ?? []) set.add(r.platform);
+    return [...set].sort();
+  }, [leaderboard]);
+  const [platformFilter, setPlatformFilter] = useState<string>('all');
+  const shown = useMemo(
+    () =>
+      leaderboard == null
+        ? null
+        : platformFilter === 'all'
+          ? leaderboard
+          : leaderboard.filter((r) => r.platform === platformFilter),
+    [leaderboard, platformFilter],
+  );
+
   const exportCsv = () => {
     if (!leaderboard || leaderboard.length === 0) return;
     downloadCsv(
@@ -377,7 +406,20 @@ function LiveTab({
         title="Top streams now"
         eyebrow="LIVE LEADERBOARD"
         right={
-          <Row gap={10} align="center">
+          <Row gap={10} align="center" wrap>
+            {platformsPresent.length > 1 && (
+              <Row gap={4} align="center">
+                {(['all', ...platformsPresent] as string[]).map((p) => (
+                  <RangePill
+                    key={p}
+                    active={platformFilter === p}
+                    onClick={() => setPlatformFilter(p)}
+                  >
+                    {p}
+                  </RangePill>
+                ))}
+              </Row>
+            )}
             <FreshnessIndicator at={lastUpdatedAt} />
             <button
               type="button"
@@ -391,7 +433,7 @@ function LiveTab({
           </Row>
         }
       >
-        <LeaderboardTable rows={leaderboard} trackerSlug={slug} />
+        <LeaderboardTable rows={shown} trackerSlug={slug} />
         {activeChannelCount > (leaderboard?.length ?? 0) && (
           <button
             type="button"

@@ -6,7 +6,7 @@ import { downloadCsv, csvStamp } from '@/utils/csv';
 import { LeaderboardTable, FreshnessIndicator, type LeaderboardRow } from './DiscoverDetailPage';
 
 const POLL_INTERVAL_MS = 30_000;
-type PlatformFilter = 'all' | 'twitch' | 'kick';
+type PlatformFilter = 'all' | 'twitch' | 'kick' | 'youtube';
 type DateMode = 'now' | '24h' | '7d' | 'custom';
 type SortKey = 'ccv' | 'lang';
 
@@ -22,7 +22,7 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [platform, setPlatform] = useState<PlatformFilter>(() => {
     const p = searchParams.get('platform');
-    return p === 'twitch' || p === 'kick' ? p : 'all';
+    return p === 'twitch' || p === 'kick' || p === 'youtube' ? p : 'all';
   });
   const [lang, setLang] = useState<string>(() => searchParams.get('language') ?? 'all');
   const [sort, setSort] = useState<SortKey>('ccv');
@@ -254,7 +254,7 @@ export function DiscoverChannelsTab({ slug }: { slug: string }) {
             <IconFilter size={11} />
             Platform
           </span>
-          {(['all', 'twitch', 'kick'] as const).map((p) => (
+          {(['all', 'twitch', 'kick', 'youtube'] as const).map((p) => (
             <RangePill key={p} active={platform === p} onClick={() => setPlatform(p)}>
               {p}
             </RangePill>
