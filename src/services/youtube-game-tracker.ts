@@ -70,6 +70,8 @@ export interface YouTubeTrackerConfig {
   autoAllowWeakBelowCcv?: number;
   /** Above this CCV a human always confirms, however strong the match. */
   alwaysReviewAboveCcv?: number;
+  /** Continuation pages to follow per discovery query (zero quota). */
+  discoveryPagesPerQuery?: number;
   /** Cap on ids polled per cycle. */
   maxRoster?: number;
   /** Seconds between Live-search scrapes (default 600, floor 120). */
@@ -286,7 +288,7 @@ export class YouTubeGameTracker {
     if (discoveryDue && (cfg.queries?.length ?? 0) > 0) {
       this.lastDiscovery.set(tracker.id, Date.now());
       result.discoveryRan = true;
-      const candidates = await discoverLive(cfg.queries!);
+      const candidates = await discoverLive(cfg.queries!, cfg.discoveryPagesPerQuery ?? 3);
       for (const c of candidates) roster.add(c.videoId);
       logger.debug(
         `[YT:${tracker.slug}] discovery found ${candidates.length}, roster now ${roster.size}`,

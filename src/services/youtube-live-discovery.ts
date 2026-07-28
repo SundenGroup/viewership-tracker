@@ -121,12 +121,20 @@ function parseCandidates(data: Record<string, unknown>): YouTubeLiveCandidate[] 
 }
 
 /**
- * Live streams currently matching one search phrase. Returns [] on any
- * failure — discovery is best-effort by design.
+ * Live streams currently matching one search phrase.
+ *
+ * The results page renders ~20 items and hands back a continuation token;
+ * following it costs nothing and is the only way to see past the first
+ * screenful, so we page a few deep by default. Returns [] on any failure —
+ * discovery is best-effort by design.
  */
-export async function discoverLiveByQuery(query: string): Promise<YouTubeLiveCandidate[]> {
+export async function discoverLiveByQuery(
+  query: string,
+  maxPages = 3,
+): Promise<YouTubeLiveCandidate[]> {
   const url =
     `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=${LIVE_FILTER_SP}`;
+  const out: YouTubeLiveCandidate[] = [];
   try {
     const { data: html } = await client.get<string>(url, {
       responseType: 'text',
@@ -138,12 +146,34 @@ export async function discoverLiveByQuery(query: string): Promise<YouTubeLiveCan
       logger.warn(`[YTDiscovery] no ytInitialData for "${query}" — page shape changed?`);
       return [];
     }
-    const candidates = parseCandidates(data);
-    logger.debug(`[YTDiscovery] "${query}" → ${candidates.length} live candidate(s)`);
-    return candidates;
+    out.push(...parseCandidates(data));
+
+    // ── Continuation pages (same InnerTube endpoint the page itself uses)
+    const apiKey = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/)?.[1];
+    const clientVersion = html.match(/"INNERTUBE_CLIENT_VERSION":"([^"]+)"/)?.[1];
+    let token = html.match(/"token":"([^"]{60,})"/)?.[1];
+
+    for (let page = 1; page < maxPages && token && apiKey && clientVersion; page++) {
+      const { data: body } = await client.post<Record<string, unknown>>(
+        `https://www.youtube.com/youtubei/v1/search?key=${apiKey}`,
+        {
+          context: { client: { clientName: 'WEB', clientVersion, hl: 'en', gl: 'US' } },
+          continuation: token,
+        },
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+      if (!body || typeof body !== 'object') break;
+      out.push(...parseCandidates(body as Record<string, unknown>));
+      token = JSON.stringify(body).match(/"token":"([^"]{60,})"/)?.[1];
+      await new Promise((r) => setTimeout(r, 500)); // politeness
+    }
+
+    const unique = new Map(out.map((c) => [c.videoId, c]));
+    logger.debug(`[YTDiscovery] "${query}" → ${unique.size} live candidate(s)`);
+    return [...unique.values()];
   } catch (err) {
     logger.warn(`[YTDiscovery] query "${query}" failed`, { error: (err as Error).message });
-    return [];
+    return out; // keep whatever pages already succeeded
   }
 }
 
@@ -152,10 +182,13 @@ export async function discoverLiveByQuery(query: string): Promise<YouTubeLiveCan
  * sequentially with a small gap — politeness on an unofficial surface
  * matters more than shaving a second off a 10-minute discovery pass.
  */
-export async function discoverLive(queries: string[]): Promise<YouTubeLiveCandidate[]> {
+export async function discoverLive(
+  queries: string[],
+  pagesPerQuery = 3,
+): Promise<YouTubeLiveCandidate[]> {
   const byId = new Map<string, YouTubeLiveCandidate>();
   for (const q of queries) {
-    const found = await discoverLiveByQuery(q);
+    const found = await discoverLiveByQuery(q, pagesPerQuery);
     for (const c of found) {
       const prev = byId.get(c.videoId);
       // Keep the richest record (channelId isn't always present).
