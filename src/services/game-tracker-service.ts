@@ -22,9 +22,11 @@ import logger from '../utils/logger';
 import type { AdapterRegistry } from '../adapters';
 import type { TwitchAdapter } from '../adapters/twitch';
 import type { KickAdapter } from '../adapters/kick';
+import type { YouTubeAdapter } from '../adapters/youtube';
 import type { DiscoveredStream } from '../adapters/types';
+import { YouTubeGameTracker } from './youtube-game-tracker';
 
-type TrackedPlatform = 'twitch' | 'kick';
+type TrackedPlatform = 'twitch' | 'kick' | 'youtube';
 
 interface PlatformStream {
   platform: TrackedPlatform;
@@ -54,10 +56,24 @@ export class GameTrackerService {
   private readonly intervals = new Map<string, ReturnType<typeof setInterval>>();
   private readonly lastResults = new Map<string, CycleResult>();
   private running = false;
+  private youtubeTracker: YouTubeGameTracker | null = null;
 
   constructor(registry: AdapterRegistry, db: Knex) {
     this.registry = registry;
     this.db = db;
+  }
+
+  /** Lazily built so trackers without YouTube never touch the adapter. */
+  private getYouTubeTracker(): YouTubeGameTracker | null {
+    if (this.youtubeTracker) return this.youtubeTracker;
+    try {
+      const adapter = this.registry.getAdapter('youtube') as YouTubeAdapter;
+      if (!adapter) return null;
+      this.youtubeTracker = new YouTubeGameTracker(adapter, this.db);
+      return this.youtubeTracker;
+    } catch {
+      return null;
+    }
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────
@@ -184,6 +200,33 @@ export class GameTrackerService {
             }
           } catch (err) {
             logger.warn(`[GameTracker:${slug}] Kick fetch failed`, {
+              error: (err as Error).message,
+            });
+          }
+        })(),
+      );
+    }
+    // YouTube runs in the same parallel wave. Unlike Twitch/Kick there is
+    // no authoritative category listing, so this branch builds its own
+    // roster and gates membership itself (see youtube-game-tracker.ts).
+    if (tracker.youtube_enabled) {
+      fetches.push(
+        (async () => {
+          const yt = this.getYouTubeTracker();
+          if (!yt) {
+            logger.warn(`[GameTracker:${slug}] youtube_enabled but no YouTube adapter registered`);
+            return;
+          }
+          try {
+            const { streams, result: ytResult } = await yt.collect(tracker);
+            for (const s of streams) liveStreams.push({ platform: 'youtube', stream: s });
+            logger.info(
+              `[GameTracker:${slug}] youtube: roster ${ytResult.rosterSize} → live ${ytResult.liveFound} ` +
+                `(allow ${ytResult.allowed}, review ${ytResult.pending}, deny ${ytResult.denied}) ` +
+                `${ytResult.quotaCalls} quota unit(s)${ytResult.discoveryRan ? ' + discovery' : ''}`,
+            );
+          } catch (err) {
+            logger.warn(`[GameTracker:${slug}] YouTube fetch failed`, {
               error: (err as Error).message,
             });
           }
@@ -319,7 +362,9 @@ export class GameTrackerService {
           stream.gameName ??
           (platform === 'twitch'
             ? tracker.twitch_game_name
-            : tracker.kick_category_slug) ??
+            : platform === 'kick'
+              ? tracker.kick_category_slug
+              : tracker.name) ??
           null,
         started_at: stream.startedAt ? new Date(stream.startedAt) : null,
       });
@@ -379,6 +424,7 @@ export class GameTrackerService {
     type Ch = import('../models/channel').Channel;
     const twitchNeed: Array<{ login: string; channel: Ch }> = [];
     const kickNeed: Array<{ slug: string; channel: Ch }> = [];
+    const youtubeNeed: Array<{ channelId: string; channel: Ch }> = [];
     for (const { platform, stream } of streams) {
       const ch = channelMap.get(this.channelKey(platform, stream.channelIdentifier));
       if (!ch) continue;
@@ -386,6 +432,7 @@ export class GameTrackerService {
       if (typeof meta.profile_image_url === 'string' && meta.profile_image_url.length > 0) continue;
       if (platform === 'twitch') twitchNeed.push({ login: stream.channelIdentifier, channel: ch });
       else if (platform === 'kick') kickNeed.push({ slug: stream.channelIdentifier, channel: ch });
+      else if (platform === 'youtube') youtubeNeed.push({ channelId: stream.channelIdentifier, channel: ch });
     }
 
     const persist = async (channel: Ch, patch: Record<string, unknown>) => {
@@ -427,6 +474,26 @@ export class GameTrackerService {
         logger.debug(`[GameTracker] cached kick pics for ${n}/${kickNeed.length}`);
       } catch (err) {
         logger.warn('[GameTracker] kick profile pic fetch failed', { error: (err as Error).message });
+      }
+    }
+
+    // YouTube — channels.list carries the avatar AND the (rounded)
+    // subscriber count, so one 1-unit call covers both needs.
+    if (youtubeNeed.length > 0) {
+      try {
+        const yt = this.registry.getAdapter('youtube') as YouTubeAdapter;
+        const stats = await yt.getChannelStats(youtubeNeed.map((n) => n.channelId));
+        const byId = new Map(stats.map((s) => [s.channelId, s]));
+        let n = 0;
+        for (const { channelId, channel } of youtubeNeed) {
+          const s = byId.get(channelId);
+          if (!s?.thumbnailUrl) continue;
+          await persist(channel, { profile_image_url: s.thumbnailUrl });
+          n++;
+        }
+        logger.debug(`[GameTracker] cached youtube pics for ${n}/${youtubeNeed.length}`);
+      } catch (err) {
+        logger.warn('[GameTracker] youtube profile pic fetch failed', { error: (err as Error).message });
       }
     }
   }
@@ -565,6 +632,29 @@ export class GameTrackerService {
         }
       } catch (err) {
         logger.warn(`[GameTracker:${slug}] twitch follower fetch failed`, {
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    // YouTube — subscriber counts, one 1-unit call for up to 50 channels.
+    // CAVEAT: YouTube rounds these to three significant figures, so
+    // per-stream deltas are meaningless above ~1k subs. We store them for
+    // long-horizon growth only; the UI must not present them as precise
+    // follower movement (see the plan's per-stream depth table).
+    const youtubeDue = due.filter((d) => d.platform === 'youtube');
+    if (youtubeDue.length > 0) {
+      try {
+        const yt = this.registry.getAdapter('youtube') as YouTubeAdapter;
+        const stats = await yt.getChannelStats(youtubeDue.map((d) => d.identifier));
+        const byId = new Map(stats.map((s) => [s.channelId, s]));
+        for (const { identifier, channel } of youtubeDue) {
+          const s = byId.get(identifier);
+          if (!s || s.subscribers == null) continue;
+          rows.push({ channel_id: channel.id, ts, followers: s.subscribers });
+        }
+      } catch (err) {
+        logger.warn(`[GameTracker:${slug}] youtube subscriber fetch failed`, {
           error: (err as Error).message,
         });
       }

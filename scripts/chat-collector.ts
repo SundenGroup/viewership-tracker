@@ -61,6 +61,7 @@ import type { Knex } from 'knex';
 import WebSocket from 'ws';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { parsePrivmsg, parsePusherFrame, extractKickChat } from './lib/chat-parse';
+import { YouTubeChatPool } from './lib/youtube-chat';
 
 // Optional residential/ISP proxy for Kick's chatroom-id REST lookup only.
 // Kick's Cloudflare 403s datacenter IPs on that endpoint (the Pusher chat
@@ -130,6 +131,8 @@ const BROWSER_UA =
 
 const TWITCH_LOGIN_RE = /^[a-z0-9_]{1,32}$/;
 const KICK_SLUG_RE = /^[a-z0-9_-]{1,64}$/;
+// YouTube video ids are exactly 11 url-safe chars.
+const YOUTUBE_VIDEO_RE = /^[A-Za-z0-9_-]{11}$/;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -548,6 +551,15 @@ const kickPusher = new KickPusher(KICK_PUSHER_KEY, (chatroomId, sender) => {
   if (channelId) recordMessage(channelId, sender);
 });
 
+// YouTube needs one polling loop per STREAM (no multiplexing available),
+// so it carries its own concurrency cap on top of the global selection.
+const YOUTUBE_MAX_STREAMS = clampInt(process.env.CHAT_YOUTUBE_MAX_STREAMS, 120, 0, 600);
+const youtubeChat = new YouTubeChatPool({
+  maxStreams: YOUTUBE_MAX_STREAMS,
+  onMessage: (channelId, authorId) => recordMessage(channelId, authorId),
+  log,
+});
+
 // ── Kick chatroom-id resolution (one-time per channel, cached in DB) ──────
 
 const kickSkippedSlugs = new Set<string>(); // 403/404/malformed — skip this session
@@ -613,9 +625,10 @@ async function resolveKickChatroomId(slug: string): Promise<number | null> {
 
 interface TrackedChannel {
   channelId: string;
-  platform: 'twitch' | 'kick';
-  identifier: string;       // lowercased login / slug
+  platform: 'twitch' | 'kick' | 'youtube';
+  identifier: string;       // lowercased login / slug; youtube: the video id
   chatroomId: number | null; // kick only
+  videoId: string | null;    // youtube only — chat is per STREAM, not channel
   lastSelectedAt: number;
 }
 
@@ -628,6 +641,8 @@ interface SelectionRow {
   platform: string;
   identifier: string;
   kick_chatroom_id: string | null;
+  /** YouTube: the live video id — its chat handle. */
+  stream_id: string | null;
   tracker_slug: string;
   guaranteed: boolean;
 }
@@ -652,12 +667,13 @@ const SELECTION_SQL = `
            s.concurrent_viewers            AS ccv,
            c.platform::text                AS platform,
            LOWER(c.channel_identifier)     AS identifier,
-           c.metadata->>'kick_chatroom_id' AS kick_chatroom_id
+           c.metadata->>'kick_chatroom_id' AS kick_chatroom_id,
+           s.stream_id                     AS stream_id
     FROM game_tracker_snapshots s
     JOIN game_trackers t ON t.id = s.game_tracker_id AND t.status = 'active'
     JOIN channels c      ON c.id = s.channel_id
     WHERE s."timestamp" > NOW() - INTERVAL '${LIVE_WINDOW_MINUTES} minutes'
-      AND c.platform IN ('twitch', 'kick')
+      AND c.platform IN ('twitch', 'kick', 'youtube')
     ORDER BY s.game_tracker_id, s.channel_id, s."timestamp" DESC
   ),
   ranked AS (
@@ -670,12 +686,12 @@ const SELECTION_SQL = `
   ),
   per_channel AS (
     SELECT DISTINCT ON (channel_id)
-           channel_id, ccv, platform, identifier, kick_chatroom_id,
+           channel_id, ccv, platform, identifier, kick_chatroom_id, stream_id,
            tracker_slug, tracker_rank
     FROM ranked
     ORDER BY channel_id, tracker_rank ASC, ccv DESC
   )
-  SELECT channel_id, ccv, platform, identifier, kick_chatroom_id,
+  SELECT channel_id, ccv, platform, identifier, kick_chatroom_id, stream_id,
          tracker_slug, (tracker_rank <= ?) AS guaranteed
   FROM per_channel
   ORDER BY (tracker_rank <= ?) DESC, ccv DESC
@@ -716,9 +732,17 @@ async function runSelection(): Promise<void> {
       if (row.guaranteed) {
         quotaBySlug.set(row.tracker_slug, (quotaBySlug.get(row.tracker_slug) ?? 0) + 1);
       }
-      const platform = row.platform === 'twitch' || row.platform === 'kick' ? row.platform : null;
+      const platform =
+        row.platform === 'twitch' || row.platform === 'kick' || row.platform === 'youtube'
+          ? row.platform
+          : null;
       if (!platform) continue;
-      const identifier = (row.identifier ?? '').trim();
+      // YouTube chat lives on the STREAM, so a live video id is required
+      // and doubles as the identifier — a channel with no current stream
+      // simply has no chat to read.
+      const videoId = platform === 'youtube' ? (row.stream_id ?? '').trim() : null;
+      if (platform === 'youtube' && !YOUTUBE_VIDEO_RE.test(videoId ?? '')) continue;
+      const identifier = platform === 'youtube' ? videoId! : (row.identifier ?? '').trim();
       if (platform === 'twitch' && !TWITCH_LOGIN_RE.test(identifier)) continue;
       if (platform === 'kick' && !KICK_SLUG_RE.test(identifier)) continue;
       const key = `${platform}:${identifier}`;
@@ -739,6 +763,7 @@ async function runSelection(): Promise<void> {
           platform,
           identifier,
           chatroomId: cachedChatroomId,
+          videoId,
           lastSelectedAt: now,
         });
         added++;
@@ -773,11 +798,14 @@ async function runSelection(): Promise<void> {
     // Rebuild routing indexes and sync the connection managers.
     const twitchLogins = new Set<string>();
     const kickRooms = new Set<number>();
+    const youtubeStreams = new Map<string, string>(); // videoId -> channel_id
     twitchIndex.clear();
     kickIndex.clear();
     let kickPending = 0;
     for (const t of tracked.values()) {
-      if (t.platform === 'twitch') {
+      if (t.platform === 'youtube') {
+        if (t.videoId) youtubeStreams.set(t.videoId, t.channelId);
+      } else if (t.platform === 'twitch') {
         twitchLogins.add(t.identifier);
         twitchIndex.set(t.identifier, t.channelId);
       } else if (t.chatroomId !== null) {
@@ -789,6 +817,7 @@ async function runSelection(): Promise<void> {
     }
     twitchIrc.setDesired(twitchLogins);
     kickPusher.setDesired(kickRooms);
+    youtubeChat.setDesired(youtubeStreams);
 
     const quotaSummary = [...quotaBySlug.entries()]
       .sort((a, b) => b[1] - a[1])
@@ -796,6 +825,7 @@ async function runSelection(): Promise<void> {
       .join(', ');
     log(
       `selection: ${twitchLogins.size} twitch / ${kickRooms.size} kick` +
+        (youtubeStreams.size > 0 ? ` / ${youtubeStreams.size} youtube` : '') +
         ` (+${added} new, -${dropped} dropped, ${inGrace} in grace` +
         (kickPending > 0 ? `, ${kickPending} kick awaiting chatroom id` : '') +
         (kickSkippedSlugs.size > 0 ? `, ${kickSkippedSlugs.size} kick skipped` : '') +
@@ -937,6 +967,7 @@ async function shutdown(signal: string): Promise<void> {
   if (selectionTimer) clearInterval(selectionTimer);
   twitchIrc.stop();
   kickPusher.stop();
+  youtubeChat.stopAll();
 
   try {
     await flushRollup(true); // include the current partial minute

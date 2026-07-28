@@ -5,6 +5,7 @@ import logger from '../utils/logger';
 import { config } from '../utils/config';
 import type { PlatformAdapter, ChannelSnapshot, DiscoveredStream } from './types';
 import * as YouTubeApiKeyModel from '../models/youtube-api-key';
+import { normalizeLanguageCode } from '../utils/language';
 import { getPushNotifier } from '../services/push-notifier';
 
 /** Throttle: fire "quota exhausted" push at most once per 24h per process. */
@@ -55,13 +56,47 @@ interface YouTubeVideoItem {
     channelTitle: string;
     title: string;
     defaultAudioLanguage?: string;
+    defaultLanguage?: string;
+    /** 20 = Gaming. The only category signal YouTube gives us. */
+    categoryId?: string;
     liveBroadcastContent: string;
   };
   liveStreamingDetails?: {
     concurrentViewers?: string;
     actualStartTime?: string;
+    actualEndTime?: string;
     scheduledStartTime?: string;
+    /** Handle for the InnerTube live-chat reader (chat collector). */
+    activeLiveChatId?: string;
   };
+}
+
+/** One live stream as the game tracker sees it (see getLiveVideos). */
+export interface YouTubeLiveVideo {
+  videoId: string;
+  channelId: string;
+  channelTitle: string;
+  title: string;
+  concurrentViewers: number;
+  language: string | null;
+  categoryId: string | null;
+  startedAt: string | null;
+  activeLiveChatId: string | null;
+}
+
+/** Public channel stats — subscriberCount is rounded by YouTube to 3 s.f. */
+export interface YouTubeChannelStats {
+  channelId: string;
+  title: string;
+  subscribers: number | null;
+  subscribersHidden: boolean;
+  thumbnailUrl: string | null;
+}
+
+interface YouTubeChannelItem {
+  id: string;
+  snippet?: { title?: string; thumbnails?: Record<string, { url?: string }> };
+  statistics?: { subscriberCount?: string; hiddenSubscriberCount?: boolean };
 }
 
 interface YouTubeListResponse<T> {
@@ -1202,6 +1237,83 @@ export class YouTubeAdapter implements PlatformAdapter {
     }
 
     return allItems;
+  }
+
+  // ── Game-tracker surface (Discover) ───────────────────────────────────
+
+  /**
+   * Live details for an explicit list of video ids — the game tracker's
+   * per-cycle poll. `videos.list` bills 1 unit per CALL (not per id), so
+   * 50 streams cost the same as one: this is what makes tracking hundreds
+   * of YouTube streams per minute affordable.
+   *
+   * Only videos still reporting `concurrentViewers` come back; anything
+   * that ended, was deleted or went private is simply absent, which the
+   * caller treats as "stream over".
+   *
+   * Attribution is by explicit video id, never by channel redirect — the
+   * /live page can serve a foreign stream (see the EWC incident), this
+   * path structurally cannot.
+   */
+  async getLiveVideos(videoIds: string[]): Promise<YouTubeLiveVideo[]> {
+    const items = await this.getVideoDetails(videoIds);
+    const out: YouTubeLiveVideo[] = [];
+    for (const v of items) {
+      const live = v.liveStreamingDetails;
+      if (!live || live.concurrentViewers == null) continue; // not live now
+      const ccv = Number(live.concurrentViewers);
+      if (!Number.isFinite(ccv)) continue;
+      out.push({
+        videoId: v.id,
+        channelId: v.snippet.channelId,
+        channelTitle: v.snippet.channelTitle,
+        title: v.snippet.title,
+        concurrentViewers: ccv,
+        language: normalizeLanguageCode(v.snippet.defaultAudioLanguage ?? v.snippet.defaultLanguage ?? null),
+        categoryId: v.snippet.categoryId ?? null,
+        startedAt: live.actualStartTime ?? null,
+        activeLiveChatId: live.activeLiveChatId ?? null,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Public stats for up to 50 channels per call (1 unit).
+   *
+   * NOTE: YouTube rounds public subscriber counts to three significant
+   * figures (61000, 105000, 901000…), so per-stream subscriber deltas are
+   * invisible for anything above ~1k subs. Callers must not present these
+   * as precise follower movement.
+   */
+  async getChannelStats(channelIds: string[]): Promise<YouTubeChannelStats[]> {
+    if (channelIds.length === 0) return [];
+    const out: YouTubeChannelStats[] = [];
+    for (const batch of chunk(channelIds, MAX_VIDEO_IDS_PER_REQUEST)) {
+      if (!this.consumeQuota(QUOTA_COST.videosList, 'getChannelStats')) break;
+      const result = await this.requestWithRetry(async () => {
+        const { data } = await this.client.get<YouTubeListResponse<YouTubeChannelItem>>(
+          '/channels',
+          { params: { id: batch.join(','), part: 'snippet,statistics' } },
+        );
+        return data;
+      }, 'getChannelStats');
+      if (!result) continue;
+      for (const c of result.items) {
+        const hidden = c.statistics?.hiddenSubscriberCount === true;
+        const raw = c.statistics?.subscriberCount;
+        const thumbs = c.snippet?.thumbnails ?? {};
+        out.push({
+          channelId: c.id,
+          title: c.snippet?.title ?? '',
+          subscribers: hidden || raw == null ? null : Number(raw),
+          subscribersHidden: hidden,
+          thumbnailUrl:
+            thumbs.medium?.url ?? thumbs.default?.url ?? thumbs.high?.url ?? null,
+        });
+      }
+    }
+    return out;
   }
 
   // ── Viewer count resolution ──────────────────────────────────────────

@@ -5,6 +5,7 @@ import * as GameTrackerChannelModel from '../../models/game-tracker-channel';
 import * as GameTrackerSnapshotModel from '../../models/game-tracker-snapshot';
 import * as StreamSessionModel from '../../models/stream-session';
 import * as ChannelModel from '../../models/channel';
+import * as GatingModel from '../../models/game-tracker-youtube-channel';
 import { requireRole } from '../middleware/auth';
 import type { GameTrackerService } from '../../services/game-tracker-service';
 import logger from '../../utils/logger';
@@ -111,6 +112,87 @@ router.delete('/:slug', requireRole('admin'), async (req: Request, res: Response
     next(err);
   }
 });
+
+// ── YouTube gating (Discover) ──────────────────────────────────────────
+//
+// YouTube exposes no reliable game association, so tracker membership is a
+// human decision recorded per channel. These endpoints drive the review
+// queue: list what the poller has seen, then allow/deny it for good.
+
+router.get(
+  '/:slug/youtube/gating',
+  requireRole('admin'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
+      if (!tracker) {
+        res.status(404).json({ error: 'Game tracker not found' });
+        return;
+      }
+      const decision = req.query.decision as GatingModel.GatingDecision | undefined;
+      if (decision && !['allow', 'deny', 'pending'].includes(decision)) {
+        res.status(400).json({ error: 'decision must be allow, deny or pending' });
+        return;
+      }
+      const [rows, counts] = await Promise.all([
+        GatingModel.list(tracker.id, decision),
+        GatingModel.counts(tracker.id),
+      ]);
+      res.json({
+        enabled: tracker.youtube_enabled,
+        config: tracker.youtube_config ?? {},
+        counts,
+        rows,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/:slug/youtube/gating/:channelIdentifier',
+  requireRole('admin'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
+      if (!tracker) {
+        res.status(404).json({ error: 'Game tracker not found' });
+        return;
+      }
+      const { decision, note } = (req.body ?? {}) as { decision?: string; note?: string };
+      const channelIdentifier = req.params.channelIdentifier as string;
+      const user = (req as Request & { user?: { username?: string } }).user;
+
+      if (decision === 'reset') {
+        await GatingModel.reset(tracker.id, channelIdentifier);
+        res.json({ ok: true, decision: 'pending' });
+        return;
+      }
+      if (decision !== 'allow' && decision !== 'deny') {
+        res.status(400).json({ error: "decision must be 'allow', 'deny' or 'reset'" });
+        return;
+      }
+      const row = await GatingModel.decide(
+        tracker.id,
+        channelIdentifier,
+        decision,
+        user?.username ?? 'unknown',
+        note,
+      );
+      if (!row) {
+        res.status(404).json({ error: 'Channel not found in this tracker’s queue' });
+        return;
+      }
+      logger.info(
+        `[YTGating] ${user?.username ?? 'unknown'} set ${channelIdentifier} → ${decision} on ${tracker.slug}`,
+      );
+      res.json(row);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // ── Channels for a tracker ─────────────────────────────────────────────
 

@@ -18,6 +18,10 @@ export interface GameTracker {
   max_active_channels: number;
   /** Days of raw game_tracker_snapshots to keep; NULL = keep forever. */
   retain_raw_days: number | null;
+  /** YouTube branch (Discover) — off until a roster + rules are configured. */
+  youtube_enabled: boolean;
+  /** { queries, include, exclude, maxRoster } — see YouTubeTrackerConfig. */
+  youtube_config: Record<string, unknown>;
   metadata: Record<string, unknown>;
   created_at: Date;
   updated_at: Date;
@@ -37,6 +41,8 @@ export interface CreateGameTracker {
   polling_interval_seconds?: number;
   max_active_channels?: number;
   retain_raw_days?: number | null;
+  youtube_enabled?: boolean;
+  youtube_config?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 }
 
@@ -46,8 +52,10 @@ const TABLE = 'game_trackers';
 
 function serialize(data: Record<string, unknown>): Record<string, unknown> {
   const out = { ...data };
-  if (out.metadata !== undefined && typeof out.metadata !== 'string') {
-    out.metadata = JSON.stringify(out.metadata);
+  for (const key of ['metadata', 'youtube_config']) {
+    if (out[key] !== undefined && typeof out[key] !== 'string') {
+      out[key] = JSON.stringify(out[key]);
+    }
   }
   return out;
 }
