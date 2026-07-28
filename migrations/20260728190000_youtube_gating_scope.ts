@@ -18,6 +18,12 @@ import type { Knex } from 'knex';
  *                        the Gaming category is this game.
  */
 export async function up(knex: Knex): Promise<void> {
+  // ADD COLUMN is instant in PG11+, but it still needs ACCESS EXCLUSIVE —
+  // and the nightly pg_dump holds a snapshot across every table. Without a
+  // lock_timeout the DDL sits in the lock queue and everything behind it
+  // queues too, so a migration that merely can't run starts stalling the
+  // poller's writes. Fail fast and let it be re-run instead.
+  await knex.raw("SET LOCAL lock_timeout = '5s'");
   await knex.schema.alterTable('game_tracker_youtube_channels', (t) => {
     t.text('scope').notNullable().defaultTo('matching');
   });
