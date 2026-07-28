@@ -36,6 +36,14 @@ const GAMING_CATEGORY_ID = '20';
 const ROSTER_TTL_MS = 20 * 60_000;
 /** Hard ceiling on ids polled per cycle (quota guard: 1 unit per 50). */
 const DEFAULT_MAX_ROSTER = 400;
+/**
+ * How often to re-scrape YouTube's Live search. Deliberately decoupled
+ * from the tracker's Twitch/Kick discovery cadence: those are official
+ * APIs we may call every cycle, this is an unofficial page. The roster
+ * changes far slower than the viewer counts do, so 10 minutes is plenty.
+ */
+const DEFAULT_DISCOVERY_INTERVAL_S = 600;
+const MIN_DISCOVERY_INTERVAL_S = 120;
 
 export interface YouTubeTrackerConfig {
   /** Search phrases for discovery, e.g. ["PUBG BATTLEGROUNDS", "PUBG PC"]. */
@@ -46,6 +54,8 @@ export interface YouTubeTrackerConfig {
   exclude?: string[];
   /** Cap on ids polled per cycle. */
   maxRoster?: number;
+  /** Seconds between Live-search scrapes (default 600, floor 120). */
+  discoveryIntervalSeconds?: number;
 }
 
 export interface YouTubeCycleResult {
@@ -138,9 +148,12 @@ export class YouTubeGameTracker {
     // ── 1. Roster ──────────────────────────────────────────────────────
     const roster = new Set(await this.recentRoster(tracker.id));
 
+    const discoveryEverySeconds = Math.max(
+      MIN_DISCOVERY_INTERVAL_S,
+      cfg.discoveryIntervalSeconds ?? DEFAULT_DISCOVERY_INTERVAL_S,
+    );
     const discoveryDue =
-      Date.now() - (this.lastDiscovery.get(tracker.id) ?? 0) >=
-      Math.max(60, tracker.discovery_interval_seconds) * 1000;
+      Date.now() - (this.lastDiscovery.get(tracker.id) ?? 0) >= discoveryEverySeconds * 1000;
     if (discoveryDue && (cfg.queries?.length ?? 0) > 0) {
       this.lastDiscovery.set(tracker.id, Date.now());
       result.discoveryRan = true;
