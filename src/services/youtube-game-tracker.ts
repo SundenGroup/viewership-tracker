@@ -152,6 +152,12 @@ export function gateVideo(
    * ambiguous title ("PNC 2026 Day 3", "Chicken Dinner grind") still
    * counts — which is the whole reason the channel was approved.
    */
+  /** YouTube itself says this isn't gaming — true for every path. */
+  const notGaming =
+    video.categoryId != null && video.categoryId !== GAMING_CATEGORY_ID
+      ? `category ${video.categoryId} is not Gaming`
+      : null;
+
   const namesAnotherGame = (): string | null => {
     const own = [
       ...(cfg.include ?? []), ...(cfg.strongTags ?? []), ...(cfg.strongPhrases ?? []),
@@ -170,6 +176,7 @@ export function gateVideo(
   // sanity check (see above).
   if (existing?.human) {
     if (existing.decision === 'deny') return { decision: 'deny', reason: 'channel denied by review' };
+    if (notGaming) return { decision: 'deny', reason: `approved channel, but ${notGaming}` };
     const other = namesAnotherGame();
     return other
       ? { decision: 'deny', reason: `approved channel, but this stream is "${other}"` }
@@ -182,6 +189,7 @@ export function gateVideo(
   // Animals.) Denials stay: re-testing them every cycle just churns.
   if (existing?.decision === 'deny') return { decision: 'deny', reason: 'channel denied' };
   if (existing?.decision === 'allow' && video.concurrentViewers < reviewFloorEarly) {
+    if (notGaming) return { decision: 'deny', reason: `auto-allowed channel, but ${notGaming}` };
     const other = namesAnotherGame();
     return other
       ? { decision: 'deny', reason: `auto-allowed channel, but this stream is "${other}"` }
@@ -207,9 +215,7 @@ export function gateVideo(
   const titleExclude = exclude.find((kw) => title.includes(kw));
   if (titleExclude) return { decision: 'deny', reason: `title excluded by "${titleExclude}"` };
 
-  if (video.categoryId != null && video.categoryId !== GAMING_CATEGORY_ID) {
-    return { decision: 'deny', reason: `category ${video.categoryId} is not Gaming` };
-  }
+  if (notGaming) return { decision: 'deny', reason: notGaming };
 
   // Tags are aspirational (streamers tag every game they play), so an
   // excluded tag only casts doubt — it doesn't convict.
