@@ -70,6 +70,11 @@ export interface YouTubeTrackerConfig {
   autoAllowWeakBelowCcv?: number;
   /** Above this CCV a human always confirms, however strong the match. */
   alwaysReviewAboveCcv?: number;
+  /**
+   * Titles naming these games drop the stream even from an APPROVED
+   * channel (variety streamers). Defaults to a shared well-known list.
+   */
+  otherGames?: string[];
   /** Continuation pages to follow per discovery query (zero quota). */
   discoveryPagesPerQuery?: number;
   /** Cap on ids polled per cycle. */
@@ -80,6 +85,24 @@ export interface YouTubeTrackerConfig {
 
 const DEFAULT_AUTO_ALLOW_WEAK_BELOW_CCV = 200;
 const DEFAULT_ALWAYS_REVIEW_ABOVE_CCV = 1_000;
+
+/**
+ * Titles that name a DIFFERENT game. Used only as a negative check on
+ * channels we've already approved: variety streamers are approved for the
+ * game they're known for, then play something else on Tuesday, and that
+ * Tuesday must not land in this tracker's numbers.
+ *
+ * Deliberately a list of well-known names rather than anything clever —
+ * it only ever removes a stream, never adds one, so a missing entry costs
+ * a little over-counting, not a wrong game entirely.
+ */
+const OTHER_GAME_TITLES = [
+  'valorant', 'valo ', 'party animals', 'fortnite', 'minecraft', 'counter-strike',
+  'cs2', 'csgo', 'cs:go', 'apex legends', 'call of duty', 'warzone', 'gta ', 'gta5',
+  'gta v', 'rocket league', 'league of legends', 'dota', 'overwatch', 'rust ',
+  'escape from tarkov', 'ea fc', 'fifa ', 'efootball', 'roblox', 'among us',
+  'delta force', 'marvel rivals', 'the finals', 'battlefield', 'arc raiders',
+];
 
 export interface YouTubeCycleResult {
   rosterSize: number;
@@ -118,12 +141,39 @@ export function gateVideo(
   existing: GatingModel.StoredDecision | undefined,
 ): GateOutcome {
   const reviewFloorEarly = cfg.alwaysReviewAboveCcv ?? DEFAULT_ALWAYS_REVIEW_ABOVE_CCV;
+  const titleEarly = (video.title ?? '').toLowerCase();
 
-  // A HUMAN decision is final — that's the point of recording it.
+  /**
+   * Approving a channel answers "is this a legitimate source for this
+   * game?" — NOT "does everything they ever stream count". Variety
+   * streamers play other things, so an approved channel's stream is still
+   * dropped when its title names a different game. The bar is deliberately
+   * asymmetric: we need positive proof it's something ELSE, so an
+   * ambiguous title ("PNC 2026 Day 3", "Chicken Dinner grind") still
+   * counts — which is the whole reason the channel was approved.
+   */
+  const namesAnotherGame = (): string | null => {
+    const own = [
+      ...(cfg.include ?? []), ...(cfg.strongTags ?? []), ...(cfg.strongPhrases ?? []),
+    ].map((s) => s.toLowerCase());
+    const others = (cfg.otherGames ?? OTHER_GAME_TITLES).map((s) => s.toLowerCase());
+    for (const g of others) {
+      // never let a tracker exclude its own game by coincidence
+      if (own.some((o) => o.includes(g.trim()) || g.trim().includes(o))) continue;
+      if (titleEarly.includes(g)) return g.trim();
+    }
+    const ex = (cfg.exclude ?? []).map((s) => s.toLowerCase()).find((kw) => titleEarly.includes(kw));
+    return ex ?? null;
+  };
+
+  // A HUMAN decision is final on the CHANNEL — the stream still gets a
+  // sanity check (see above).
   if (existing?.human) {
-    return existing.decision === 'allow'
-      ? { decision: 'allow', reason: 'channel allowed by review' }
-      : { decision: 'deny', reason: 'channel denied by review' };
+    if (existing.decision === 'deny') return { decision: 'deny', reason: 'channel denied by review' };
+    const other = namesAnotherGame();
+    return other
+      ? { decision: 'deny', reason: `approved channel, but this stream is "${other}"` }
+      : { decision: 'allow', reason: 'channel allowed by review' };
   }
   // An AUTOMATIC decision is provisional. A channel auto-allowed at 300
   // viewers must not stay allowed unexamined at 3,000 — the stakes changed,
@@ -132,7 +182,10 @@ export function gateVideo(
   // Animals.) Denials stay: re-testing them every cycle just churns.
   if (existing?.decision === 'deny') return { decision: 'deny', reason: 'channel denied' };
   if (existing?.decision === 'allow' && video.concurrentViewers < reviewFloorEarly) {
-    return { decision: 'allow', reason: 'channel auto-allowed' };
+    const other = namesAnotherGame();
+    return other
+      ? { decision: 'deny', reason: `auto-allowed channel, but this stream is "${other}"` }
+      : { decision: 'allow', reason: 'channel auto-allowed' };
   }
 
   const title = (video.title ?? '').toLowerCase();
