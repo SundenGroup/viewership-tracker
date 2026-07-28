@@ -36,12 +36,28 @@ export interface GameTrackerYouTubeChannel {
 
 const TABLE = 'game_tracker_youtube_channels';
 
-/** Decisions for a tracker as a Map keyed by channel id (poll-cycle hot path). */
-export async function decisionMap(gameTrackerId: string): Promise<Map<string, GatingDecision>> {
+export interface StoredDecision {
+  decision: GatingDecision;
+  /** True when a person decided it — only those are permanently binding. */
+  human: boolean;
+}
+
+/**
+ * Decisions for a tracker keyed by channel id (poll-cycle hot path).
+ *
+ * `human` matters: an automatic allow is provisional and gets re-checked
+ * as a stream grows, whereas a human decision is final.
+ */
+export async function decisionMap(gameTrackerId: string): Promise<Map<string, StoredDecision>> {
   const rows = await db(TABLE)
     .where('game_tracker_id', gameTrackerId)
-    .select('channel_identifier', 'decision');
-  return new Map(rows.map((r) => [r.channel_identifier as string, r.decision as GatingDecision]));
+    .select('channel_identifier', 'decision', 'decided_by');
+  return new Map(
+    rows.map((r) => [
+      r.channel_identifier as string,
+      { decision: r.decision as GatingDecision, human: r.decided_by != null },
+    ]),
+  );
 }
 
 export async function list(

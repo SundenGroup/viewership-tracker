@@ -113,11 +113,25 @@ interface GateOutcome {
 export function gateVideo(
   video: YouTubeLiveVideo,
   cfg: YouTubeTrackerConfig,
-  existing: GatingModel.GatingDecision | undefined,
+  existing: GatingModel.StoredDecision | undefined,
 ): GateOutcome {
-  // A recorded human decision always wins — that's the point of recording it.
-  if (existing === 'allow') return { decision: 'allow', reason: 'channel allowed' };
-  if (existing === 'deny') return { decision: 'deny', reason: 'channel denied' };
+  const reviewFloorEarly = cfg.alwaysReviewAboveCcv ?? DEFAULT_ALWAYS_REVIEW_ABOVE_CCV;
+
+  // A HUMAN decision is final — that's the point of recording it.
+  if (existing?.human) {
+    return existing.decision === 'allow'
+      ? { decision: 'allow', reason: 'channel allowed by review' }
+      : { decision: 'deny', reason: 'channel denied by review' };
+  }
+  // An AUTOMATIC decision is provisional. A channel auto-allowed at 300
+  // viewers must not stay allowed unexamined at 3,000 — the stakes changed,
+  // so it goes back for review. (This is how MortaL, auto-allowed small on
+  // a stale "pubg" tag, ended up topping the board while playing Party
+  // Animals.) Denials stay: re-testing them every cycle just churns.
+  if (existing?.decision === 'deny') return { decision: 'deny', reason: 'channel denied' };
+  if (existing?.decision === 'allow' && video.concurrentViewers < reviewFloorEarly) {
+    return { decision: 'allow', reason: 'channel auto-allowed' };
+  }
 
   const title = (video.title ?? '').toLowerCase();
   const description = (video.description ?? '').toLowerCase();
@@ -147,9 +161,16 @@ export function gateVideo(
   const tagExclude = exclude.find((kw) => tags.some((t) => t.includes(kw)));
 
   // ── Positive signals, strongest first ───────────────────────────────
-  const tagHit = strongTags.find((t) => tags.includes(t));
+  //
+  // The TITLE is evidence about this stream; tags and description are
+  // evidence about the CHANNEL. MortaL tags every broadcast with "pubg",
+  // "bgmi" and "pubg mobile" whatever he's actually playing — so a tag
+  // match is only trustworthy when the channel's own tags aren't also
+  // advertising a game we exclude. When they contradict each other, the
+  // title is the only witness that knows what's on screen right now.
   const phraseHit = strongPhrases.find((p) => title.includes(p));
-  const strong = tagHit ?? phraseHit ?? null;
+  const tagHit = tagExclude ? undefined : strongTags.find((t) => tags.includes(t));
+  const strong = phraseHit ?? tagHit ?? null;
 
   const weakIn = include.find((kw) => title.includes(kw));
   const weakTag = include.find((kw) => tags.some((t) => t.includes(kw)));
@@ -164,9 +185,9 @@ export function gateVideo(
   }
 
   const where = strong
-    ? tagHit
-      ? `tag "${tagHit}"`
-      : `title phrase "${phraseHit}"`
+    ? phraseHit
+      ? `title phrase "${phraseHit}"`
+      : `tag "${tagHit}"`
     : weakIn
       ? `title "${weakIn}"`
       : weakTag
@@ -185,7 +206,12 @@ export function gateVideo(
   if (strong) return { decision: 'allow', reason: `strong match on ${where}` };
 
   if (tagExclude) {
-    return { decision: 'pending', reason: `weak match on ${where} but tagged "${tagExclude}"` };
+    return {
+      decision: weakIn ? 'pending' : 'deny',
+      reason: weakIn
+        ? `title mentions "${weakIn}" but channel also tagged "${tagExclude}"`
+        : `only channel-level match (${where}); channel tagged "${tagExclude}" — not this game`,
+    };
   }
 
   if (ccv < weakCeiling) {
@@ -241,7 +267,7 @@ export class YouTubeGameTracker {
     // (e.g. an esports watch party titled "PNC Day 3").
     const decisions = await GatingModel.decisionMap(tracker.id);
     const allowedChannelIds = [...decisions.entries()]
-      .filter(([, d]) => d === 'allow')
+      .filter(([, d]) => d.decision === 'allow')
       .map(([channelId]) => channelId);
     if (allowedChannelIds.length > 0) {
       try {
