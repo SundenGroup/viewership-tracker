@@ -1120,6 +1120,8 @@ export interface GameTracker {
 
 export interface GameTrackerDetail extends GameTracker {
   active_channel_count: number;
+  youtube_enabled?: boolean;
+  youtube_config?: YouTubeTrackerConfig;
   last_cycle: {
     snapshotsWritten: number;
     newChannels: number;
@@ -1127,6 +1129,60 @@ export interface GameTrackerDetail extends GameTracker {
     dropped: number;
     durationMs: number;
   } | null;
+}
+
+/** Per-tracker YouTube discovery + gating rules (Discover). */
+export interface YouTubeTrackerConfig {
+  /** Search phrases used to find live streams. */
+  queries?: string[];
+  /** Title must contain one of these to reach the review queue. */
+  include?: string[];
+  /** Title containing any of these is auto-denied. */
+  exclude?: string[];
+  maxRoster?: number;
+}
+
+export type YouTubeGatingDecision = 'allow' | 'deny' | 'pending';
+
+export interface YouTubeGatingRow {
+  id: string;
+  channel_identifier: string;
+  display_name: string | null;
+  decision: YouTubeGatingDecision;
+  reason: string | null;
+  sample_title: string | null;
+  sample_video_id: string | null;
+  sample_ccv: number | null;
+  last_seen_at: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+}
+
+export interface YouTubeGatingResponse {
+  enabled: boolean;
+  config: YouTubeTrackerConfig;
+  counts: Record<YouTubeGatingDecision, number>;
+  rows: YouTubeGatingRow[];
+}
+
+/** Review queue + decisions for a tracker's YouTube channels (admin). */
+export function getYouTubeGating(slug: string, decision?: YouTubeGatingDecision) {
+  const qs = decision ? `?decision=${decision}` : '';
+  return request<YouTubeGatingResponse>(
+    `/api/game-trackers/${encodeURIComponent(slug)}/youtube/gating${qs}`,
+  );
+}
+
+export function decideYouTubeGating(
+  slug: string,
+  channelIdentifier: string,
+  decision: 'allow' | 'deny' | 'reset',
+  note?: string,
+) {
+  return request<YouTubeGatingRow | { ok: true }>(
+    `/api/game-trackers/${encodeURIComponent(slug)}/youtube/gating/${encodeURIComponent(channelIdentifier)}`,
+    { method: 'POST', body: JSON.stringify({ decision, note }) },
+  );
 }
 
 export interface CreateGameTracker {
@@ -1141,6 +1197,8 @@ export interface CreateGameTracker {
   mismatch_threshold_cycles?: number;
   discovery_interval_seconds?: number;
   polling_interval_seconds?: number;
+  youtube_enabled?: boolean;
+  youtube_config?: YouTubeTrackerConfig;
 }
 
 export interface GameTrackerLeaderboardRow {

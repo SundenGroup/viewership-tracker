@@ -38,6 +38,7 @@ import {
 import { fmtN, fmtCompact, fmtRelative } from '@/design/format';
 import { downloadCsv, csvStamp } from '@/utils/csv';
 import { DiscoverTrendsTab } from './DiscoverTrendsTab';
+import { DiscoverYouTubeGating } from './DiscoverYouTubeGating';
 import { DiscoverChannelsTab } from './DiscoverChannelsTab';
 
 const POLL_INTERVAL_MS = 30_000;
@@ -267,7 +268,12 @@ export function DiscoverDetailPage() {
             />
           )}
           {tab === 'trends' && <DiscoverTrendsTab slug={slug} />}
-          {tab === 'channels' && <DiscoverChannelsTab slug={slug} />}
+          {tab === 'channels' && (
+            <Col gap={16}>
+              {isAdmin && detail.youtube_enabled && <DiscoverYouTubeGating slug={slug} />}
+              <DiscoverChannelsTab slug={slug} />
+            </Col>
+          )}
         </>
       )}
     </div>
