@@ -160,7 +160,11 @@ router.post(
         res.status(404).json({ error: 'Game tracker not found' });
         return;
       }
-      const { decision, note } = (req.body ?? {}) as { decision?: string; note?: string };
+      const { decision, note, scope } = (req.body ?? {}) as {
+        decision?: string;
+        note?: string;
+        scope?: string;
+      };
       const channelIdentifier = req.params.channelIdentifier as string;
       const user = (req as Request & { user?: { username?: string } }).user;
 
@@ -173,12 +177,17 @@ router.post(
         res.status(400).json({ error: "decision must be 'allow', 'deny' or 'reset'" });
         return;
       }
+      if (scope && scope !== 'matching' && scope !== 'all') {
+        res.status(400).json({ error: "scope must be 'matching' or 'all'" });
+        return;
+      }
       const row = await GatingModel.decide(
         tracker.id,
         channelIdentifier,
         decision,
         user?.username ?? 'unknown',
         note,
+        (scope as GatingModel.GatingScope | undefined) ?? 'matching',
       );
       if (!row) {
         res.status(404).json({ error: 'Channel not found in this tracker’s queue' });

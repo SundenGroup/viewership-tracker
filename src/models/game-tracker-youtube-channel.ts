@@ -17,12 +17,20 @@ import db from '../utils/db';
 
 export type GatingDecision = 'allow' | 'deny' | 'pending';
 
+/**
+ * How much of an approved channel counts.
+ *   matching — variety streamer: only streams matching this game's vocabulary
+ *   all      — dedicated channel: everything they stream in Gaming
+ */
+export type GatingScope = 'matching' | 'all';
+
 export interface GameTrackerYouTubeChannel {
   id: string;
   game_tracker_id: string;
   channel_identifier: string;
   display_name: string | null;
   decision: GatingDecision;
+  scope: GatingScope;
   reason: string | null;
   sample_title: string | null;
   sample_video_id: string | null;
@@ -40,6 +48,8 @@ export interface StoredDecision {
   decision: GatingDecision;
   /** True when a person decided it — only those are permanently binding. */
   human: boolean;
+  /** Only meaningful for an approved channel; see GatingScope. */
+  scope: GatingScope;
 }
 
 /**
@@ -51,11 +61,15 @@ export interface StoredDecision {
 export async function decisionMap(gameTrackerId: string): Promise<Map<string, StoredDecision>> {
   const rows = await db(TABLE)
     .where('game_tracker_id', gameTrackerId)
-    .select('channel_identifier', 'decision', 'decided_by');
+    .select('channel_identifier', 'decision', 'decided_by', 'scope');
   return new Map(
     rows.map((r) => [
       r.channel_identifier as string,
-      { decision: r.decision as GatingDecision, human: r.decided_by != null },
+      {
+        decision: r.decision as GatingDecision,
+        human: r.decided_by != null,
+        scope: (r.scope as GatingScope) ?? 'matching',
+      },
     ]),
   );
 }
@@ -155,14 +169,16 @@ export async function decide(
   decision: Exclude<GatingDecision, 'pending'>,
   decidedBy: string,
   note?: string,
+  scope: GatingScope = 'matching',
 ): Promise<GameTrackerYouTubeChannel | null> {
   const [row] = await db(TABLE)
     .where({ game_tracker_id: gameTrackerId, channel_identifier: channelIdentifier })
     .update({
       decision,
+      scope,
       decided_by: decidedBy,
       decided_at: new Date(),
-      reason: note ?? `manual: ${decision}`,
+      reason: note ?? `manual: ${decision}${decision === 'allow' && scope === 'all' ? ' (all streams)' : ''}`,
       updated_at: new Date(),
     })
     .returning('*');

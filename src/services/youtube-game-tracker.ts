@@ -21,6 +21,26 @@
  * Only 'allow' channels produce snapshots. 'pending' is deliberately not
  * tracked — quietly counting unreviewed channels is how the wrong game
  * ends up in a tracker's numbers.
+ *
+ * APPROVAL SCOPE. Approving a channel asks one further question, because
+ * a channel is not the same as a stream:
+ *
+ *   'all'      — a dedicated channel (an org, a tournament). Everything
+ *                they broadcast in Gaming is this game; no per-stream
+ *                evidence needed.
+ *   'matching' — a variety streamer. Only count the streams whose TITLE
+ *                matches this game's vocabulary.
+ *
+ * 'matching' is deliberately built from POSITIVE evidence — the tracker's
+ * own include/tag/phrase list, which is small, bounded and maintained for
+ * discovery anyway. The obvious alternative ("drop it if the title names
+ * a different game") needs an enumeration of every game that exists: an
+ * unbounded list that is stale the day a new title ships.
+ *
+ * And it reads the TITLE only. Tags describe the channel's brand, not
+ * tonight's broadcast — a PUBG-known streamer carries "pubg" tags through
+ * their Valorant nights too. Tags can corroborate an unknown channel's
+ * identity; they can never say what is on screen right now.
  */
 import type { Knex } from 'knex';
 import logger from '../utils/logger';
@@ -30,6 +50,32 @@ import type { GameTracker } from '../models/game-tracker';
 import * as GatingModel from '../models/game-tracker-youtube-channel';
 import { discoverLive } from './youtube-live-discovery';
 import { watchlistVideoIds } from './youtube-channel-watch';
+
+/**
+ * Fold a title down to something keyword rules can actually match.
+ *
+ * Streamers decorate titles with Unicode look-alikes — 𝗣𝗠𝗡𝗖, 🅿🆄🅱🅶,
+ * ᴘᴜʙɢ — which render as the game's name to a human and as unrelated
+ * codepoints to `includes()`. NFKD folds the mathematical-alphanumeric and
+ * fullwidth blocks back to ASCII; the small map covers the enclosed and
+ * small-caps blocks that NFKD leaves alone.
+ */
+const LOOKALIKES: Record<string, string> = {
+  'ᴀ':'a','ʙ':'b','ᴄ':'c','ᴅ':'d','ᴇ':'e','ғ':'f','ɢ':'g','ʜ':'h','ɪ':'i','ᴊ':'j',
+  'ᴋ':'k','ʟ':'l','ᴍ':'m','ɴ':'n','ᴏ':'o','ᴘ':'p','ǫ':'q','ʀ':'r','s':'s','ᴛ':'t',
+  'ᴜ':'u','ᴠ':'v','ᴡ':'w','x':'x','ʏ':'y','ᴢ':'z',
+  '🅐':'a','🅑':'b','🅖':'g','🅟':'p','🅤':'u','🅱':'b','🅶':'g','🅿':'p','🆄':'u',
+};
+
+export function normalizeTitle(raw: string | null | undefined): string {
+  const folded = (raw ?? '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  let out = '';
+  for (const ch of folded) out += LOOKALIKES[ch] ?? ch;
+  return out;
+}
 
 /** Gaming. The only category signal YouTube exposes. */
 const GAMING_CATEGORY_ID = '20';
@@ -70,11 +116,6 @@ export interface YouTubeTrackerConfig {
   autoAllowWeakBelowCcv?: number;
   /** Above this CCV a human always confirms, however strong the match. */
   alwaysReviewAboveCcv?: number;
-  /**
-   * Titles naming these games drop the stream even from an APPROVED
-   * channel (variety streamers). Defaults to a shared well-known list.
-   */
-  otherGames?: string[];
   /** Continuation pages to follow per discovery query (zero quota). */
   discoveryPagesPerQuery?: number;
   /** Cap on ids polled per cycle. */
@@ -85,24 +126,6 @@ export interface YouTubeTrackerConfig {
 
 const DEFAULT_AUTO_ALLOW_WEAK_BELOW_CCV = 200;
 const DEFAULT_ALWAYS_REVIEW_ABOVE_CCV = 1_000;
-
-/**
- * Titles that name a DIFFERENT game. Used only as a negative check on
- * channels we've already approved: variety streamers are approved for the
- * game they're known for, then play something else on Tuesday, and that
- * Tuesday must not land in this tracker's numbers.
- *
- * Deliberately a list of well-known names rather than anything clever —
- * it only ever removes a stream, never adds one, so a missing entry costs
- * a little over-counting, not a wrong game entirely.
- */
-const OTHER_GAME_TITLES = [
-  'valorant', 'valo ', 'party animals', 'fortnite', 'minecraft', 'counter-strike',
-  'cs2', 'csgo', 'cs:go', 'apex legends', 'call of duty', 'warzone', 'gta ', 'gta5',
-  'gta v', 'rocket league', 'league of legends', 'dota', 'overwatch', 'rust ',
-  'escape from tarkov', 'ea fc', 'fifa ', 'efootball', 'roblox', 'among us',
-  'delta force', 'marvel rivals', 'the finals', 'battlefield', 'arc raiders',
-];
 
 export interface YouTubeCycleResult {
   rosterSize: number;
@@ -141,46 +164,57 @@ export function gateVideo(
   existing: GatingModel.StoredDecision | undefined,
 ): GateOutcome {
   const reviewFloorEarly = cfg.alwaysReviewAboveCcv ?? DEFAULT_ALWAYS_REVIEW_ABOVE_CCV;
-  const titleEarly = (video.title ?? '').toLowerCase();
+  const titleEarly = normalizeTitle(video.title);
 
-  /**
-   * Approving a channel answers "is this a legitimate source for this
-   * game?" — NOT "does everything they ever stream count". Variety
-   * streamers play other things, so an approved channel's stream is still
-   * dropped when its title names a different game. The bar is deliberately
-   * asymmetric: we need positive proof it's something ELSE, so an
-   * ambiguous title ("PNC 2026 Day 3", "Chicken Dinner grind") still
-   * counts — which is the whole reason the channel was approved.
-   */
   /** YouTube itself says this isn't gaming — true for every path. */
   const notGaming =
     video.categoryId != null && video.categoryId !== GAMING_CATEGORY_ID
       ? `category ${video.categoryId} is not Gaming`
       : null;
 
-  const namesAnotherGame = (): string | null => {
-    const own = [
-      ...(cfg.include ?? []), ...(cfg.strongTags ?? []), ...(cfg.strongPhrases ?? []),
-    ].map((s) => s.toLowerCase());
-    const others = (cfg.otherGames ?? OTHER_GAME_TITLES).map((s) => s.toLowerCase());
-    for (const g of others) {
-      // never let a tracker exclude its own game by coincidence
-      if (own.some((o) => o.includes(g.trim()) || g.trim().includes(o))) continue;
-      if (titleEarly.includes(g)) return g.trim();
-    }
-    const ex = (cfg.exclude ?? []).map((s) => s.toLowerCase()).find((kw) => titleEarly.includes(kw));
-    return ex ?? null;
+  /**
+   * Does THIS stream look like the tracked game — judged on the TITLE only.
+   *
+   * Built from the tracker's OWN vocabulary (game name, aliases, event
+   * names — the same list discovery already uses). The alternative,
+   * "does the title name some other game", requires enumerating every
+   * game that exists: unbounded, and stale the moment a new title ships.
+   * One game's vocabulary is small and we maintain it anyway.
+   *
+   * Tags are deliberately NOT consulted here. They describe the channel's
+   * brand — a PUBG-known streamer carries "pubg" on their Valorant nights
+   * too — so they can corroborate an unknown channel's identity but can
+   * never tell us what is on screen right now.
+   */
+  const matchesThisGame = (): string | null => {
+    const terms = [
+      ...(cfg.strongPhrases ?? []), ...(cfg.strongTags ?? []), ...(cfg.include ?? []),
+    ].map((x) => x.toLowerCase()).filter(Boolean);
+    const inTitle = terms.find((kw) => titleEarly.includes(kw));
+    return inTitle ? `title "${inTitle}"` : null;
   };
+
+  const titleExcluded = (cfg.exclude ?? [])
+    .map((x) => x.toLowerCase())
+    .find((kw) => titleEarly.includes(kw));
 
   // A HUMAN decision is final on the CHANNEL — the stream still gets a
   // sanity check (see above).
   if (existing?.human) {
     if (existing.decision === 'deny') return { decision: 'deny', reason: 'channel denied by review' };
     if (notGaming) return { decision: 'deny', reason: `approved channel, but ${notGaming}` };
-    const other = namesAnotherGame();
-    return other
-      ? { decision: 'deny', reason: `approved channel, but this stream is "${other}"` }
-      : { decision: 'allow', reason: 'channel allowed by review' };
+    if (titleExcluded) {
+      return { decision: 'deny', reason: `approved channel, but title says "${titleExcluded}"` };
+    }
+    // "all" = a dedicated channel (org / tournament): everything they
+    // stream in Gaming is this game, so no per-stream evidence needed.
+    if (existing.scope === 'all') {
+      return { decision: 'allow', reason: 'channel allowed by review (all streams)' };
+    }
+    const hit = matchesThisGame();
+    return hit
+      ? { decision: 'allow', reason: `allowed channel, ${hit}` }
+      : { decision: 'deny', reason: 'allowed channel, but this stream doesn’t look like this game' };
   }
   // An AUTOMATIC decision is provisional. A channel auto-allowed at 300
   // viewers must not stay allowed unexamined at 3,000 — the stakes changed,
@@ -190,13 +224,16 @@ export function gateVideo(
   if (existing?.decision === 'deny') return { decision: 'deny', reason: 'channel denied' };
   if (existing?.decision === 'allow' && video.concurrentViewers < reviewFloorEarly) {
     if (notGaming) return { decision: 'deny', reason: `auto-allowed channel, but ${notGaming}` };
-    const other = namesAnotherGame();
-    return other
-      ? { decision: 'deny', reason: `auto-allowed channel, but this stream is "${other}"` }
-      : { decision: 'allow', reason: 'channel auto-allowed' };
+    if (titleExcluded) {
+      return { decision: 'deny', reason: `auto-allowed channel, but title says "${titleExcluded}"` };
+    }
+    const hit = matchesThisGame();
+    return hit
+      ? { decision: 'allow', reason: `auto-allowed channel, ${hit}` }
+      : { decision: 'deny', reason: 'auto-allowed channel, but this stream doesn’t match' };
   }
 
-  const title = (video.title ?? '').toLowerCase();
+  const title = normalizeTitle(video.title);
   const description = (video.description ?? '').toLowerCase();
   const tags = (video.tags ?? []).map((t) => t.toLowerCase());
   const ccv = video.concurrentViewers;
