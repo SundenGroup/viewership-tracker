@@ -22,6 +22,7 @@ import publicRouter from './routes/public';
 import relayRouter, { relayHealthRouter } from './routes/relay';
 import gameTrackersRouter from './routes/game-trackers';
 import askRouter from './routes/ask';
+import docsRouter from './routes/docs';
 import { authenticate, requireRole } from './middleware/auth';
 
 export function createApp() {
@@ -116,6 +117,8 @@ export function createApp() {
   // Ask: /discover/:slug is viewer+ like the other tracker routes;
   // /explore/:seriesId carries its own editor+ requireRole inside the router.
   app.use('/api/ask', askRouter);
+  // Guides: /user for everyone signed in; /admin gates itself inside.
+  app.use('/api/docs', docsRouter);
 
   // Editor+ routes
   app.use('/api/export', requireRole('admin', 'editor'), exportRouter);
