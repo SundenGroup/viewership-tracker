@@ -25,6 +25,7 @@ import {
   IconSettings,
   IconSparkle,
   IconX,
+  ConfirmButton,
 } from '@/components/design';
 import { fmtRelative } from '@/design/format';
 import { PLATFORMS } from '@/design/platforms';
@@ -627,16 +628,14 @@ export function EditorMobile({
                       >
                         Extend +30m
                       </button>
-                      <button
-                        type="button"
+                      <ConfirmButton
                         className="btn"
                         style={{ flex: 1, color: 'var(--danger)' }}
-                        onClick={() =>
-                          onBroadcastDayStatusChange(liveDay.id, 'completed')
-                        }
+                        onConfirm={() => onBroadcastDayStatusChange(liveDay.id, 'completed')}
+                        confirmLabel="End broadcast?"
                       >
                         End now
-                      </button>
+                      </ConfirmButton>
                     </>
                   )}
                 </Row>
@@ -652,7 +651,7 @@ export function EditorMobile({
             <Section
               eyebrow="Polling"
               title={
-                pollingStatus?.state === 'running' ? 'Running · 30s' : 'Stopped'
+                pollingStatus?.state === 'running' ? 'Running' : 'Stopped'
               }
               compact
               right={
@@ -672,14 +671,14 @@ export function EditorMobile({
                   <IconBolt size={12} /> {pollLoading ? 'Polling…' : 'Poll now'}
                 </button>
                 {pollingStatus?.state === 'running' ? (
-                  <button
-                    type="button"
+                  <ConfirmButton
                     className="btn"
                     style={{ flex: 1 }}
-                    onClick={onStopPolling}
+                    onConfirm={onStopPolling}
+                    confirmLabel="Stop ALL polling?"
                   >
-                    <IconPause size={12} /> Pause
-                  </button>
+                    <IconPause size={12} /> Pause all
+                  </ConfirmButton>
                 ) : (
                   <button
                     type="button"
@@ -773,7 +772,7 @@ export function EditorMobile({
               );
             })()}
 
-            <Section eyebrow="Adapters" title={`${PLATFORMS.length} platforms`} compact>
+            <Section eyebrow="Tracked platforms" title={`${PLATFORMS.length} platforms`} compact>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
                 {PLATFORMS.map((p) => (
                   <div
@@ -792,7 +791,6 @@ export function EditorMobile({
                     <span style={{ fontSize: 10, color: 'var(--fg-muted)' }}>
                       {p.name}
                     </span>
-                    <span className="dot" style={{ background: 'var(--live)' }} />
                   </div>
                 ))}
               </div>

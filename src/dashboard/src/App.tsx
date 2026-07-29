@@ -183,14 +183,17 @@ function AppContent() {
   // ── Data fetching ─────────────────────────────────────────────────────
 
   // Series list (for dropdown)
-  const { data: seriesList, refetch: refetchSeriesList } = useApi<TournamentSeries[]>(
-    () => api.listSeries(),
-    [],
-  );
+  const {
+    data: seriesList,
+    loading: seriesListLoading,
+    error: seriesListError,
+    refetch: refetchSeriesList,
+  } = useApi<TournamentSeries[]>(() => api.listSeries(), []);
 
   // Selected series detail (with stages/broadcast days)
   const {
     data: seriesDetail,
+    error: seriesDetailError,
     refetch: refetchSeriesDetail,
   } = useApi<SeriesWithStages | null>(
     () => (selectedSeriesId ? api.getSeries(selectedSeriesId) : Promise.resolve(null)),
@@ -233,36 +236,50 @@ function AppContent() {
   const [pollLoading, setPollLoading] = useState(false);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
 
-  const handleStartPolling = useCallback(async () => {
-    try { await api.startPolling(); } catch { /* ignore */ }
+  // A failed Start/Stop during a broadcast used to look identical to
+  // success (every handler swallowed its error) — data-loss silently.
+  // One strip under the nav now reports any failed ops action.
+  const [opsError, setOpsError] = useState<string | null>(null);
+  const reportOps = useCallback((action: string) => (err: unknown) => {
+    setOpsError(`${action} failed: ${err instanceof Error ? err.message : 'unknown error'}`);
   }, []);
 
+  const handleStartPolling = useCallback(async () => {
+    setOpsError(null);
+    try { await api.startPolling(); } catch (err) { reportOps('Start polling')(err); }
+  }, [reportOps]);
+
   const handleStopPolling = useCallback(async () => {
-    try { await api.stopPolling(); } catch { /* ignore */ }
-  }, []);
+    setOpsError(null);
+    try { await api.stopPolling(); } catch (err) { reportOps('Stop polling')(err); }
+  }, [reportOps]);
 
   const handleTriggerPoll = useCallback(async () => {
     setPollLoading(true);
-    try { await api.triggerPollCycle(); } catch { /* ignore */ }
+    setOpsError(null);
+    try { await api.triggerPollCycle(); } catch (err) { reportOps('Poll cycle')(err); }
     finally { setPollLoading(false); }
-  }, []);
+  }, [reportOps]);
 
   const handleStartDiscovery = useCallback(async () => {
     if (!selectedSeriesId) return;
-    try { await api.startDiscovery(selectedSeriesId); } catch { /* ignore */ }
-  }, [selectedSeriesId]);
+    setOpsError(null);
+    try { await api.startDiscovery(selectedSeriesId); } catch (err) { reportOps('Start discovery')(err); }
+  }, [selectedSeriesId, reportOps]);
 
   const handleStopDiscovery = useCallback(async () => {
     if (!selectedSeriesId) return;
-    try { await api.stopDiscovery(selectedSeriesId); } catch { /* ignore */ }
-  }, [selectedSeriesId]);
+    setOpsError(null);
+    try { await api.stopDiscovery(selectedSeriesId); } catch (err) { reportOps('Stop discovery')(err); }
+  }, [selectedSeriesId, reportOps]);
 
   const handleTriggerDiscovery = useCallback(async () => {
     if (!selectedSeriesId) return;
     setDiscoveryLoading(true);
-    try { await api.triggerDiscovery(selectedSeriesId); } catch { /* ignore */ }
+    setOpsError(null);
+    try { await api.triggerDiscovery(selectedSeriesId); } catch (err) { reportOps('Trigger discovery')(err); }
     finally { setDiscoveryLoading(false); }
-  }, [selectedSeriesId]);
+  }, [selectedSeriesId, reportOps]);
 
   // ── Sidebar: Broadcast day status change ──────────────────────────────
 
@@ -271,10 +288,11 @@ function AppContent() {
   const handleBroadcastDayStatusChange = useCallback(
     async (dayId: string, newStatus: BroadcastStatus) => {
       setBdStatusLoading(dayId);
+      setOpsError(null);
       try {
         await api.updateBroadcastDayStatus(dayId, newStatus);
         refetchSeriesDetail();
-      } catch { /* ignore */ }
+      } catch (err) { reportOps('Day status change')(err); }
       finally { setBdStatusLoading(undefined); }
     },
     [refetchSeriesDetail],
@@ -304,10 +322,10 @@ function AppContent() {
       try {
         await api.updateBroadcastDay(dayId, { broadcast_end: newEnd });
         refetchSeriesDetail();
-      } catch { /* ignore */ }
+      } catch (err) { reportOps('Extend broadcast')(err); }
       finally { setBdStatusLoading(undefined); }
     },
-    [seriesDetail, refetchSeriesDetail],
+    [seriesDetail, refetchSeriesDetail, reportOps],
   );
 
   // ── Sidebar: Channel management ───────────────────────────────────────
@@ -428,6 +446,10 @@ function AppContent() {
     content = <YouTubeKeysPage />;
   } else if (isNotificationsPage) {
     content = <NotificationsSettingsPage />;
+  } else if (isEditorSurface && seriesDetailError && !seriesDetail) {
+    // Mistyped or stale series URL — say so instead of an eternal empty
+    // editor (the /:seriesId route matches ANY unknown root segment).
+    content = <NotFoundPage />;
   } else if (isEditorSurface) {
     content = isMobile ? (
       <EditorMobile
@@ -471,6 +493,8 @@ function AppContent() {
     content = (
       <StartPage
         seriesList={seriesList ?? []}
+        listLoading={seriesListLoading && !seriesList}
+        listError={seriesListError}
         pollingStatus={pollingStatus}
         onSeriesChange={handleSeriesChange}
         onCreate={() => navigate('/new')}
@@ -494,6 +518,31 @@ function AppContent() {
         pollingStatus={pollingStatus}
         wsStatus={isEditorSurface ? (pollingData.wsStatus as ConnectionStatus) : undefined}
       />
+      {opsError && (
+        <div
+          role="alert"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '8px 18px',
+            fontSize: 12.5,
+            color: 'var(--danger)',
+            background: 'color-mix(in oklab, var(--danger) 8%, var(--bg))',
+            borderBottom: '1px solid color-mix(in oklab, var(--danger) 25%, transparent)',
+          }}
+        >
+          <span style={{ flex: 1 }}>{opsError}</span>
+          <button
+            type="button"
+            className="btn btn-xs"
+            onClick={() => setOpsError(null)}
+            style={{ cursor: 'pointer' }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <div style={{ flex: 1, minHeight: 0 }}>{content}</div>
     </div>
   );

@@ -147,8 +147,8 @@ export function DiscoverTrendsTab({
       .then((r) => !cancelled && setEvents(r.events))
       .catch(() => !cancelled && setEvents([]));
     Promise.all([
-      api.getGameTrackerRange(slug, from, to, range.bucketSeconds),
-      api.getGameTrackerBreakdown(slug, from, to),
+      api.getGameTrackerRange(slug, from, to, range.bucketSeconds, platform),
+      api.getGameTrackerBreakdown(slug, from, to, platform),
     ])
       .then(([rangeRes, breakdownRes]) => {
         if (cancelled) return;
@@ -166,7 +166,7 @@ export function DiscoverTrendsTab({
     return () => {
       cancelled = true;
     };
-  }, [slug, range.hours, range.bucketSeconds]);
+  }, [slug, range.hours, range.bucketSeconds, platform]);
 
   useEffect(() => {
     if (!selection) return;

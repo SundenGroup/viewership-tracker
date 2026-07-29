@@ -20,7 +20,7 @@ export function QuickNavCards({ canExplore }: { canExplore: boolean }) {
     {
       to: '/discover',
       title: 'Discover',
-      desc: 'Live game trackers — who is streaming PUBG, GeoGuessr and more on Twitch & Kick right now.',
+      desc: 'Live game trackers — who is streaming your games across Twitch, Kick and YouTube right now.',
       icon: <IconGlobe size={18} />,
       show: true,
     },

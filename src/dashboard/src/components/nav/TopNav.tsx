@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Row, ClutchWordmark, ThemeToggle, IconMenu } from '@/components/design';
 import { useAuth } from '@/hooks/useAuth';
+import * as api from '@/services/api';
 import { useViewportBelow } from '@/hooks/useViewport';
 import { fmtRelative } from '@/design/format';
 import type { ConnectionStatus } from '@/hooks/useWebSocket';
@@ -58,6 +59,29 @@ export function useNavItems(
   const { isAdmin, isEditor } = useAuth();
   const pathname = location.pathname;
 
+  // "Live" should mean ON AIR, not "the series I looked at last". Prefer a
+  // series with a live broadcast day (60s refresh); fall back to remembered
+  // context only when nothing is broadcasting — and say so in the label.
+  const [liveNow, setLiveNow] = useState<{ id: string; short: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      api
+        .getLiveNow()
+        .then((entries) => {
+          if (cancelled) return;
+          const e = entries[0];
+          setLiveNow(e ? { id: e.series.id, short: e.series.short_name || e.series.name } : null);
+        })
+        .catch(() => {});
+    load();
+    const h = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(h);
+    };
+  }, []);
+
   // Remember the last series the user visited so "Live" stays useful
   // when browsing Discover/Settings/Home.
   useEffect(() => {
@@ -80,18 +104,25 @@ export function useNavItems(
     const validLast =
       lastSeries && seriesList.some((s) => s.id === lastSeries) ? lastSeries : null;
     const firstActive = seriesList.find((s) => s.status === 'active')?.id ?? null;
-    const liveTarget = activeSeriesId ?? validLast ?? firstActive;
+    const liveTarget = liveNow?.id ?? activeSeriesId ?? validLast ?? firstActive;
+    const onLive = !!liveTarget && (pathname === `/${liveTarget}` || pathname === `/${liveTarget}/edit`);
 
     const onSettings = pathname.startsWith('/settings') || pathname === '/users';
     const onExplore = pathname.startsWith('/explore');
     const onDiscover = pathname.startsWith('/discover');
-    const onLive = !!liveTarget && (pathname === `/${liveTarget}` || pathname === `/${liveTarget}/edit`);
 
     const items: NavItem[] = [
       { id: 'home', label: 'Home', path: '/', active: pathname === '/' },
     ];
     if (liveTarget) {
-      items.push({ id: 'live', label: 'Live', path: `/${liveTarget}`, active: onLive });
+      const targetSeries = seriesList.find((x) => x.id === liveTarget);
+      const short = liveNow?.id === liveTarget
+        ? liveNow.short
+        : targetSeries?.short_name || targetSeries?.name || null;
+      const label = short
+        ? `Live · ${short.length > 12 ? `${short.slice(0, 12)}…` : short}`
+        : 'Live';
+      items.push({ id: 'live', label, path: `/${liveTarget}`, active: onLive });
     }
     if (isEditor) {
       items.push({
@@ -107,12 +138,12 @@ export function useNavItems(
       items.push({
         id: 'settings',
         label: 'Settings',
-        path: isAdmin ? '/users' : '/settings/notifications',
+        path: isAdmin ? '/settings/users' : '/settings/notifications',
         active: onSettings,
       });
     }
     return items;
-  }, [seriesList, activeSeriesId, pathname, isAdmin, isEditor]);
+  }, [seriesList, activeSeriesId, pathname, isAdmin, isEditor, liveNow]);
 }
 
 export function TopNav({
@@ -264,7 +295,7 @@ export function TopNav({
                     boxShadow: '0 0 6px var(--live)',
                   }}
                 />
-                LIVE
+                POLLING
               </span>
             )}
 

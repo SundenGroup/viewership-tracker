@@ -1395,12 +1395,14 @@ export function getGameTrackerRange(
   from: Date,
   to: Date,
   bucketSeconds = 60,
+  platform?: string,
 ) {
   const params = new URLSearchParams({
     from: from.toISOString(),
     to: to.toISOString(),
     bucketSeconds: String(bucketSeconds),
   });
+  if (platform && platform !== 'all') params.set('platform', platform);
   return request<{
     from: string;
     to: string;
@@ -1409,11 +1411,12 @@ export function getGameTrackerRange(
   }>(`/api/game-trackers/${slug}/snapshots/range?${params.toString()}`);
 }
 
-export function getGameTrackerBreakdown(slug: string, from: Date, to: Date) {
+export function getGameTrackerBreakdown(slug: string, from: Date, to: Date, platform?: string) {
   const params = new URLSearchParams({
     from: from.toISOString(),
     to: to.toISOString(),
   });
+  if (platform && platform !== 'all') params.set('platform', platform);
   return request<{
     from: string;
     to: string;

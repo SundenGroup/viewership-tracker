@@ -20,6 +20,7 @@ export * from './ChannelNameWithLink';
 export * from './RangePill';
 export * from './RangeControl';
 export * from './AsyncStates';
+export * from './ConfirmButton';
 export * from './tableStyles';
 export * from './SettingsShell';
 export * from './PublicLinkButton';

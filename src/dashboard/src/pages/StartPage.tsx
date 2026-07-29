@@ -26,6 +26,10 @@ import type {
 
 export interface StartPageProps {
   seriesList: TournamentSeries[];
+  /** First fetch still in flight — show skeletons, not "No series yet". */
+  listLoading?: boolean;
+  /** Series list failed to load — an outage must not look like an empty account. */
+  listError?: string | null;
   pollingStatus: OrchestratorStatus | null;
   onSeriesChange: (id: string) => void;
   onCreate: () => void;
@@ -35,6 +39,8 @@ type StatusFilter = 'all' | 'active' | 'draft' | 'completed';
 
 export function StartPage({
   seriesList,
+  listLoading = false,
+  listError = null,
   pollingStatus,
   onSeriesChange,
   onCreate,
@@ -292,7 +298,31 @@ export function StartPage({
       </Row>
 
       {/* Grid */}
-      {filtered.length === 0 ? (
+      {listLoading ? (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+            gap: 12,
+          }}
+        >
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="card" style={{ padding: 18, opacity: 0.6 }}>
+              <div style={{ height: 16, width: '60%', borderRadius: 5, background: 'var(--bg-hover)' }} />
+              <div style={{ height: 11, width: '40%', borderRadius: 5, background: 'var(--bg-hover)', marginTop: 12 }} />
+              <div style={{ height: 11, width: '30%', borderRadius: 5, background: 'var(--bg-hover)', marginTop: 7 }} />
+            </div>
+          ))}
+        </div>
+      ) : listError ? (
+        <div
+          role="alert"
+          className="card"
+          style={{ padding: '28px 24px', textAlign: 'center', color: 'var(--danger)', fontSize: 13 }}
+        >
+          Couldn't load your series ({listError}). Refresh to retry.
+        </div>
+      ) : filtered.length === 0 ? (
         <EmptyState
           filter={filter}
           hasAny={seriesList.length > 0}

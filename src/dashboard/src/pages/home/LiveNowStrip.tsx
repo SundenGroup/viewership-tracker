@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate , Link } from 'react-router-dom';
 import { Row, Col, PublicLinkButton, IconBolt } from '@/components/design';
 import { fmtCompact } from '@/design/format';
 import * as api from '@/services/api';
@@ -16,15 +16,26 @@ import * as api from '@/services/api';
 export function LiveNowStrip({ canEdit }: { canEdit: boolean }) {
   const navigate = useNavigate();
   const [entries, setEntries] = useState<api.LiveNowEntry[] | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<boolean | 'error'>(false);
 
   useEffect(() => {
     let cancelled = false;
     const load = () =>
       api
         .getLiveNow()
-        .then((r) => !cancelled && setEntries(r))
-        .catch(() => !cancelled && setFailed(true));
+        .then((r) => {
+          if (cancelled) return;
+          setEntries(r);
+          setFailed(false);
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          // 404 = endpoint doesn't exist on this backend — hide quietly.
+          // Anything else is an incident: say the status is unavailable
+          // rather than silently omitting live events.
+          const notFound = err instanceof Error && err.message.startsWith('404');
+          setFailed(notFound ? true : 'error');
+        });
     load();
     const h = setInterval(load, 15_000);
     return () => {
@@ -33,12 +44,19 @@ export function LiveNowStrip({ canEdit }: { canEdit: boolean }) {
     };
   }, []);
 
-  if (failed) return null; // old backend — hide rather than error
+  if (failed === true) return null; // old backend — hide rather than error
+  if (failed === 'error') {
+    return (
+      <div style={{ fontSize: 12.5, color: 'var(--warn)', marginBottom: 20 }}>
+        Live status unavailable right now.
+      </div>
+    );
+  }
   if (!entries) return null; // first load: stay quiet
   if (entries.length === 0) {
     return (
       <div style={{ fontSize: 12.5, color: 'var(--fg-dim)', marginBottom: 20 }}>
-        Nothing live right now.
+        Nothing live right now — <Link to="/discover" style={{ color: 'var(--red)' }}>see who's streaming your games</Link>.
       </div>
     );
   }

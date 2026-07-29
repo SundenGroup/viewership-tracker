@@ -33,6 +33,7 @@ import {
   IconBolt,
   IconPause,
   IconEdit,
+  ConfirmButton,
 } from '@/components/design';
 import { PLATFORMS, getPlatform } from '@/design/platforms';
 import {
@@ -119,6 +120,7 @@ export function EditorDesktop({
     return seriesDetail.stages.flatMap((s) => s.broadcast_days);
   }, [seriesDetail]);
 
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
   const activeDay = useMemo(() => {
     if (selectedDayId) return allDays.find((d) => d.id === selectedDayId) ?? null;
@@ -369,7 +371,6 @@ export function EditorDesktop({
     return nowTick - new Date(activeDay.broadcast_start).getTime();
   }, [activeDay, nowTick]);
 
-  const pollInterval = 30; // seconds, display only
 
   // Top platform by CCV
   const topPlatform = model.platformRows[0];
@@ -702,25 +703,6 @@ export function EditorDesktop({
             )}
           </Row>
           <Row gap={8}>
-            <button
-              type="button"
-              className="btn"
-              style={{
-                minWidth: 220,
-                justifyContent: 'space-between',
-                background: 'var(--bg-card)',
-              }}
-              disabled
-              title="Command palette — coming soon"
-            >
-              <Row gap={8}>
-                <IconSearch size={13} />
-                <span style={{ color: 'var(--fg-dim)', fontSize: 12 }}>
-                  Search, commands…
-                </span>
-              </Row>
-              <span className="kbd">⌘K</span>
-            </button>
             <PublicLinkButton variant="button" canEdit series={series} />
             <button
               type="button"
@@ -769,7 +751,9 @@ export function EditorDesktop({
             <div className="eyebrow">Concurrent viewers — live</div>
             <Row gap={6}>
               <Pill tone="live">● {model.liveChannelCount} channels live</Pill>
-              <Pill>⟳ {pollInterval}s poll</Pill>
+              {pollingStatus?.lastPollTime && (
+                <Pill>⟳ polled {fmtRelative(pollingStatus.lastPollTime)}</Pill>
+              )}
               {activeDay && activeDay.status === 'live' && broadcastDuration != null && (
                 <Pill tone="info">
                   {activeDay.label} · {fmtDuration(broadcastDuration)}
@@ -1379,14 +1363,14 @@ export function EditorDesktop({
                         >
                           Extend +30m
                         </button>
-                        <button
+                        <ConfirmButton
                           className="btn btn-xs"
                           style={{ flex: 1, color: 'var(--danger)' }}
-                          type="button"
-                          onClick={() => onBroadcastDayStatusChange(activeDay.id, 'completed')}
+                          onConfirm={() => onBroadcastDayStatusChange(activeDay.id, 'completed')}
+                          confirmLabel="End broadcast?"
                         >
                           End now
-                        </button>
+                        </ConfirmButton>
                       </>
                     )}
                   </Row>
@@ -1440,12 +1424,15 @@ export function EditorDesktop({
                       <PlatformPip id={p.id} size={8} />
                       <span
                         style={{
-                          fontSize: 9,
+                          fontSize: 8.5,
                           color: 'var(--fg-dim)',
                           fontFamily: 'var(--font-mono)',
+                          maxWidth: '100%',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
                         }}
                       >
-                        OK
+                        {p.name}
                       </span>
                     </div>
                   ))}
@@ -1461,14 +1448,14 @@ export function EditorDesktop({
                     <IconBolt size={11} /> {pollLoading ? 'Polling…' : 'Poll now'}
                   </button>
                   {pollingStatus?.state === 'running' ? (
-                    <button
+                    <ConfirmButton
                       className="btn btn-xs"
                       style={{ flex: 1 }}
-                      type="button"
-                      onClick={onStopPolling}
+                      onConfirm={onStopPolling}
+                      confirmLabel="Stop ALL polling?"
                     >
-                      <IconPause size={11} /> Pause
-                    </button>
+                      <IconPause size={11} /> Pause all
+                    </ConfirmButton>
                   ) : (
                     <button
                       className="btn btn-xs"
@@ -1487,7 +1474,9 @@ export function EditorDesktop({
             <RailCollapse eyebrow="Adapter health" storageKey="ct-rail-adapter">
               <Col gap={4}>
                 {[
-                  { name: 'Twitch', status: 'ok', lat: '—' },
+                  // ONLY signals we actually measure. The old panel padded
+                  // this list with hardcoded status:'ok' rows for every API
+                  // platform — during an outage it said everything was fine.
                   // Live relay telemetry — real push ages, not assumptions.
                   // "DB freshness ≠ relay healthy."
                   relayRow('Twitch browser', relayHealth?.twitch),
@@ -1496,11 +1485,7 @@ export function EditorDesktop({
                     status: ytQuota && ytQuota.percentage > 75 ? 'warn' : 'ok',
                     lat: ytQuota ? `quota ${ytQuota.percentage.toFixed(0)}%` : '—',
                   },
-                  { name: 'Kick', status: 'ok', lat: '—' },
                   relayRow('TikTok relay', relayHealth?.tiktok),
-                  { name: 'Steam', status: 'ok', lat: '—' },
-                  { name: 'Chzzk', status: 'ok', lat: '—' },
-                  { name: 'Soop', status: 'ok', lat: '—' },
                 ].map((a) => (
                   <Row
                     key={a.name}
@@ -1555,6 +1540,11 @@ export function EditorDesktop({
 
             {/* Discovery control (v6) */}
             <RailCollapse eyebrow="Discovery" storageKey="ct-rail-discovery">
+              {discoveryError && (
+                <div role="alert" style={{ fontSize: 11, color: 'var(--danger)', marginBottom: 6 }}>
+                  {discoveryError}
+                </div>
+              )}
               <div
                 className="card"
                 style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}
@@ -1648,7 +1638,7 @@ export function EditorDesktop({
                     type="button"
                     className="btn btn-xs"
                     style={{ flex: 1 }}
-                    onClick={() => api.triggerDiscovery(seriesId).catch(() => {})}
+                    onClick={() => { setDiscoveryError(null); api.triggerDiscovery(seriesId).catch((e: Error) => setDiscoveryError(`Trigger failed: ${e.message}`)); }}
                   >
                     <IconBolt size={11} /> Trigger now
                   </button>
@@ -1657,7 +1647,7 @@ export function EditorDesktop({
                       type="button"
                       className="btn btn-xs"
                       style={{ flex: 1 }}
-                      onClick={() => api.stopDiscovery(seriesId).catch(() => {})}
+                      onClick={() => { setDiscoveryError(null); api.stopDiscovery(seriesId).catch((e: Error) => setDiscoveryError(`Stop failed: ${e.message}`)); }}
                     >
                       <IconPause size={11} /> Pause
                     </button>
@@ -1666,7 +1656,7 @@ export function EditorDesktop({
                       type="button"
                       className="btn btn-xs"
                       style={{ flex: 1 }}
-                      onClick={() => api.startDiscovery(seriesId).catch(() => {})}
+                      onClick={() => { setDiscoveryError(null); api.startDiscovery(seriesId).catch((e: Error) => setDiscoveryError(`Start failed: ${e.message}`)); }}
                     >
                       Start
                     </button>
