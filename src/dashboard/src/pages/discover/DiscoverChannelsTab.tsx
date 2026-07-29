@@ -1,14 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import * as api from '@/services/api';
-import { Row, RangePill, Section, IconFilter, IconDownload } from '@/components/design';
+import {
+  Row,
+  RangePill,
+  Section,
+  IconFilter,
+  IconDownload,
+  RangeControl,
+  LoadingBlock,
+  EmptyState,
+  resolveRange,
+  parseRangeKey,
+  type RangeKey,
+} from '@/components/design';
 import { downloadCsv, csvStamp } from '@/utils/csv';
 import { LeaderboardTable, FreshnessIndicator, type LeaderboardRow } from './DiscoverDetailPage';
 
 const POLL_INTERVAL_MS = 30_000;
 type PlatformFilter = 'all' | 'twitch' | 'kick' | 'youtube';
-type DateMode = 'now' | '24h' | '7d' | 'custom';
 type SortKey = 'ccv' | 'lang';
+
+/** Every window this surface supports — shares the ?range vocabulary with Trends. */
+const RANGE_CHOICES: RangeKey[] = ['now', '1h', '6h', '24h', '7d', '30d', 'custom'];
 
 const PAGE_SIZE = 50;
 
@@ -32,10 +46,10 @@ export function DiscoverChannelsTab({
 
   const [lang, setLang] = useState<string>(() => searchParams.get('language') ?? 'all');
   const [sort, setSort] = useState<SortKey>('ccv');
-  const [dateMode, setDateMode] = useState<DateMode>(() => {
-    const m = searchParams.get('mode');
-    return m === '24h' || m === '7d' || m === 'custom' ? m : 'now';
-  });
+  const [dateMode, setDateMode] = useState<RangeKey>(() =>
+    // `mode` is the pre-unification param name — keep old links working.
+    parseRangeKey(searchParams.get('range') ?? searchParams.get('mode'), RANGE_CHOICES, 'now'),
+  );
   const [fromDate, setFromDate] = useState<string>(() => searchParams.get('from') ?? '');
   const [toDate, setToDate] = useState<string>(() => searchParams.get('to') ?? '');
   const [page, setPage] = useState(() => {
@@ -55,7 +69,8 @@ export function DiscoverChannelsTab({
           if (value === null || value === '') p.delete(key);
           else p.set(key, value);
         };
-        setOrDelete('mode', dateMode === 'now' ? null : dateMode);
+        p.delete('mode'); // legacy param, superseded by ?range
+        setOrDelete('range', dateMode === 'now' ? null : dateMode);
         setOrDelete('from', dateMode === 'custom' ? fromDate : null);
         setOrDelete('to', dateMode === 'custom' ? toDate : null);
         setOrDelete('language', lang === 'all' ? null : lang);
@@ -71,18 +86,10 @@ export function DiscoverChannelsTab({
 
   // Resolve the [from, to] window for range modes. Returns null for 'now'
   // (live mode) or an incomplete custom selection.
-  const range = useMemo<{ from: Date; to: Date } | null>(() => {
-    if (dateMode === 'now') return null;
-    const now = new Date();
-    if (dateMode === '24h') return { from: new Date(now.getTime() - 24 * 3600_000), to: now };
-    if (dateMode === '7d') return { from: new Date(now.getTime() - 7 * 24 * 3600_000), to: now };
-    // custom: full days, local time
-    if (!fromDate || !toDate) return null;
-    const from = new Date(`${fromDate}T00:00:00`);
-    const to = new Date(`${toDate}T23:59:59`);
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) return null;
-    return { from, to };
-  }, [dateMode, fromDate, toDate]);
+  const range = useMemo(
+    () => resolveRange(dateMode, fromDate, toDate),
+    [dateMode, fromDate, toDate],
+  );
 
   const rangeKey = range ? `${range.from.toISOString()}|${range.to.toISOString()}` : 'now';
 
@@ -217,7 +224,7 @@ export function DiscoverChannelsTab({
     if (range) {
       downloadCsv(
         `${slug}-channels-range-${csvStamp()}.csv`,
-        ['rank', 'channel', 'platform', 'language', 'peak_ccv', 'avg_ccv', 'hours_live', 'days_streamed'],
+        ['rank', 'channel', 'platform', 'language', 'peak_ccv', 'avg_ccv', 'hours_watched', 'hours_live', 'days_streamed'],
         filtered.map((r, i) => [
           i + 1 + page * PAGE_SIZE,
           r.channel?.display_name ?? r.channel_id,
@@ -225,6 +232,10 @@ export function DiscoverChannelsTab({
           r.language,
           r.concurrent_viewers,
           r.avg_ccv,
+          // hours watched = avg CCV × airtime — the sum of everyone's minutes
+          r.avg_ccv != null && r.minutes_live != null
+            ? ((r.avg_ccv * r.minutes_live) / 60).toFixed(1)
+            : null,
           r.minutes_live != null ? (r.minutes_live / 60).toFixed(1) : null,
           r.days_streamed,
         ]),
@@ -270,33 +281,15 @@ export function DiscoverChannelsTab({
     >
       {/* Toolbar: date range + language + sort */}
       <Row gap={14} align="center" style={{ flexWrap: 'wrap' }}>
-        <Row gap={6} align="center">
-          <span className="eyebrow" style={{ fontSize: 10, color: 'var(--fg-muted)' }}>
-            When
-          </span>
-          {(['now', '24h', '7d', 'custom'] as const).map((d) => (
-            <RangePill key={d} active={dateMode === d} onClick={() => setDateMode(d)}>
-              {d === 'now' ? 'Now' : d === 'custom' ? 'Custom' : d}
-            </RangePill>
-          ))}
-          {dateMode === 'custom' && (
-            <Row gap={4} align="center">
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
-                style={dateInputStyle}
-              />
-              <span style={{ color: 'var(--fg-dim)', fontSize: 12 }}>→</span>
-              <input
-                type="date"
-                value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
-                style={dateInputStyle}
-              />
-            </Row>
-          )}
-        </Row>
+        <RangeControl
+          options={RANGE_CHOICES}
+          value={dateMode}
+          onChange={setDateMode}
+          customFrom={fromDate}
+          customTo={toDate}
+          onCustomFrom={setFromDate}
+          onCustomTo={setToDate}
+        />
 
         <Row gap={6} align="center">
           <span className="eyebrow" style={{ fontSize: 10, color: 'var(--fg-muted)' }}>
@@ -338,13 +331,26 @@ export function DiscoverChannelsTab({
 
       {/* Table sits within the section padding (no edge bleed) so its left
           and right line up with the header + the rest of the page — matching
-          the Live/overview leaderboard. */}
-      <LeaderboardTable
-        rows={filtered}
-        trackerSlug={slug}
-        metricLabel={range ? 'Peak viewers' : 'Viewers'}
-        showRangeStats={!!range}
-      />
+          the Live/overview leaderboard. Loading first, empty only after the
+          fetch actually returned empty. */}
+      {rows === null && !error && !(dateMode === 'custom' && !range) ? (
+        <LoadingBlock />
+      ) : filtered.length === 0 && rows !== null ? (
+        <EmptyState>
+          {range
+            ? 'No channels streamed in this window' +
+              (platform !== 'all' || lang !== 'all' ? ' with these filters.' : '.')
+            : 'No channels are live right now' +
+              (platform !== 'all' || lang !== 'all' ? ' with these filters.' : '.')}
+        </EmptyState>
+      ) : (
+        <LeaderboardTable
+          rows={filtered}
+          trackerSlug={slug}
+          metricLabel={range ? 'Peak viewers' : 'Viewers'}
+          showRangeStats={!!range}
+        />
+      )}
 
       {/* Pagination — range mode only (live "now" is a single small set). */}
       {range && (page > 0 || hasNextPage) && (

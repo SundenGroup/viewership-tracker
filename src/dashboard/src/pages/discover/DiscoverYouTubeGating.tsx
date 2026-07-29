@@ -24,6 +24,7 @@ import {
   tdStyle,
   numTdStyle,
   IconExternal,
+  LoadingBlock,
 } from '@/components/design';
 import { fmtCompact, fmtRelative } from '@/design/format';
 
@@ -175,12 +176,16 @@ export function DiscoverYouTubeGating({
   return (
     <Section
       title="YouTube channel review"
-      eyebrow="GATING"
+      eyebrow="ADMIN · REVIEW QUEUE"
       right={
         <Row gap={6} align="center" wrap>
           {(['pending', 'allow', 'deny'] as Tab[]).map((t) => (
             <RangePill key={t} active={tab === t} onClick={() => setTab(t)}>
-              {t === 'pending' ? `Review ${counts.pending}` : `${t} ${counts[t]}`}
+              {t === 'pending'
+                ? `Pending ${counts.pending}`
+                : t === 'allow'
+                  ? `Allowed ${counts.allow}`
+                  : `Excluded ${counts.deny}`}
             </RangePill>
           ))}
           <RangePill active={editing} onClick={() => (editing ? setEditing(false) : openEditor())}>
@@ -261,6 +266,8 @@ export function DiscoverYouTubeGating({
 
       {error && <div style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
 
+      {!data && !error && <LoadingBlock minHeight={120} />}
+
       {data && data.rows.length === 0 && (
         <div style={{ fontSize: 12, color: 'var(--fg-muted)', padding: '10px 0' }}>
           {tab === 'pending'
@@ -275,9 +282,9 @@ export function DiscoverYouTubeGating({
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
                 <th style={thStyle}>Channel</th>
-                <th style={thStyle}>Last seen streaming</th>
+                <th style={thStyle}>Sample stream</th>
                 <th style={{ ...thStyle, textAlign: 'right', width: 90 }}>Peak seen</th>
-                <th style={{ ...thStyle, width: 96 }}>Seen</th>
+                <th style={{ ...thStyle, width: 96 }}>Last seen</th>
                 <th style={{ ...thStyle, textAlign: 'right', width: 240 }}>Decision</th>
               </tr>
             </thead>

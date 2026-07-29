@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import * as api from '@/services/api';
 import type { GameTrackerSearchRow } from '@/services/api';
 import {
+  RangePill,
   Row,
   Col,
   Section,
@@ -101,26 +102,13 @@ export function DiscoverSearchResults({ slug, query }: { slug: string; query: st
               )}
             </span>
           )}
-          <select
-            value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
-            aria-label="Search window"
-            style={{
-              padding: '4px 8px',
-              fontSize: 11,
-              borderRadius: 6,
-              border: '1px solid var(--border)',
-              background: 'var(--bg-sunken)',
-              color: 'var(--fg)',
-              cursor: 'pointer',
-            }}
-          >
+          <Row gap={4} align="center" aria-label="Search window">
             {DAY_OPTIONS.map((d) => (
-              <option key={d} value={d}>
-                Last {d} days
-              </option>
+              <RangePill key={d} active={days === d} onClick={() => setDays(d)}>
+                {d}d
+              </RangePill>
             ))}
-          </select>
+          </Row>
           <button
             type="button"
             onClick={() => navigate(`/discover/${slug}`)}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate , useSearchParams } from 'react-router-dom';
 import {
   LineChart,
   Line,
@@ -130,7 +130,25 @@ export function HealthGradeChip({ grade, score }: { grade: string; score?: numbe
  */
 export function DiscoverChannelPage() {
   const { slug, channelId } = useParams<{ slug: string; channelId: string }>();
-  const [rangeKey, setRangeKey] = useState<RangePreset>('24h');
+  // ?range mirrors the Trends/Channels vocabulary so a pasted channel link
+  // reopens at the window the sender was looking at.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [rangeKey, setRangeKeyState] = useState<RangePreset>(() => {
+    const r = searchParams.get('range');
+    return r === '7d' || r === '30d' ? r : '24h';
+  });
+  const setRangeKey = (k: RangePreset) => {
+    setRangeKeyState(k);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (k === '24h') p.delete('range');
+        else p.set('range', k);
+        return p;
+      },
+      { replace: true },
+    );
+  };
   const [data, setData] = useState<GameTrackerChannelTimelineResponse | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(true);
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
