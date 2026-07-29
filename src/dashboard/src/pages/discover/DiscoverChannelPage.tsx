@@ -44,9 +44,9 @@ import { Avatar, FreshnessIndicator } from './DiscoverDetailPage';
 type RangePreset = '24h' | '7d' | '30d';
 
 const RANGES: Record<RangePreset, { hours: number; bucketSeconds: number; label: string }> = {
-  '24h': { hours: 24, bucketSeconds: 300, label: '24H' },
-  '7d': { hours: 24 * 7, bucketSeconds: 1800, label: '7D' },
-  '30d': { hours: 24 * 30, bucketSeconds: 3600, label: '30D' },
+  '24h': { hours: 24, bucketSeconds: 300, label: '24h' },
+  '7d': { hours: 24 * 7, bucketSeconds: 1800, label: '7d' },
+  '30d': { hours: 24 * 30, bucketSeconds: 3600, label: '30d' },
 };
 
 /** One copy of the evidence-gate copy (channel pill + stream page). */

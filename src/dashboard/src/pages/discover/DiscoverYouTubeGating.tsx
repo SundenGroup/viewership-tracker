@@ -29,7 +29,16 @@ import { fmtCompact, fmtRelative } from '@/design/format';
 
 type Tab = api.YouTubeGatingDecision;
 
-export function DiscoverYouTubeGating({ slug }: { slug: string }) {
+export function DiscoverYouTubeGating({
+  slug,
+  expanded = true,
+  onExpand,
+}: {
+  slug: string;
+  /** False on any non-YouTube filter — collapses to a one-line nudge. */
+  expanded?: boolean;
+  onExpand?: () => void;
+}) {
   const [tab, setTab] = useState<Tab>('pending');
   const [data, setData] = useState<api.YouTubeGatingResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -129,6 +138,39 @@ export function DiscoverYouTubeGating({ slug }: { slug: string }) {
       <div style={{ fontSize: 10.5, color: 'var(--fg-dim)', marginTop: 3 }}>{hint}</div>
     </div>
   );
+
+  // Reviewing YouTube channels has nothing to do with the Twitch or Kick
+  // board, so the panel only belongs under the YouTube filter. It still has
+  // to be FINDABLE from elsewhere, though — an unworked queue is silently
+  // uncounted viewership — so it leaves a one-line marker behind.
+  if (!expanded) {
+    if (counts.pending === 0) return null;
+    return (
+      <button
+        type="button"
+        onClick={onExpand}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          width: '100%',
+          textAlign: 'left',
+          padding: '9px 12px',
+          fontSize: 12,
+          cursor: 'pointer',
+          borderRadius: 8,
+          color: 'var(--fg-muted)',
+          background: 'var(--bg-sunken)',
+          border: '1px solid var(--border)',
+        }}
+      >
+        <span style={{ color: 'var(--warn)', fontWeight: 600 }}>{counts.pending}</span>
+        YouTube {counts.pending === 1 ? 'channel is' : 'channels are'} waiting for review — not
+        being counted until you decide.
+        <span style={{ marginLeft: 'auto', color: 'var(--fg-dim)' }}>Review →</span>
+      </button>
+    );
+  }
 
   return (
     <Section

@@ -312,7 +312,13 @@ export function DiscoverDetailPage() {
           {tab === 'trends' && <DiscoverTrendsTab slug={slug} platform={platform} />}
           {tab === 'channels' && (
             <Col gap={16}>
-              {isAdmin && detail.youtube_enabled && <DiscoverYouTubeGating slug={slug} />}
+              {isAdmin && detail.youtube_enabled && (
+                <DiscoverYouTubeGating
+                  slug={slug}
+                  expanded={platform === 'youtube'}
+                  onExpand={() => setPlatform('youtube')}
+                />
+              )}
               <DiscoverChannelsTab slug={slug} platform={platform} onPlatformChange={setPlatform} />
             </Col>
           )}
