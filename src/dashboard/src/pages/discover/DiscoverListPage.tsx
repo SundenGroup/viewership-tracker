@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as api from '@/services/api';
 import type { GameTracker } from '@/services/api';
@@ -11,17 +11,23 @@ import {
   IconPlus,
   IconBolt,
 } from '@/components/design';
+import { fmtCompact } from '@/design/format';
 
 /**
  * /discover — landing page listing all game trackers.
  *
  * Grid of card-style tiles. Empty state guides admin to /discover/admin/new.
  */
+interface TrackerPulse {
+  buckets: Array<{ ts: string; total_ccv: number }>;
+}
+
 export function DiscoverListPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const [trackers, setTrackers] = useState<GameTracker[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pulse, setPulse] = useState<Record<string, TrackerPulse | null>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -37,6 +43,28 @@ export function DiscoverListPage() {
       cancelled = true;
     };
   }, []);
+
+  // Portfolio pulse — a 7d hourly series per tracker so the landing page
+  // compares games instead of listing configs. Best-effort per card.
+  useEffect(() => {
+    if (!trackers?.length) return;
+    let cancelled = false;
+    const to = new Date();
+    const from = new Date(to.getTime() - 7 * 24 * 3600_000);
+    for (const t of trackers) {
+      api
+        .getGameTrackerRange(t.slug, from, to, 3600)
+        .then((r) => {
+          if (!cancelled) setPulse((prev) => ({ ...prev, [t.slug]: { buckets: r.buckets } }));
+        })
+        .catch(() => {
+          if (!cancelled) setPulse((prev) => ({ ...prev, [t.slug]: null }));
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [trackers]);
 
   const isAdmin = auth.user?.role === 'admin';
 
@@ -58,7 +86,7 @@ export function DiscoverListPage() {
             Discover
           </h1>
           <p style={{ color: 'var(--fg-muted)', fontSize: 13, margin: 0 }}>
-            Continuous viewership tracking per game on Twitch and Kick.
+            Continuous viewership tracking per game across Twitch, Kick and YouTube.
           </p>
         </Col>
         <Row gap={8} align="center">
@@ -172,7 +200,7 @@ export function DiscoverListPage() {
                 </div>
                 <Row gap={6} align="center">
                   <Pill tone={t.status === 'active' ? 'live' : 'default'}>
-                    {t.status === 'active' ? '● Live' : t.status.charAt(0).toUpperCase() + t.status.slice(1)}
+                    {t.status === 'active' ? '● Tracking' : t.status.charAt(0).toUpperCase() + t.status.slice(1)}
                   </Pill>
                   {isAdmin && (
                     <button
@@ -211,6 +239,7 @@ export function DiscoverListPage() {
                   </Row>
                 )}
               </Col>
+              <TrackerPulseStrip pulse={pulse[t.slug]} />
               {isAdmin && (
                 <Row gap={10} style={{ marginTop: 12, fontSize: 11, color: 'var(--fg-dim)' }}>
                   <span>poll {t.polling_interval_seconds}s</span>
@@ -223,5 +252,69 @@ export function DiscoverListPage() {
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * 7-day pulse for one tracker card: viewers now, 24h/7d peaks, and an
+ * hourly sparkline. Turns the Discover landing page into a portfolio view
+ * — three games comparable at a glance — instead of a list of configs.
+ */
+function TrackerPulseStrip({ pulse }: { pulse: TrackerPulse | null | undefined }) {
+  const stats = useMemo(() => {
+    const buckets = pulse?.buckets ?? [];
+    if (buckets.length === 0) return null;
+    const now = buckets[buckets.length - 1]?.total_ccv ?? 0;
+    const last24 = buckets.slice(-24);
+    const peak24 = last24.reduce((m, b) => Math.max(m, b.total_ccv), 0);
+    const peak7d = buckets.reduce((m, b) => Math.max(m, b.total_ccv), 0);
+    return { now, peak24, peak7d, buckets };
+  }, [pulse]);
+
+  if (pulse === undefined) {
+    return <div style={{ height: 62, marginTop: 12, borderRadius: 6, background: 'var(--bg-hover)', opacity: 0.5 }} />;
+  }
+  if (pulse === null || !stats) return null;
+
+  const W = 260;
+  const H = 30;
+  const max = Math.max(stats.peak7d, 1);
+  const pts = stats.buckets
+    .map((b, i) => {
+      const x = (i / Math.max(stats.buckets.length - 1, 1)) * W;
+      const y = H - (b.total_ccv / max) * (H - 2) - 1;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+
+  return (
+    <Col gap={8} style={{ marginTop: 14 }}>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        style={{ width: '100%', height: H, display: 'block' }}
+        aria-label="7-day viewership sparkline"
+        role="img"
+      >
+        <polyline
+          points={pts}
+          fill="none"
+          stroke="var(--red)"
+          strokeWidth="1.5"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <Row gap={14} style={{ fontSize: 11.5, color: 'var(--fg-muted)' }} wrap>
+        <span>
+          <b style={{ color: 'var(--fg)', fontVariantNumeric: 'tabular-nums' }}>{fmtCompact(stats.now)}</b> now
+        </span>
+        <span>
+          <b style={{ color: 'var(--fg)', fontVariantNumeric: 'tabular-nums' }}>{fmtCompact(stats.peak24)}</b> 24h peak
+        </span>
+        <span>
+          <b style={{ color: 'var(--fg)', fontVariantNumeric: 'tabular-nums' }}>{fmtCompact(stats.peak7d)}</b> 7d peak
+        </span>
+      </Row>
+    </Col>
   );
 }
