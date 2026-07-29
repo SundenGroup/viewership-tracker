@@ -46,8 +46,14 @@ router.get('/:slug', async (req: Request, res: Response, next: NextFunction) => 
 
 // ── Admin CRUD ─────────────────────────────────────────────────────────
 
+const RESERVED_SLUGS = new Set(['admin', 'new']);
+
 router.post('/', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
+    if (RESERVED_SLUGS.has(String((req.body ?? {}).slug ?? '').toLowerCase())) {
+      res.status(400).json({ error: 'That slug is reserved' });
+      return;
+    }
     const { name, slug } = req.body;
     if (!name || !slug || typeof name !== 'string' || typeof slug !== 'string') {
       res.status(400).json({ error: 'name and slug are required' });
@@ -394,7 +400,10 @@ router.get('/:slug/snapshots/range', async (req: Request, res: Response, next: N
       return;
     }
 
-    const buckets = await GameTrackerSnapshotModel.rangeAggregate(tracker.id, fromTs, toTs, bucketSeconds);
+    const platform = req.query.platform ? String(req.query.platform) : null;
+    const buckets = await GameTrackerSnapshotModel.rangeAggregate(
+      tracker.id, fromTs, toTs, bucketSeconds, platform,
+    );
     res.json({ from: fromTs, to: toTs, bucket_seconds: bucketSeconds, buckets });
   } catch (err) {
     next(err);
@@ -441,9 +450,10 @@ router.get('/:slug/breakdown', async (req: Request, res: Response, next: NextFun
     }
     const fromTs = req.query.from ? new Date(String(req.query.from)) : new Date(Date.now() - 24 * 60 * 60_000);
     const toTs = req.query.to ? new Date(String(req.query.to)) : new Date();
+    const platformFilter = req.query.platform ? String(req.query.platform) : null;
     const [platform, language] = await Promise.all([
-      GameTrackerSnapshotModel.platformBreakdown(tracker.id, fromTs, toTs),
-      GameTrackerSnapshotModel.languageBreakdown(tracker.id, fromTs, toTs),
+      GameTrackerSnapshotModel.platformBreakdown(tracker.id, fromTs, toTs, platformFilter),
+      GameTrackerSnapshotModel.languageBreakdown(tracker.id, fromTs, toTs, platformFilter),
     ]);
     res.json({ from: fromTs, to: toTs, platform, language });
   } catch (err) {

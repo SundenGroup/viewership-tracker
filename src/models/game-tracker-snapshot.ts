@@ -61,7 +61,14 @@ export async function rangeAggregate(
   fromTs: Date,
   toTs: Date,
   bucketSeconds = 60,
+  platform?: string | null,
 ): Promise<Array<{ ts: Date; total_ccv: number; stream_count: number }>> {
+  // Optional platform scope so the Trends chart honours the page filter —
+  // snapshots carry platform directly, no join needed.
+  const platformSql = platform ? 'AND platform = ?' : '';
+  const params: unknown[] = platform
+    ? [gameTrackerId, fromTs, toTs, platform, `${bucketSeconds} seconds`, fromTs]
+    : [gameTrackerId, fromTs, toTs, `${bucketSeconds} seconds`, fromTs];
   const rows = await db.raw<{
     rows: Array<{ ts: Date; total_ccv: string | null; stream_count: string | null }>;
   }>(
@@ -75,6 +82,7 @@ export async function rangeAggregate(
       WHERE game_tracker_id = ?
         AND "timestamp" >= ?
         AND "timestamp" < ?
+        ${platformSql}
       GROUP BY minute_ts
     )
     SELECT
@@ -85,7 +93,7 @@ export async function rangeAggregate(
     GROUP BY ts
     ORDER BY ts ASC
     `,
-    [gameTrackerId, fromTs, toTs, `${bucketSeconds} seconds`, fromTs],
+    params,
   );
   return rows.rows.map((r) => ({
     ts: r.ts,
@@ -270,6 +278,7 @@ export async function languageBreakdown(
   gameTrackerId: string,
   fromTs: Date,
   toTs: Date,
+  platform?: string | null,
 ): Promise<Array<{ language: string | null; total_ccv_minutes: number; peak: number }>> {
   // pg returns SUM()/MAX() of integer columns as strings — coerce, or JSON
   // consumers end up string-concatenating totals (the 0.0% breakdown bug).
@@ -280,6 +289,9 @@ export async function languageBreakdown(
     .where('game_tracker_id', gameTrackerId)
     .where('timestamp', '>=', fromTs)
     .where('timestamp', '<', toTs)
+    .modify((q) => {
+      if (platform) q.where('platform', platform);
+    })
     .groupBy('language')
     .orderBy('total_ccv_minutes', 'desc');
   return (rows as Array<{ language: string | null; total_ccv_minutes: unknown; peak: unknown }>).map((r) => ({
@@ -489,6 +501,7 @@ export async function platformBreakdown(
   gameTrackerId: string,
   fromTs: Date,
   toTs: Date,
+  platform?: string | null,
 ): Promise<Array<{ platform: string; total_ccv_minutes: number; peak: number }>> {
   // Same coercion as languageBreakdown — pg SUM()/MAX() arrive as strings.
   const rows = await db(TABLE)
@@ -498,6 +511,9 @@ export async function platformBreakdown(
     .where('game_tracker_id', gameTrackerId)
     .where('timestamp', '>=', fromTs)
     .where('timestamp', '<', toTs)
+    .modify((q) => {
+      if (platform) q.where('platform', platform);
+    })
     .groupBy('platform')
     .orderBy('total_ccv_minutes', 'desc');
   return (rows as Array<{ platform: string; total_ccv_minutes: unknown; peak: unknown }>).map((r) => ({
