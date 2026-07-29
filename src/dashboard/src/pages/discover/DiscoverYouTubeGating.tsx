@@ -34,6 +34,9 @@ export function DiscoverYouTubeGating({ slug }: { slug: string }) {
   const [data, setData] = useState<api.YouTubeGatingResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<api.YouTubeTrackerConfig>({});
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -67,6 +70,66 @@ export function DiscoverYouTubeGating({ slug }: { slug: string }) {
   const counts = data?.counts ?? { allow: 0, deny: 0, pending: 0 };
   const cfg = data?.config ?? {};
 
+  const openEditor = () => {
+    setDraft({ ...cfg });
+    setEditing(true);
+  };
+
+  const saveConfig = async () => {
+    setSaving(true);
+    try {
+      await api.saveYouTubeConfig(slug, draft);
+      setEditing(false);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save rules');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** Comma-separated field ⇄ string[]. Splitting on save keeps typing free. */
+  const listField = (
+    key: 'include' | 'strongPhrases' | 'strongTags' | 'exclude' | 'queries',
+    label: string,
+    hint: string,
+  ) => (
+    <div key={key}>
+      <label style={lbl}>{label}</label>
+      <input
+        type="text"
+        value={(draft[key] ?? []).join(', ')}
+        onChange={(e) =>
+          setDraft((d) => ({ ...d, [key]: e.target.value.split(',').map((v) => v.trim()) }))
+        }
+        style={inp}
+      />
+      <div style={{ fontSize: 10.5, color: 'var(--fg-dim)', marginTop: 3 }}>{hint}</div>
+    </div>
+  );
+
+  const numField = (
+    key: 'autoAllowWeakBelowCcv' | 'alwaysReviewAboveCcv' | 'discoveryIntervalSeconds' | 'maxRoster',
+    label: string,
+    hint: string,
+  ) => (
+    <div key={key}>
+      <label style={lbl}>{label}</label>
+      <input
+        type="number"
+        value={draft[key] ?? ''}
+        onChange={(e) =>
+          setDraft((d) => ({
+            ...d,
+            [key]: e.target.value === '' ? undefined : Number(e.target.value),
+          }))
+        }
+        style={inp}
+      />
+      <div style={{ fontSize: 10.5, color: 'var(--fg-dim)', marginTop: 3 }}>{hint}</div>
+    </div>
+  );
+
   return (
     <Section
       title="YouTube channel review"
@@ -78,6 +141,9 @@ export function DiscoverYouTubeGating({ slug }: { slug: string }) {
               {t === 'pending' ? `Review ${counts.pending}` : `${t} ${counts[t]}`}
             </RangePill>
           ))}
+          <RangePill active={editing} onClick={() => (editing ? setEditing(false) : openEditor())}>
+            {editing ? 'Close rules' : 'Edit rules'}
+          </RangePill>
         </Row>
       }
     >
@@ -94,16 +160,62 @@ export function DiscoverYouTubeGating({ slug }: { slug: string }) {
         <b>Track matching</b> — a variety streamer: only counts their streams whose title
         matches this game. <b>Track all</b> — a dedicated channel (an org or tournament
         channel): counts everything they stream in Gaming.
-        {(cfg.include?.length || cfg.exclude?.length) && (
+        {!editing && (cfg.include?.length || cfg.exclude?.length) ? (
           <>
-            {' '}Rules —{' '}
-            {cfg.include?.length ? <>title must contain <b>{cfg.include.join(', ')}</b></> : null}
-            {cfg.include?.length && cfg.exclude?.length ? '; ' : ''}
-            {cfg.exclude?.length ? <>auto-denied if it contains <b>{cfg.exclude.join(', ')}</b></> : null}
+            {' '}Matching on{' '}
+            <b>{[...(cfg.strongPhrases ?? []), ...(cfg.strongTags ?? []), ...(cfg.include ?? [])].join(', ')}</b>
+            {cfg.exclude?.length ? <> · dropped if the title says <b>{cfg.exclude.join(', ')}</b></> : null}
             .
           </>
-        )}
+        ) : null}
       </div>
+
+      {editing && (
+        <div
+          className="card"
+          style={{ padding: 14, display: 'grid', gap: 12, background: 'var(--bg-sunken)' }}
+        >
+          <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', lineHeight: 1.6 }}>
+            These lists <b>are</b> the gating rules. A stream from a “Track matching” channel counts
+            only when its title contains one of these terms, so adding an event name here (a new
+            tournament, a new abbreviation) is how you keep that channel's coverage current.
+            Comma-separated.
+          </div>
+          <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+            {listField('include', 'Include', 'Names and abbreviations for this game — the main matching list')}
+            {listField('strongPhrases', 'Strong phrases', 'Distinctive enough to auto-approve an unknown channel')}
+            {listField('strongTags', 'Strong tags', 'Exact creator tags — corroborate identity, never the stream')}
+            {listField('exclude', 'Exclude', 'In the title → dropped, even from an approved channel')}
+            {listField('queries', 'Discovery searches', 'What we search YouTube Live for (free, no quota)')}
+          </div>
+          <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
+            {numField('autoAllowWeakBelowCcv', 'Auto-allow below', 'Weak matches under this CCV skip review (0 = review everything)')}
+            {numField('alwaysReviewAboveCcv', 'Always review above', 'Above this CCV a human confirms, however strong the match')}
+            {numField('discoveryIntervalSeconds', 'Discovery every (s)', 'Live-search scrape cadence — 120s floor')}
+            {numField('maxRoster', 'Max roster', 'Ceiling on streams polled per cycle')}
+          </div>
+          <Row gap={8}>
+            <button
+              type="button"
+              className="btn btn-xs"
+              disabled={saving}
+              onClick={() => void saveConfig()}
+              style={{ cursor: 'pointer', color: 'var(--live)' }}
+            >
+              {saving ? 'Saving…' : 'Save rules'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-xs"
+              disabled={saving}
+              onClick={() => setEditing(false)}
+              style={{ cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+          </Row>
+        </div>
+      )}
 
       {error && <div style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
 
@@ -242,3 +354,22 @@ export function DiscoverYouTubeGating({ slug }: { slug: string }) {
     </Section>
   );
 }
+
+const lbl: React.CSSProperties = {
+  display: 'block',
+  fontSize: 11,
+  color: 'var(--fg-muted)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.05em',
+  marginBottom: 4,
+};
+
+const inp: React.CSSProperties = {
+  width: '100%',
+  padding: '7px 9px',
+  fontSize: 12.5,
+  background: 'var(--bg)',
+  border: '1px solid var(--border)',
+  borderRadius: 6,
+  color: 'var(--fg)',
+};

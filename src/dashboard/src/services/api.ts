@@ -1139,6 +1139,12 @@ export interface YouTubeTrackerConfig {
   include?: string[];
   /** Title containing any of these is auto-denied. */
   exclude?: string[];
+  strongTags?: string[];
+  strongPhrases?: string[];
+  autoAllowWeakBelowCcv?: number;
+  alwaysReviewAboveCcv?: number;
+  discoveryPagesPerQuery?: number;
+  discoveryIntervalSeconds?: number;
   maxRoster?: number;
 }
 
@@ -1191,6 +1197,18 @@ export function decideYouTubeGating(
   return request<YouTubeGatingRow | { ok: true }>(
     `/api/game-trackers/${encodeURIComponent(slug)}/youtube/gating/${encodeURIComponent(channelIdentifier)}`,
     { method: 'POST', body: JSON.stringify({ decision, note, scope }) },
+  );
+}
+
+/** Save a tracker's YouTube matching vocabulary + dials (admin). */
+export function saveYouTubeConfig(
+  slug: string,
+  config: YouTubeTrackerConfig,
+  enabled?: boolean,
+) {
+  return request<{ enabled: boolean; config: YouTubeTrackerConfig }>(
+    `/api/game-trackers/${encodeURIComponent(slug)}/youtube/config`,
+    { method: 'PUT', body: JSON.stringify({ config, enabled }) },
   );
 }
 
