@@ -102,12 +102,6 @@ export function useNavItems(
       });
     }
     items.push({ id: 'discover', label: 'Discover', path: '/discover', active: onDiscover });
-    items.push({
-      id: 'guide',
-      label: 'Guide',
-      path: '/guide',
-      active: pathname.startsWith('/guide'),
-    });
     if (isAdmin || isEditor) {
       // Until the /settings hub lands (P3), deep-link to the first allowed page.
       items.push({
@@ -347,6 +341,24 @@ export function TopNav({
                           zIndex: 50,
                         }}
                       >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="btn"
+                          onClick={() => {
+                            setUserMenuOpen(false);
+                            navigate('/guide');
+                          }}
+                          style={{
+                            width: '100%',
+                            justifyContent: 'flex-start',
+                            background: 'transparent',
+                            border: 'none',
+                            fontSize: 13,
+                          }}
+                        >
+                          Guide
+                        </button>
                         <button
                           type="button"
                           role="menuitem"

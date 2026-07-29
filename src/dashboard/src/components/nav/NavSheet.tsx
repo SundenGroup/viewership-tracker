@@ -114,6 +114,9 @@ export function NavSheet({
               </Row>
             </SheetItem>
           )}
+          <SheetItem active={false} onClick={() => go('/guide')}>
+            Guide
+          </SheetItem>
         </Col>
 
         <div style={{ height: 1, background: 'var(--border)' }} />

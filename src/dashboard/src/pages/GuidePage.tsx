@@ -13,11 +13,11 @@
  *    is our own repo's markdown served from our own authenticated API,
  *    not user input.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { marked } from 'marked';
 import * as api from '@/services/api';
-import { Row, RangePill } from '@/components/design';
+import { Row, Tab } from '@/components/design';
 import { Spinner } from '@/components/common/Loader';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -42,7 +42,11 @@ function postProcess(html: string): string {
     // Repo-only docs (permissions.md, setup-relay-pc.md, …) aren't served
     // in-app; keep the words, drop the dead link.
     .replace(/<a href="[^"]*\.md(#[^"]*)?">([\s\S]*?)<\/a>/g, '$2')
-    .replace(/<a href="(https?:\/\/[^"]+)">/g, '<a href="$1" target="_blank" rel="noopener noreferrer">');
+    .replace(/<a href="(https?:\/\/[^"]+)">/g, '<a href="$1" target="_blank" rel="noopener noreferrer">')
+    // Tables scroll inside their own wrapper — display:block on <table>
+    // would destroy table semantics for screen readers.
+    .replace(/<table>/g, '<div class="prose-tablewrap"><table>')
+    .replace(/<\/table>/g, '</table></div>');
 }
 
 interface TocEntry {
@@ -106,19 +110,54 @@ export function GuidePage() {
     if (el) el.scrollIntoView({ block: 'start' });
   }, [html, location.hash]);
 
+  // Scrollspy — highlight the TOC entry for the section in view.
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const articleRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!html) return;
+    const headings = articleRef.current?.querySelectorAll('h2[id]');
+    if (!headings || headings.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            setActiveId(e.target.id);
+            break;
+          }
+        }
+      },
+      { rootMargin: '-10% 0px -75% 0px' },
+    );
+    headings.forEach((h) => observer.observe(h));
+    return () => observer.disconnect();
+  }, [html]);
+
   return (
-    <div style={{ maxWidth: 860, margin: '0 auto', padding: '24px 20px 80px' }}>
-      <Row gap={6} align="center" wrap style={{ marginBottom: 16 }}>
-        <RangePill active={slug === 'user'} onClick={() => navigate('/guide')}>
+    <div style={{ maxWidth: 1080, margin: '0 auto', padding: '0 20px 80px' }}>
+      {/* Switcher styled like the app's tab bars, not like filter pills */}
+      <Row
+        gap={4}
+        align="center"
+        style={{
+          borderBottom: '1px solid var(--border)',
+          marginBottom: 28,
+          position: 'sticky',
+          top: 'var(--topnav-h)',
+          background: 'var(--bg)',
+          zIndex: 4,
+          paddingTop: 8,
+        }}
+      >
+        <Tab active={slug === 'user'} onClick={() => navigate('/guide')}>
           User guide
-        </RangePill>
+        </Tab>
         {isAdmin && (
-          <RangePill active={slug === 'admin'} onClick={() => navigate('/guide/admin')}>
+          <Tab active={slug === 'admin'} onClick={() => navigate('/guide/admin')}>
             Admin guide
-          </RangePill>
+          </Tab>
         )}
         {doc?.updatedAt && (
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--fg-dim)' }}>
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--fg-dim)', paddingBottom: 6 }}>
             Updated {new Date(doc.updatedAt).toLocaleDateString()}
           </span>
         )}
@@ -133,32 +172,35 @@ export function GuidePage() {
         <div style={{ fontSize: 13, color: 'var(--danger)', padding: '16px 0' }}>{error}</div>
       )}
 
-      {!loading && !error && toc.length > 1 && (
-        <nav
-          aria-label="Guide contents"
-          style={{
-            padding: '12px 16px',
-            marginBottom: 20,
-            borderRadius: 10,
-            border: '1px solid var(--border)',
-            background: 'var(--bg-sunken)',
-            fontSize: 12.5,
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: '6px 18px',
-          }}
-        >
-          {toc.map((t) => (
-            <a key={t.id} href={`#${t.id}`} style={{ color: 'var(--fg-muted)', textDecoration: 'none' }}>
-              {t.label}
-            </a>
-          ))}
-        </nav>
-      )}
-
       {!loading && !error && (
-        // eslint-disable-next-line react/no-danger -- our own repo docs via authenticated API
-        <article className="prose" dangerouslySetInnerHTML={{ __html: html }} />
+        <div className="guide-layout">
+          {toc.length > 1 && (
+            <nav aria-label="On this page" className="guide-toc">
+              <span
+                className="eyebrow"
+                style={{ fontSize: 10, color: 'var(--fg-dim)', display: 'block', marginBottom: 8 }}
+              >
+                On this page
+              </span>
+              {toc.map((t) => (
+                <a
+                  key={t.id}
+                  href={`#${t.id}`}
+                  aria-current={activeId === t.id ? 'true' : undefined}
+                  className={activeId === t.id ? 'guide-toc-link active' : 'guide-toc-link'}
+                >
+                  {t.label}
+                </a>
+              ))}
+            </nav>
+          )}
+          <article
+            ref={articleRef}
+            className="prose"
+            // eslint-disable-next-line react/no-danger -- our own repo docs via authenticated API
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        </div>
       )}
     </div>
   );

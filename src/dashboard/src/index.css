@@ -36,11 +36,14 @@
   color: var(--fg);
 }
 .prose h1 {
-  font-size: 22px;
-  font-weight: 650;
-  line-height: 1.25;
-  margin: 0 0 14px;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  margin: 0 0 16px;
 }
+/* h1 is followed by the intro paragraph — give it presence */
+.prose h1 + p { font-size: 14.5px; color: var(--fg-muted); }
 .prose h2 {
   font-size: 16px;
   font-weight: 600;
@@ -58,8 +61,8 @@
 .prose p { margin: 0 0 10px; }
 .prose ul, .prose ol { margin: 0 0 12px; padding-left: 22px; }
 .prose li { margin: 3px 0; }
-.prose a { color: var(--live); text-decoration: none; }
-.prose a:hover { text-decoration: underline; }
+.prose a { color: var(--red); text-decoration: none; border-bottom: 1px solid color-mix(in oklab, var(--red) 35%, transparent); }
+.prose a:hover { border-bottom-color: var(--red); }
 .prose hr { border: none; border-top: 1px solid var(--border); margin: 26px 0; }
 .prose blockquote {
   margin: 0 0 12px;
@@ -84,13 +87,11 @@
   margin: 0 0 14px;
 }
 .prose pre code { background: none; border: none; padding: 0; font-size: 12px; }
+.prose-tablewrap { overflow-x: auto; margin: 0 0 16px; }
 .prose table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12.5px;
-  margin: 0 0 16px;
-  display: block;
-  overflow-x: auto;
 }
 .prose th {
   text-align: left;
@@ -106,3 +107,54 @@
   vertical-align: top;
 }
 .prose img { max-width: 100%; border-radius: 8px; }
+
+/* ── Guide layout: sticky TOC rail beside the article ──────────────── */
+.guide-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 760px);
+  gap: 40px;
+  align-items: start;
+}
+.guide-toc {
+  position: sticky;
+  top: calc(var(--topnav-h) + 52px);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: calc(100vh - var(--topnav-h) - 80px);
+  overflow-y: auto;
+  padding-right: 6px;
+}
+.guide-toc-link {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+  text-decoration: none;
+  padding: 4px 8px;
+  border-left: 2px solid transparent;
+  border-radius: 0 5px 5px 0;
+}
+.guide-toc-link:hover { color: var(--fg); background: var(--bg-sunken); }
+.guide-toc-link.active {
+  color: var(--fg);
+  border-left-color: var(--red);
+  background: var(--bg-sunken);
+}
+@media (max-width: 1000px) {
+  .guide-layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .guide-toc {
+    position: static;
+    max-height: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    padding: 12px 14px;
+    margin-bottom: 20px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-sunken);
+  }
+  .guide-toc .eyebrow { display: none !important; }
+  .guide-toc-link { border-left: none; padding: 2px 0; }
+  .guide-toc-link.active { background: none; color: var(--red); }
+}
