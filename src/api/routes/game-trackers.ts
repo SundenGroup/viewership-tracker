@@ -113,6 +113,56 @@ router.delete('/:slug', requireRole('admin'), async (req: Request, res: Response
   }
 });
 
+// ── Official event windows (chart overlays) ───────────────────────────
+//
+// "Was that spike PGS?" — Discover's trends chart shades the broadcast
+// windows of series for the same game. The tracker↔series link is the
+// game name, compared with everything but letters/digits stripped, since
+// the same title is written "PUBG: Battlegrounds", "PUBG Battlegrounds"
+// and "PUBG BATTLEGROUNDS" across series records.
+router.get('/:slug/events', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
+    if (!tracker) {
+      res.status(404).json({ error: 'Game tracker not found' });
+      return;
+    }
+    const from = new Date(String(req.query.from ?? ''));
+    const to = new Date(String(req.query.to ?? ''));
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) {
+      res.status(400).json({ error: 'from and to must be valid dates with to > from' });
+      return;
+    }
+    const { rows } = await db.raw<{
+      rows: Array<{ name: string; short_name: string | null; start: Date; end: Date }>;
+    }>(
+      `
+      SELECT s.name, s.short_name, d.broadcast_start AS start, d.broadcast_end AS "end"
+      FROM tournament_series s
+      JOIN broadcast_days d ON d.series_id = s.id
+      WHERE regexp_replace(LOWER(COALESCE(s.game, '')), '[^a-z0-9]', '', 'g')
+              = regexp_replace(LOWER(?), '[^a-z0-9]', '', 'g')
+        AND d.broadcast_start IS NOT NULL
+        AND d.broadcast_end IS NOT NULL
+        AND d.broadcast_end > ?
+        AND d.broadcast_start < ?
+      ORDER BY d.broadcast_start
+      LIMIT 200
+      `,
+      [tracker.name, from, to],
+    );
+    res.json({
+      events: rows.map((r) => ({
+        name: r.short_name || r.name,
+        start: r.start,
+        end: r.end,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── YouTube gating (Discover) ──────────────────────────────────────────
 //
 // YouTube exposes no reliable game association, so tracker membership is a
