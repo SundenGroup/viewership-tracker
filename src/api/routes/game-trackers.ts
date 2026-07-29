@@ -150,6 +150,72 @@ router.get(
   },
 );
 
+/**
+ * Edit a tracker's YouTube matching vocabulary.
+ *
+ * These lists ARE the gating rules — `include`/`strongPhrases`/`strongTags`
+ * decide which streams from an approved channel count, so they need to be
+ * editable by the person working the review queue, not by whoever can
+ * reach the database. Merged into the existing config so a partial save
+ * never silently drops a key the UI doesn't render.
+ */
+const STRING_LIST_KEYS = [
+  'queries', 'include', 'exclude', 'strongTags', 'strongPhrases',
+] as const;
+const NUMERIC_KEYS: Record<string, { min: number; max: number }> = {
+  autoAllowWeakBelowCcv: { min: 0, max: 1_000_000 },
+  alwaysReviewAboveCcv: { min: 0, max: 1_000_000 },
+  discoveryPagesPerQuery: { min: 1, max: 10 },
+  maxRoster: { min: 1, max: 2_000 },
+  discoveryIntervalSeconds: { min: 120, max: 86_400 },
+};
+
+router.put(
+  '/:slug/youtube/config',
+  requireRole('admin'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
+      if (!tracker) {
+        res.status(404).json({ error: 'Game tracker not found' });
+        return;
+      }
+      const body = (req.body ?? {}) as { enabled?: unknown; config?: Record<string, unknown> };
+      const incoming = body.config ?? {};
+      const merged: Record<string, unknown> = { ...(tracker.youtube_config ?? {}) };
+
+      for (const key of STRING_LIST_KEYS) {
+        if (incoming[key] === undefined) continue;
+        const val = incoming[key];
+        if (!Array.isArray(val) || val.some((v) => typeof v !== 'string')) {
+          res.status(400).json({ error: `${key} must be an array of strings` });
+          return;
+        }
+        // Trim, drop blanks, de-dupe — the UI sends a comma-separated field.
+        merged[key] = [...new Set((val as string[]).map((v) => v.trim()).filter(Boolean))];
+      }
+
+      for (const [key, bounds] of Object.entries(NUMERIC_KEYS)) {
+        if (incoming[key] === undefined) continue;
+        const n = Number(incoming[key]);
+        if (!Number.isFinite(n) || n < bounds.min || n > bounds.max) {
+          res.status(400).json({ error: `${key} must be between ${bounds.min} and ${bounds.max}` });
+          return;
+        }
+        merged[key] = Math.round(n);
+      }
+
+      const patch: Record<string, unknown> = { youtube_config: merged };
+      if (typeof body.enabled === 'boolean') patch.youtube_enabled = body.enabled;
+
+      const updated = await GameTrackerModel.update(tracker.id, patch);
+      res.json({ enabled: updated.youtube_enabled, config: updated.youtube_config ?? {} });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 router.post(
   '/:slug/youtube/gating/:channelIdentifier',
   requireRole('admin'),
