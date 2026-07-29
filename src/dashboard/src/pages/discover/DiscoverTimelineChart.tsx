@@ -21,6 +21,12 @@ interface Selection {
   toIso: string | null;
 }
 
+export interface EventWindow {
+  name: string;
+  start: string;
+  end: string;
+}
+
 interface Props {
   buckets: Bucket[];
   height?: number;
@@ -28,6 +34,8 @@ interface Props {
   onPick: (sel: Selection) => void;
   /** Range fetch in flight — dims the chart and blocks the empty state. */
   loading?: boolean;
+  /** Official broadcast windows to shade behind the line ("was that spike PGS?"). */
+  events?: EventWindow[];
 }
 
 const DRAG_THRESHOLD_PX = 6;
@@ -37,13 +45,24 @@ const PLOT_LEFT = 55;
 const PLOT_RIGHT = 20;
 
 /**
+ * Overlay geometry. calc() cannot multiply a percentage by a length or
+ * divide by a percentage — the previous `N% * (100% - 75px) / 100%` form
+ * was silently dropped by the browser, pinning every overlay to the left
+ * edge. length × number is the valid formulation.
+ */
+const plotX = (pct: number) =>
+  `calc(${PLOT_LEFT}px + (100% - ${PLOT_LEFT + PLOT_RIGHT}px) * ${(pct / 100).toFixed(5)})`;
+const plotW = (pct: number) =>
+  `calc((100% - ${PLOT_LEFT + PLOT_RIGHT}px) * ${(pct / 100).toFixed(5)})`;
+
+/**
  * Lightweight drag-to-select timeseries for Discover trends. Click a
  * point → emits {fromIso, toIso: null}. Drag → emits {fromIso, toIso}.
  *
  * Mirrors the InteractiveMainChart UX in spirit but keeps the surface
  * small: one series, one set of overlays, no scope/series complexity.
  */
-export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick, loading }: Props) {
+export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick, loading, events }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ startIdx: number; currentIdx: number; startX: number } | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -118,6 +137,35 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
   const idxToPercent = (idx: number) =>
     buckets.length > 1 ? (idx / (buckets.length - 1)) * 100 : 0;
 
+  const spanHours = useMemo(() => {
+    if (buckets.length < 2) return 0;
+    return (Date.parse(buckets[buckets.length - 1]!.ts) - Date.parse(buckets[0]!.ts)) / 3600_000;
+  }, [buckets]);
+
+  // Event windows → bucket-index spans. Clamped to the visible window;
+  // events entirely outside it vanish.
+  const eventBands = useMemo(() => {
+    if (!events?.length || buckets.length < 2) return [];
+    const times = buckets.map((b) => Date.parse(b.ts));
+    const first = times[0]!;
+    const last = times[times.length - 1]!;
+    const out: Array<{ name: string; lo: number; hi: number; start: string; end: string }> = [];
+    for (const ev of events) {
+      const s0 = Date.parse(ev.start);
+      const e0 = Date.parse(ev.end);
+      if (Number.isNaN(s0) || Number.isNaN(e0) || e0 <= first || s0 >= last) continue;
+      let lo = times.findIndex((t) => t >= s0);
+      if (lo === -1) lo = times.length - 1;
+      let hi = times.length - 1;
+      for (let i = times.length - 1; i >= 0; i--) {
+        if (times[i]! <= e0) { hi = i; break; }
+      }
+      if (hi <= lo) hi = Math.min(lo + 1, times.length - 1);
+      out.push({ name: ev.name, lo, hi, start: ev.start, end: ev.end });
+    }
+    return out;
+  }, [events, buckets]);
+
   return (
     <div
       ref={containerRef}
@@ -169,6 +217,50 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
           No data in this range.
         </div>
       )}
+      {/* Official broadcast windows — behind the plot, never interactive */}
+      {eventBands.map((band, i) => {
+        const loPct = idxToPercent(band.lo);
+        const hiPct = idxToPercent(band.hi);
+        const fmt = (iso: string) =>
+          new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        return (
+          <div
+            key={`${band.name}-${i}`}
+            title={`${band.name} · ${fmt(band.start)} – ${fmt(band.end)}`}
+            style={{
+              position: 'absolute',
+              top: 8,
+              bottom: 24,
+              left: plotX(loPct),
+              width: plotW(Math.max(hiPct - loPct, 0.5)),
+              background: 'color-mix(in oklab, var(--live) 9%, transparent)',
+              borderLeft: '1px solid color-mix(in oklab, var(--live) 30%, transparent)',
+              borderRight: '1px solid color-mix(in oklab, var(--live) 30%, transparent)',
+              pointerEvents: 'none',
+              overflow: 'hidden',
+            }}
+          >
+            <span
+              style={{
+                position: 'absolute',
+                top: 2,
+                left: 4,
+                fontSize: 9,
+                fontWeight: 600,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+                color: 'var(--live)',
+                whiteSpace: 'nowrap',
+                maxWidth: 'calc(100% - 8px)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {band.name}
+            </span>
+          </div>
+        );
+      })}
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={buckets} margin={{ top: 8, right: 20, bottom: 5, left: 5 }}>
           <CartesianGrid stroke="var(--border-faint)" strokeDasharray="3 3" />
@@ -176,7 +268,11 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
             dataKey="ts"
             tickFormatter={(v: string) => {
               const d = new Date(v);
-              return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              // Long windows need dates, not clock times — a 30d axis of
+              // "14:00" ticks is unreadable.
+              return spanHours >= 48
+                ? d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+                : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             }}
             stroke="var(--fg-dim)"
             fontSize={11}
@@ -218,7 +314,7 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
             position: 'absolute',
             top: 0,
             bottom: 0,
-            left: `calc(${PLOT_LEFT}px + ${idxToPercent(selectedAnchorIdx)}% * (100% - ${PLOT_LEFT + PLOT_RIGHT}px) / 100%)`,
+            left: plotX(idxToPercent(selectedAnchorIdx)),
             width: 1,
             background: 'var(--red)',
             pointerEvents: 'none',
@@ -233,8 +329,8 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
             position: 'absolute',
             top: 8,
             bottom: 26,
-            left: `calc(${PLOT_LEFT}px + ${idxToPercent(selectedRange[0])}% * (100% - ${PLOT_LEFT + PLOT_RIGHT}px) / 100%)`,
-            width: `calc(${(idxToPercent(selectedRange[1]) - idxToPercent(selectedRange[0]))}% * (100% - ${PLOT_LEFT + PLOT_RIGHT}px) / 100%)`,
+            left: plotX(idxToPercent(selectedRange[0])),
+            width: plotW((idxToPercent(selectedRange[1]) - idxToPercent(selectedRange[0]))),
             background: 'color-mix(in oklab, var(--red) 12%, transparent)',
             borderLeft: '1px solid var(--red)',
             borderRight: '1px solid var(--red)',
@@ -250,8 +346,8 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
             position: 'absolute',
             top: 8,
             bottom: 26,
-            left: `calc(${PLOT_LEFT}px + ${idxToPercent(dragRange[0])}% * (100% - ${PLOT_LEFT + PLOT_RIGHT}px) / 100%)`,
-            width: `calc(${(idxToPercent(dragRange[1]) - idxToPercent(dragRange[0]))}% * (100% - ${PLOT_LEFT + PLOT_RIGHT}px) / 100%)`,
+            left: plotX(idxToPercent(dragRange[0])),
+            width: plotW((idxToPercent(dragRange[1]) - idxToPercent(dragRange[0]))),
             background: 'color-mix(in oklab, var(--red) 18%, transparent)',
             pointerEvents: 'none',
           }}
@@ -265,7 +361,7 @@ export function DiscoverTimelineChart({ buckets, height = 280, selection, onPick
             position: 'absolute',
             top: 8,
             bottom: 26,
-            left: `calc(${PLOT_LEFT}px + ${idxToPercent(hoverIdx)}% * (100% - ${PLOT_LEFT + PLOT_RIGHT}px) / 100%)`,
+            left: plotX(idxToPercent(hoverIdx)),
             width: 1,
             background: 'var(--fg-dim)',
             opacity: 0.4,

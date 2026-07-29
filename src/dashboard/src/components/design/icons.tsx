@@ -110,6 +110,9 @@ export const IconEyeOff = (p: IconProps) => (
 );
 export const IconDot = (p: IconProps) => <Icon {...p} d="M12 12h.01" strokeWidth={6} />;
 export const IconBolt = (p: IconProps) => <Icon {...p} d="M13 2 3 14h8l-1 8 10-12h-8l1-8Z" />;
+export const IconClock = (p: IconProps) => (
+  <Icon {...p} d="M12 6v6l4 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+);
 export const IconTrophy = (p: IconProps) => (
   <Icon
     {...p}

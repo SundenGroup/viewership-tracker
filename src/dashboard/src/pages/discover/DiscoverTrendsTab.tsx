@@ -23,6 +23,8 @@ import {
   IconTrophy,
   IconX,
   IconDownload,
+  IconClock,
+  RangeControl,
 } from '@/components/design';
 import { fmtCompact, fmtN } from '@/design/format';
 import { downloadCsv, csvStamp } from '@/utils/csv';
@@ -66,8 +68,12 @@ export function DiscoverTrendsTab({
   const [searchParams, setSearchParams] = useSearchParams();
   const [rangeKey, setRangeKey] = useState<RangePreset>(() => {
     const r = searchParams.get('range');
+    // 'now'/'custom' come from the Channels tab sharing ?range — this
+    // surface has no live/custom mode, so land on the nearest window.
+    if (r === 'now') return '24h';
     return RANGE_OPTIONS.some((o) => o.key === r) ? (r as RangePreset) : '24h';
   });
+  const [events, setEvents] = useState<api.GameTrackerEventWindow[]>([]);
   const [buckets, setBuckets] = useState<GameTrackerRangeBucket[]>([]);
   const [bucketsLoading, setBucketsLoading] = useState(true);
   const [selection, setSelection] = useState<Selection | null>(() => {
@@ -134,6 +140,12 @@ export function DiscoverTrendsTab({
     }
 
     setBucketsLoading(true);
+    // Events are decorative — fetched separately so a failure never
+    // blocks the chart itself.
+    api
+      .getGameTrackerEvents(slug, from, to)
+      .then((r) => !cancelled && setEvents(r.events))
+      .catch(() => !cancelled && setEvents([]));
     Promise.all([
       api.getGameTrackerRange(slug, from, to, range.bucketSeconds),
       api.getGameTrackerBreakdown(slug, from, to),
@@ -194,32 +206,24 @@ export function DiscoverTrendsTab({
     () => buckets.find((b) => b.total_ccv === peakCcv) ?? null,
     [buckets, peakCcv],
   );
+  // Hours watched ≈ Σ(bucket avg CCV × bucket length). Same math the
+  // Explore reports use, applied to the tracker total.
+  const hoursWatched = useMemo(
+    () => buckets.reduce((acc, b) => acc + b.total_ccv * range.bucketSeconds, 0) / 3600,
+    [buckets, range.bucketSeconds],
+  );
 
   return (
     <Col gap={16}>
       {/* Risers & anomalies */}
       <TrendingSection slug={slug} platform={platform} />
 
-      {/* Range picker */}
-      <Row gap={8} align="center">
-        <span
-          className="eyebrow"
-          style={{ fontSize: 10, color: 'var(--fg-muted)', display: 'inline-flex', alignItems: 'center', gap: 5 }}
-        >
-          <IconCalendar size={11} /> Range
-        </span>
-        <Row gap={4}>
-          {RANGE_OPTIONS.map((opt) => (
-            <RangePill
-              key={opt.key}
-              active={rangeKey === opt.key}
-              onClick={() => setRangeKey(opt.key)}
-            >
-              {opt.label}
-            </RangePill>
-          ))}
-        </Row>
-      </Row>
+      {/* Range picker — same control + ?range vocabulary as Channels */}
+      <RangeControl
+        options={RANGE_OPTIONS.map((o) => o.key)}
+        value={rangeKey}
+        onChange={(k) => setRangeKey(k as RangePreset)}
+      />
 
       {error && (
         <Section style={{ color: 'var(--danger)' }}>{error}</Section>
@@ -231,6 +235,11 @@ export function DiscoverTrendsTab({
           icon={<IconBolt size={13} />}
           label={`Avg viewers (${range.label.toUpperCase()})`}
           value={fmtN(totalAvgCcv)}
+        />
+        <ChannelKpi
+          icon={<IconClock size={13} />}
+          label={`Hours watched (${range.label})`}
+          value={fmtCompact(Math.round(hoursWatched))}
         />
         <ChannelKpi
           icon={<IconTrophy size={13} />}
@@ -267,6 +276,7 @@ export function DiscoverTrendsTab({
           selection={selection}
           onPick={setSelection}
           height={300}
+          events={events}
         />
       </Section>
 

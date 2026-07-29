@@ -1212,6 +1212,22 @@ export function saveYouTubeConfig(
   );
 }
 
+// ── Discover: official event windows (for chart overlays) ────────────
+
+export interface GameTrackerEventWindow {
+  name: string;
+  start: string;
+  end: string;
+}
+
+/** Broadcast-day windows of series for this tracker's game, within [from, to]. */
+export function getGameTrackerEvents(slug: string, from: Date, to: Date) {
+  const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
+  return request<{ events: GameTrackerEventWindow[] }>(
+    `/api/game-trackers/${encodeURIComponent(slug)}/events?${params}`,
+  );
+}
+
 // ── In-app guides ─────────────────────────────────────────────────────
 
 export interface DocPayload {
