@@ -43,7 +43,7 @@ export interface TopNavProps {
 }
 
 export interface NavItem {
-  id: 'home' | 'live' | 'explore' | 'discover' | 'settings';
+  id: 'home' | 'live' | 'explore' | 'discover' | 'guide' | 'settings';
   label: string;
   path: string;
   active: boolean;
@@ -102,6 +102,12 @@ export function useNavItems(
       });
     }
     items.push({ id: 'discover', label: 'Discover', path: '/discover', active: onDiscover });
+    items.push({
+      id: 'guide',
+      label: 'Guide',
+      path: '/guide',
+      active: pathname.startsWith('/guide'),
+    });
     if (isAdmin || isEditor) {
       // Until the /settings hub lands (P3), deep-link to the first allowed page.
       items.push({

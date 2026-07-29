@@ -22,6 +22,7 @@ import { NotFoundPage } from '@/pages/NotFoundPage';
 import { TopNav } from '@/components/nav';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Spinner } from '@/components/common/Loader';
+import { GuidePage } from '@/pages/GuidePage';
 import { useApi, usePollingApi } from '@/hooks/useApi';
 import { usePollingData } from '@/hooks/usePollingData';
 import { AuthContext, useAuth, useAuthProvider } from '@/hooks/useAuth';
@@ -138,6 +139,8 @@ function AuthGate() {
         <Route path="/discover/:slug/channel/:channelId" element={<AppContent />} />
         <Route path="/discover/:slug" element={<AppContent />} />
         <Route path="/discover" element={<AppContent />} />
+        <Route path="/guide/admin" element={<AppContent />} />
+        <Route path="/guide" element={<AppContent />} />
         <Route path="/:seriesId/edit" element={<AppContent />} />
         <Route path="/:seriesId" element={<AppContent />} />
         <Route path="/" element={<AppContent />} />
@@ -172,6 +175,7 @@ function AppContent() {
   const isDiscoverChannel = /^\/discover\/[^/]+\/channel\/[^/]+$/.test(pathname);
   const isDiscoverDetail = /^\/discover\/[^/]+$/.test(pathname) && !isDiscoverNew;
   const isDiscoverList = pathname === '/discover';
+  const isGuidePage = pathname === '/guide' || pathname === '/guide/admin';
 
   // ── Data fetching ─────────────────────────────────────────────────────
 
@@ -407,6 +411,8 @@ function AppContent() {
         onSeriesChange={handleSeriesChange}
       />
     );
+  } else if (isGuidePage) {
+    content = <GuidePage />;
   } else if (isSettingsHome) {
     // Settings hub landing arrives in P3; for now route to the first page
     // the user is allowed to see.

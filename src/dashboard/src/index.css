@@ -26,3 +26,83 @@
   background: rgba(255, 21, 77, 0.25);
   color: white;
 }
+
+/* ── .prose — in-app guide rendering (GuidePage) ─────────────────────────
+   Markdown from docs/*.md. Kept deliberately close to the app's table and
+   type scale so the guides read as part of the product, not a wiki. */
+.prose {
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--fg);
+}
+.prose h1 {
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.25;
+  margin: 0 0 14px;
+}
+.prose h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 34px 0 10px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  scroll-margin-top: calc(var(--topnav-h) + 12px);
+}
+.prose h3 {
+  font-size: 13.5px;
+  font-weight: 600;
+  margin: 22px 0 6px;
+  scroll-margin-top: calc(var(--topnav-h) + 12px);
+}
+.prose p { margin: 0 0 10px; }
+.prose ul, .prose ol { margin: 0 0 12px; padding-left: 22px; }
+.prose li { margin: 3px 0; }
+.prose a { color: var(--live); text-decoration: none; }
+.prose a:hover { text-decoration: underline; }
+.prose hr { border: none; border-top: 1px solid var(--border); margin: 26px 0; }
+.prose blockquote {
+  margin: 0 0 12px;
+  padding: 6px 14px;
+  border-left: 3px solid var(--border);
+  color: var(--fg-muted);
+}
+.prose code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-faint, var(--border));
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.prose pre {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 0 0 14px;
+}
+.prose pre code { background: none; border: none; padding: 0; font-size: 12px; }
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin: 0 0 16px;
+  display: block;
+  overflow-x: auto;
+}
+.prose th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 10px 6px 0;
+  white-space: nowrap;
+}
+.prose td {
+  border-bottom: 1px solid var(--border-faint, var(--border));
+  padding: 6px 10px 6px 0;
+  vertical-align: top;
+}
+.prose img { max-width: 100%; border-radius: 8px; }

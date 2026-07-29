@@ -1212,6 +1212,19 @@ export function saveYouTubeConfig(
   );
 }
 
+// ── In-app guides ─────────────────────────────────────────────────────
+
+export interface DocPayload {
+  slug: 'user' | 'admin';
+  content: string;
+  updatedAt: string | null;
+}
+
+/** Raw markdown for a guide; the GuidePage renders it. Admin slug 403s for non-admins. */
+export function getDoc(slug: 'user' | 'admin') {
+  return request<DocPayload>(`/api/docs/${slug}`);
+}
+
 export interface CreateGameTracker {
   name: string;
   slug: string;
