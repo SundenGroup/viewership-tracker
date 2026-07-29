@@ -95,7 +95,7 @@ export function DiscoverDetailPage() {
       try {
         const [d, lb] = await Promise.all([
           api.getGameTracker(slug),
-          api.getGameTrackerLeaderboard(slug, undefined, 25),
+          api.getGameTrackerLeaderboard(slug, undefined, 200),
         ]);
         if (cancelled) return;
         setDetail(d);
@@ -386,12 +386,37 @@ function LiveTab({
     [leaderboard, platform],
   );
 
+  // KPIs are computed from the SAME filtered set as the table below —
+  // a "Viewers now" that disagrees with the rows under it reads as a bug.
+  const kpis = useMemo(() => {
+    const rows = shown ?? [];
+    let total = 0;
+    let peak = 0;
+    const byLang = new Map<string, number>();
+    for (const r of rows) {
+      total += r.concurrent_viewers;
+      if (r.concurrent_viewers > peak) peak = r.concurrent_viewers;
+      const lang = r.language?.toUpperCase() ?? '—';
+      byLang.set(lang, (byLang.get(lang) ?? 0) + r.concurrent_viewers);
+    }
+    let best: { lang: string; ccv: number } | null = null;
+    for (const [lang, ccv] of byLang) {
+      if (lang !== '—' && (!best || ccv > best.ccv)) best = { lang, ccv };
+    }
+    return {
+      total,
+      peak,
+      topLang: best && total > 0 ? { lang: best.lang, sharePct: Math.round((best.ccv / total) * 100) } : null,
+    };
+  }, [shown]);
+  const scopeSuffix = platform === 'all' ? '' : ` · ${platform}`;
+
   const exportCsv = () => {
-    if (!leaderboard || leaderboard.length === 0) return;
+    if (!shown || shown.length === 0) return;
     downloadCsv(
       `${slug}-live-${csvStamp()}.csv`,
       ['rank', 'channel', 'platform', 'language', 'ccv', 'stream_title'],
-      leaderboard.map((row, i) => [
+      shown.map((row, i) => [
         i + 1,
         row.channel?.display_name ?? row.channel_id,
         row.platform,
@@ -407,25 +432,25 @@ function LiveTab({
       <Row gap={12} wrap style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
         <KpiCard
           icon={<IconUsers size={14} />}
-          label="Viewers now"
-          value={fmtN(totalCcvNow)}
+          label={`Viewers now${scopeSuffix}`}
+          value={fmtN(kpis.total)}
         />
         <KpiCard
           icon={<IconTrophy size={14} />}
-          label="Top stream"
-          value={fmtN(peakNow)}
-          sub={leaderboard?.[0]?.channel?.display_name ?? null}
+          label={`Top stream${scopeSuffix}`}
+          value={fmtN(kpis.peak)}
+          sub={shown?.[0]?.channel?.display_name ?? null}
         />
         <KpiCard
           icon={<IconEye size={14} />}
-          label="Live streams"
-          value={fmtN(activeChannelCount)}
+          label={platform === 'all' ? 'Live streams' : `Live streams${scopeSuffix}`}
+          value={fmtN(platform === 'all' ? activeChannelCount : (shown?.length ?? 0))}
         />
         <KpiCard
           icon={<IconGrid size={14} />}
-          label="Top language"
-          value={topLanguage?.lang ?? '—'}
-          sub={topLanguage ? `${topLanguage.sharePct}% of viewers` : null}
+          label={`Top language${scopeSuffix}`}
+          value={kpis.topLang?.lang ?? '—'}
+          sub={kpis.topLang ? `${kpis.topLang.sharePct}% of viewers` : null}
         />
       </Row>
 
@@ -644,6 +669,7 @@ export function LeaderboardTable({
   trackerSlug,
   metricLabel = 'Live CCV',
   showRangeStats = false,
+  filterHint = null,
 }: {
   rows: LeaderboardRow[] | null;
   trackerSlug: string;
@@ -651,9 +677,12 @@ export function LeaderboardTable({
   metricLabel?: string;
   /** Show Days streamed + Hours columns (range mode). */
   showRangeStats?: boolean;
+  /** Set when a platform/language filter may be hiding rows. */
+  filterHint?: string | null;
 }) {
   const navigate = useNavigate();
-  const colCount = showRangeStats ? 7 : 5;
+  const colCount = showRangeStats ? 8 : 5;
+  const platformFilterHint = filterHint ? `(${filterHint})` : '';
   return (
     <TableScroll>
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: showRangeStats ? 640 : 480 }}>
@@ -664,7 +693,16 @@ export function LeaderboardTable({
           <th style={thStyle}>Channel</th>
           <th style={{ ...thStyle, width: 60 }}>Lang</th>
           {showRangeStats && <th style={{ ...thStyle, textAlign: 'right', width: 70 }}>Days</th>}
-          {showRangeStats && <th style={{ ...thStyle, textAlign: 'right', width: 90 }}>Hours</th>}
+          {showRangeStats && (
+            <th style={{ ...thStyle, textAlign: 'right', width: 90 }} title="Airtime — hours the channel was live">
+              Hours live
+            </th>
+          )}
+          {showRangeStats && (
+            <th style={{ ...thStyle, textAlign: 'right', width: 104 }} title="Avg viewers × hours live — total audience time">
+              Hours watched
+            </th>
+          )}
           <th style={{ ...thStyle, textAlign: 'right', width: 110 }}>{metricLabel}</th>
         </tr>
       </thead>
@@ -679,7 +717,8 @@ export function LeaderboardTable({
         {rows && rows.length === 0 && (
           <tr>
             <td colSpan={colCount} style={{ padding: 32, textAlign: 'center', color: 'var(--fg-muted)' }}>
-              {showRangeStats ? 'No streams in this range' : 'No active streams right now'}
+              {showRangeStats ? 'No streams in this range' : 'No active streams right now'}{' '}
+              {platformFilterHint}
             </td>
           </tr>
         )}
@@ -766,6 +805,21 @@ export function LeaderboardTable({
                   }}
                 >
                   {row.minutes_live != null ? `${(row.minutes_live / 60).toFixed(1)}h` : '—'}
+                </td>
+              )}
+              {showRangeStats && (
+                <td
+                  style={{
+                    ...tdStyle,
+                    textAlign: 'right',
+                    fontFamily: 'var(--font-mono)',
+                    fontVariantNumeric: 'tabular-nums',
+                    color: 'var(--fg-muted)',
+                  }}
+                >
+                  {row.minutes_live != null && row.avg_ccv != null
+                    ? fmtCompact(Math.round((row.avg_ccv * row.minutes_live) / 60))
+                    : '—'}
                 </td>
               )}
               <td
