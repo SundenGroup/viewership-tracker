@@ -858,6 +858,15 @@ function ExploreScopedView({
                 </>
               )}
               <SavedViewsMenu />
+              <button
+                type="button"
+                className="btn btn-xs"
+                onClick={() => navigate('/explore/compare')}
+                title="Two events, day-aligned — peaks, averages, hours watched"
+                style={{ cursor: 'pointer' }}
+              >
+                Compare events
+              </button>
             </Row>
           </Row>
         </div>

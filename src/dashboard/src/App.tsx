@@ -23,6 +23,7 @@ import { TopNav } from '@/components/nav';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Spinner } from '@/components/common/Loader';
 import { GuidePage } from '@/pages/GuidePage';
+import { ExploreCompareEvents } from '@/pages/explore/ExploreCompareEvents';
 import { useApi, usePollingApi } from '@/hooks/useApi';
 import { usePollingData } from '@/hooks/usePollingData';
 import { AuthContext, useAuth, useAuthProvider } from '@/hooks/useAuth';
@@ -131,6 +132,7 @@ function AuthGate() {
         <Route path="/settings/users" element={<AppContent />} />
         <Route path="/settings/youtube-keys" element={<AppContent />} />
         <Route path="/settings/notifications" element={<AppContent />} />
+        <Route path="/explore/compare" element={<AppContent />} />
         <Route path="/explore/:seriesId" element={<AppContent />} />
         <Route path="/explore" element={<AppContent />} />
         <Route path="/discover/admin/new" element={<AppContent />} />
@@ -168,7 +170,8 @@ function AppContent() {
   const isUsersPage = pathname === '/settings/users';
   const isYouTubeKeysPage = pathname === '/settings/youtube-keys';
   const isNotificationsPage = pathname === '/settings/notifications';
-  const isExplorePage = pathname.startsWith('/explore');
+  const isCompareEvents = pathname === '/explore/compare';
+  const isExplorePage = pathname.startsWith('/explore') && !isCompareEvents;
   const isDiscoverNew = pathname === '/discover/admin/new';
   const isDiscoverEdit = /^\/discover\/admin\/edit\/[^/]+$/.test(pathname);
   const isDiscoverStream = /^\/discover\/[^/]+\/channel\/[^/]+\/stream\/[^/]+$/.test(pathname);
@@ -402,6 +405,8 @@ function AppContent() {
     content = <DiscoverDetailPage />;
   } else if (isDiscoverNew || isDiscoverEdit) {
     content = <DiscoverAdminNew />;
+  } else if (isCompareEvents) {
+    content = <ExploreCompareEvents />;
   } else if (isExplorePage) {
     content = (
       <ExplorePage
