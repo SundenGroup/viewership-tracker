@@ -267,7 +267,7 @@ function ExploreScopedView({
 
   // ── Data fetching ──────────────────────────────────────────────────
   // Leaderboard (peak/avg/VH per channel) — already scope-aware.
-  const { data: leaderboard, loading: lbLoading } = useApi<LeaderboardStats[]>(
+  const { data: leaderboard, loading: lbLoading, error: lbError } = useApi<LeaderboardStats[]>(
     () => fetchLeaderboard(seriesId, scopeLevel, scopeId),
     [seriesId, scopeLevel, scopeId, platformFilter.join(','), languageFilter.join(','), tierFilter.join(','), regionFilter.join(',')],
   );
@@ -517,9 +517,11 @@ function ExploreScopedView({
     : '40px 1fr 100px 110px 90px 100px 100px 110px';
 
   const exportTableCsv = useCallback(() => {
+    const base = ['Channel', 'Identifier', 'Platform', 'Category', 'Language', 'Region', 'Peak CCV', 'Avg CCV', 'Viewed Hours'];
+    const shapeCols = shapeMetricsOn ? ['Var %', 'Minutes @ #1', '% ≥ half peak'] : [];
     downloadCsv(
       `explore-${series?.short_name || seriesId}-${scopeLevel}-${csvStamp()}`,
-      ['Channel', 'Identifier', 'Platform', 'Category', 'Language', 'Region', 'Peak CCV', 'Avg CCV', 'Viewed Hours'],
+      [...base, ...shapeCols],
       lb.sorted.map((c) => [
         c.name,
         c.channelIdentifier,
@@ -530,9 +532,10 @@ function ExploreScopedView({
         c.peak,
         c.avg,
         c.hours,
+        ...(shapeMetricsOn ? [c.stability ?? '', c.minutesAt1 ?? '', c.consistency ?? ''] : []),
       ]),
     );
-  }, [lb.sorted, series?.short_name, seriesId, scopeLevel]);
+  }, [lb.sorted, series?.short_name, seriesId, scopeLevel, shapeMetricsOn]);
 
   // ── Build chart series (parallel to timeline.timestamps) ──────────
   // Three rendering modes:
@@ -825,12 +828,15 @@ function ExploreScopedView({
             </div>
             <ExploreAskBox ask={ask} />
             <Row gap={8} align="center" style={{ marginLeft: 'auto' }}>
-              {compareOptions.length > 0 && (
+              {(compareOptions.length > 0 || scopeLevel === 'series') && (
                 <>
                   <span className="eyebrow" style={{ fontSize: 9.5 }}>
                     Compare vs
                   </span>
                   <select
+                    aria-label="Compare against another stage or day"
+                    disabled={compareOptions.length === 0}
+                    title={compareOptions.length === 0 ? 'Pick a stage or day to compare' : undefined}
                     value={compareId ?? ''}
                     onChange={(e) =>
                       updateUrl((p) => {
@@ -880,7 +886,7 @@ function ExploreScopedView({
             matches exactly. When 2-4 channels are checked we fall through to
             the custom multi-line overlay below. */}
         <Section
-          eyebrow="01 · Timeline"
+          eyebrow="Timeline"
           title="Concurrent viewers — interactive"
           right={
             <Pill>
@@ -1012,6 +1018,9 @@ function ExploreScopedView({
               <Col gap={2}>
                 <span className="eyebrow" style={{ fontSize: 10 }}>
                   Channels
+                  <span style={{ marginLeft: 8, textTransform: 'none', letterSpacing: 0, fontWeight: 400, color: 'var(--fg-dim)' }}>
+                    click a row to graph it · up to {MAX_OVERLAY_CHANNELS} overlaid
+                  </span>
                 </span>
                 <span style={{ fontSize: 13 }}>
                   {filtersActive
@@ -1092,6 +1101,7 @@ function ExploreScopedView({
                     })
                   }
                   placeholder="Search channels…"
+                  aria-label="Search channels"
                   style={{
                     padding: '6px 10px',
                     fontSize: 12,
@@ -1215,15 +1225,15 @@ function ExploreScopedView({
                     >
                       Reset all filters
                     </button>
-                    <div style={{ flex: 1 }} />
-                    <span className="mono" style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
-                      Click a row to graph it. Up to {MAX_OVERLAY_CHANNELS} for overlay.
-                    </span>
                   </Row>
                 )}
               </Col>
             </div>
           )}
+          {/* One scroller for header+rows+totals: fixed-width columns used
+              to clip inside the card's overflow:hidden on phones. */}
+          <div style={{ overflowX: 'auto' }}>
+          <div style={{ minWidth: shapeMetricsOn ? 940 : 780 }}>
           <div
             style={{
               display: 'grid',
@@ -1279,6 +1289,14 @@ function ExploreScopedView({
               <div className="placeholder" style={{ height: 100, margin: 12 }}>
                 Loading channels…
               </div>
+            ) : lbError && channels.length === 0 ? (
+              <div
+                role="alert"
+                className="placeholder"
+                style={{ height: 100, margin: 12, color: 'var(--danger)' }}
+              >
+                Couldn't load channels: {lbError}
+              </div>
             ) : channels.length === 0 ? (
               <div className="placeholder" style={{ height: 100, margin: 12 }}>
                 No channels match the current filters.
@@ -1290,7 +1308,17 @@ function ExploreScopedView({
                 return (
                   <div
                     key={c.id}
+                    role="checkbox"
+                    aria-checked={isSelected}
+                    aria-label={`Graph ${c.name}`}
+                    tabIndex={0}
                     onClick={() => toggleChannel(c.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleChannel(c.id);
+                      }
+                    }}
                     style={{
                       display: 'grid',
                       gridTemplateColumns: tableGridColumns,
@@ -1373,8 +1401,12 @@ function ExploreScopedView({
             <ChannelTableTotals
               rows={lb.sorted}
               totalSeries={timeline.total}
+              gridColumns={tableGridColumns}
+              extraTrailingCells={shapeMetricsOn ? 3 : 0}
             />
           )}
+          </div>
+          </div>
         </div>
       </Col>
     </ExploreShell>
@@ -1390,9 +1422,14 @@ function ExploreScopedView({
 function ChannelTableTotals({
   rows,
   totalSeries,
+  gridColumns,
+  extraTrailingCells = 0,
 }: {
   rows: { peak: number; avg: number; hours: number; name: string }[];
   totalSeries: number[];
+  /** Must match the table's live template — shape mode adds columns. */
+  gridColumns: string;
+  extraTrailingCells?: number;
 }) {
   const n = rows.length;
   const sumHours = rows.reduce((s, r) => s + (r.hours || 0), 0);
@@ -1415,7 +1452,7 @@ function ChannelTableTotals({
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '40px 1fr 100px 110px 90px 100px 100px 110px',
+        gridTemplateColumns: gridColumns,
         padding: '12px 12px',
         fontSize: 12,
         borderTop: '2px solid var(--border)',
@@ -1458,6 +1495,9 @@ function ChannelTableTotals({
       >
         {fmtN(Math.round(sumHours))}
       </div>
+      {Array.from({ length: extraTrailingCells }, (_, i) => (
+        <div key={i} />
+      ))}
     </div>
   );
 }
@@ -2597,6 +2637,24 @@ function SavedViewsMenu() {
   const [open, setOpen] = useState(false);
   const [views, setViews] = useState<SavedView[]>(readSavedViews);
   const [name, setName] = useState('');
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Popovers must dismiss like popovers: Escape and clicking elsewhere.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
 
   const persist = (next: SavedView[]) => {
     setViews(next);
@@ -2615,8 +2673,14 @@ function SavedViewsMenu() {
   };
 
   return (
-    <div style={{ position: 'relative' }}>
-      <button type="button" className="btn btn-xs" onClick={() => setOpen((v) => !v)}>
+    <div style={{ position: 'relative' }} ref={menuRef}>
+      <button
+        type="button"
+        className="btn btn-xs"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((v) => !v)}
+      >
         Views{views.length > 0 ? ` (${views.length})` : ''} ▾
       </button>
       {open && (
@@ -2654,7 +2718,7 @@ function SavedViewsMenu() {
           </Row>
           {views.length === 0 ? (
             <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
-              No saved views yet — set up scope, filters and overlays, then
+              No saved views yet (saved on this browser only) — set up scope, filters and overlays, then
               save the state under a name.
             </div>
           ) : (
