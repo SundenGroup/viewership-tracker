@@ -73,21 +73,36 @@ export function DiscoverStreamPage() {
   );
   const chan = channel && channel.id === channelId ? channel : null;
 
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
   useEffect(() => {
     if (!slug || !channelId || !streamId) return;
     let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
     setDetail(null);
     setError(null);
-    api
-      .getGameTrackerStreamDetail(slug, channelId, streamId)
-      .then((res) => {
-        if (!cancelled) setDetail(res);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
-      });
+    const load = () =>
+      api
+        .getGameTrackerStreamDetail(slug, channelId, streamId)
+        .then((res) => {
+          if (cancelled) return;
+          setDetail(res);
+          setFetchedAt(Date.now());
+          // A LIVE pill implies currency — keep the page fresh while the
+          // stream is actually live, stop the moment it ends.
+          if (res.session?.status === 'live' && !timer) {
+            timer = setInterval(load, 30_000);
+          } else if (res.session?.status !== 'live' && timer) {
+            clearInterval(timer);
+            timer = null;
+          }
+        })
+        .catch((err: Error) => {
+          if (!cancelled) setError(err.message);
+        });
+    void load();
     return () => {
       cancelled = true;
+      if (timer) clearInterval(timer);
     };
   }, [slug, channelId, streamId]);
 
@@ -403,6 +418,30 @@ export function DiscoverStreamPage() {
           </div>
         ) : (
           <div style={{ height: 300 }}>
+            <div
+              style={{
+                display: 'flex',
+                gap: 16,
+                alignItems: 'center',
+                fontSize: 11,
+                color: 'var(--fg-muted)',
+                marginBottom: 4,
+              }}
+            >
+              <span>
+                <span style={{ display: 'inline-block', width: 14, height: 2, background: 'var(--red)', verticalAlign: 'middle', marginRight: 5 }} />
+                viewers
+              </span>
+              <span>
+                <span style={{ display: 'inline-block', width: 10, height: 8, background: 'color-mix(in oklab, var(--info, #4A9EDA) 55%, transparent)', verticalAlign: 'middle', marginRight: 5 }} />
+                chat msgs/min
+              </span>
+              {isLive && fetchedAt && (
+                <span style={{ marginLeft: 'auto', color: 'var(--fg-dim)' }}>
+                  updated {Math.max(0, Math.round((Date.now() - fetchedAt) / 1000))}s ago · refreshes every 30s
+                </span>
+              )}
+            </div>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chart.rows} margin={{ top: 8, right: 16, bottom: 5, left: 5 }}>
                 <CartesianGrid stroke="var(--border-faint)" strokeDasharray="3 3" />

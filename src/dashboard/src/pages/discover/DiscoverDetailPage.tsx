@@ -315,7 +315,12 @@ export function DiscoverDetailPage() {
               {isAdmin && detail.youtube_enabled && (
                 <DiscoverYouTubeGating
                   slug={slug}
-                  expanded={platform === 'youtube'}
+                  // Single-platform YouTube trackers have no platform pills,
+                  // so the queue must be reachable without the filter.
+                  expanded={
+                    platform === 'youtube' ||
+                    (trackedPlatforms.length === 1 && trackedPlatforms[0] === 'youtube')
+                  }
                   onExpand={() => setPlatform('youtube')}
                 />
               )}
@@ -670,6 +675,7 @@ export function LeaderboardTable({
   metricLabel = 'Live CCV',
   showRangeStats = false,
   filterHint = null,
+  rankOffset = 0,
 }: {
   rows: LeaderboardRow[] | null;
   trackerSlug: string;
@@ -679,6 +685,8 @@ export function LeaderboardTable({
   showRangeStats?: boolean;
   /** Set when a platform/language filter may be hiding rows. */
   filterHint?: string | null;
+  /** First row's rank − 1 (pagination) so on-screen ranks match the CSV. */
+  rankOffset?: number;
 }) {
   const navigate = useNavigate();
   const colCount = showRangeStats ? 8 : 5;
@@ -743,7 +751,7 @@ export function LeaderboardTable({
               }}
             >
               <td style={{ ...tdStyle, color: 'var(--fg-dim)', fontFamily: 'var(--font-mono)' }}>
-                {i + 1}
+                {rankOffset + i + 1}
               </td>
               <td style={tdStyle}>
                 <PlatformPip id={row.platform} size={12} />

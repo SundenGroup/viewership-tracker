@@ -33,6 +33,8 @@ interface SettingsShellProps {
   breadcrumb: string;
   /** The page-level title. */
   title: string;
+  /** One-liner under the title — pages must not render their own h1. */
+  description?: string;
   /** The actual page content. */
   children: ReactNode;
   /** @deprecated TopNav owns global back/brand now. */
@@ -44,7 +46,7 @@ interface SettingsShellProps {
  * supplies brand / theme / account / nav, so this is just a left section
  * rail (≥900px) + breadcrumb + content. No top bar of its own.
  */
-export function SettingsShell({ breadcrumb, title, children }: SettingsShellProps) {
+export function SettingsShell({ breadcrumb, title, description, children }: SettingsShellProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const nav = useSettingsNav();
@@ -54,7 +56,12 @@ export function SettingsShell({ breadcrumb, title, children }: SettingsShellProp
       <div className="eyebrow" style={{ fontSize: 10, letterSpacing: 1.4, color: 'var(--fg-dim)', marginBottom: 6 }}>
         {breadcrumb}
       </div>
-      <h1 style={{ fontSize: 24, fontWeight: 600, letterSpacing: '-0.02em', margin: '0 0 20px' }}>{title}</h1>
+      <h1 style={{ fontSize: 24, fontWeight: 600, letterSpacing: '-0.02em', margin: description ? '0 0 6px' : '0 0 20px' }}>{title}</h1>
+      {description && (
+        <p style={{ fontSize: 13, color: 'var(--fg-muted)', margin: '0 0 20px', maxWidth: 720 }}>
+          {description}
+        </p>
+      )}
 
       <div
         style={{

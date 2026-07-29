@@ -147,7 +147,11 @@ export function UserManagementPage() {
   // ── Render ────────────────────────────────────────────────────────────
 
   return (
-    <SettingsShell breadcrumb="Settings · Users" title="User management">
+    <SettingsShell
+      breadcrumb="Settings · Users"
+      title="User management"
+      description="Manage operator accounts. Editors can run polling and approve discoveries; admins can additionally manage users, YouTube API keys, and series setup."
+    >
     <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
       <div style={{
         display: 'flex',
@@ -156,15 +160,7 @@ export function UserManagementPage() {
         marginBottom: 18,
         gap: 16,
       }}>
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0, color: 'var(--fg)' }}>
-            User management
-          </h1>
-          <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 6, maxWidth: 720 }}>
-            Manage operator accounts. Editors can run polling and approve discoveries; admins can
-            additionally manage users, YouTube API keys, and series setup.
-          </p>
-        </div>
+        <div />
         <button
           type="button"
           className="btn btn-primary"

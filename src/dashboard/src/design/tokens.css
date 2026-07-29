@@ -20,7 +20,7 @@
   /* Foreground */
   --fg:          #EBEFF4;
   --fg-muted:    #9AA1AB;
-  --fg-dim:      #6B7280;
+  --fg-dim:      #7D8590;
   --fg-faint:    #3F4651;
 
   /* Borders + separators */
@@ -74,7 +74,7 @@
 
   --fg:          #0B0C0E;
   --fg-muted:    #555962;
-  --fg-dim:      #7A7F89;
+  --fg-dim:      #6E7380;
   --fg-faint:    #B7BAC0;
 
   --border:      #E5E3DE;
@@ -269,6 +269,11 @@ h4 { font-size: 13px; color: var(--fg-muted); text-transform: uppercase; letter-
 }
 
 /* focus */
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 :focus-visible {
   outline: 2px solid var(--red);
   outline-offset: 2px;

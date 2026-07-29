@@ -154,7 +154,20 @@ export function DiscoverChannelPage() {
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
   const [sessionsData, setSessionsData] = useState<GameTrackerChannelSessionsResponse | null>(null);
   const [summary, setSummary] = useState<GameTrackerChannelSummary | null>(null);
+  const [trackerName, setTrackerName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!slug) return;
+    let cancelled = false;
+    api
+      .getGameTracker(slug)
+      .then((t) => !cancelled && setTrackerName(t.name))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
 
   useEffect(() => {
     if (!slug || !channelId) return;
@@ -281,7 +294,7 @@ export function DiscoverChannelPage() {
   if (error) {
     return (
       <div style={{ padding: 32 }}>
-        <BackLink slug={slug} />
+        <BackLink slug={slug} name={trackerName} />
         <Section style={{ marginTop: 20, color: 'var(--danger)' }}>{error}</Section>
       </div>
     );
@@ -289,7 +302,7 @@ export function DiscoverChannelPage() {
   if (!data) {
     return (
       <div style={{ padding: 32, color: 'var(--fg-muted)' }}>
-        <BackLink slug={slug} />
+        <BackLink slug={slug} name={trackerName} />
         <div style={{ marginTop: 20 }}>Loading…</div>
       </div>
     );
@@ -298,7 +311,7 @@ export function DiscoverChannelPage() {
   return (
     <div style={{ padding: '32px 24px 64px', maxWidth: 1280, margin: '0 auto' }}>
       <Row justify="space-between" align="center">
-        <BackLink slug={slug} />
+        <BackLink slug={slug} name={trackerName} />
       </Row>
 
       {/* Hero */}
@@ -342,7 +355,7 @@ export function DiscoverChannelPage() {
             <Row gap={6} wrap align="center" style={{ marginTop: 2 }}>
               {summary?.rank?.todayByPeak != null && (
                 <Pill tone="red">
-                  #{summary.rank.todayByPeak} in {slug} today
+                  #{summary.rank.todayByPeak} in {trackerName ?? slug} today
                 </Pill>
               )}
               {topPct != null && <Pill tone="info">Top {topPct}% (30d)</Pill>}
@@ -571,7 +584,7 @@ export function DiscoverChannelPage() {
   );
 }
 
-function BackLink({ slug }: { slug: string | undefined }) {
+function BackLink({ slug, name }: { slug: string | undefined; name?: string | null }) {
   return (
     <Link
       to={slug ? `/discover/${slug}?tab=channels` : '/discover'}
@@ -587,7 +600,7 @@ function BackLink({ slug }: { slug: string | undefined }) {
       <span style={{ display: 'inline-block', transform: 'rotate(180deg)' }}>
         <IconChev size={12} />
       </span>
-      back to {slug ?? 'Discover'}
+      back to {name ?? slug ?? 'Discover'}
     </Link>
   );
 }

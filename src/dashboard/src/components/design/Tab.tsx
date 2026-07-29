@@ -12,7 +12,7 @@ export function Tab({
   icon?: ReactNode;
 }) {
   return (
-    <button
+    <button aria-current={active ? "page" : undefined}
       type="button"
       onClick={onClick}
       style={{

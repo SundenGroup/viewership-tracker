@@ -11,7 +11,7 @@ const sizes = {
 
 export function Spinner({ size = 'md', className = '' }: LoaderProps) {
   return (
-    <svg
+    <svg role="status" aria-label="Loading"
       className={`animate-spin text-clutch-red ${sizes[size]} ${className}`}
       viewBox="0 0 24 24"
       fill="none"

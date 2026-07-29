@@ -1528,16 +1528,22 @@ export function SeriesFormPage({
             gap: 8,
           }}
         >
-          {progress && (
+          {(error || progress) && (
             <span
+              role={error ? 'alert' : undefined}
               style={{
                 alignSelf: 'center',
                 fontSize: 11.5,
-                color: 'var(--fg-muted)',
+                color: error ? 'var(--danger)' : 'var(--fg-muted)',
                 marginRight: 'auto',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
               }}
             >
-              {progress}
+              {/* The banner at the top of the page is invisible from down
+                  here, and here is where the Save button lives. */}
+              {error ?? progress}
             </span>
           )}
           <button

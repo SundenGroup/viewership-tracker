@@ -226,19 +226,12 @@ export function NotificationsSettingsPage() {
     pushStatus?.status === 'permission-denied';
 
   return (
-    <SettingsShell breadcrumb="Settings · Notifications" title="Push notifications">
-      <div style={{ padding: '24px 32px', maxWidth: 880, margin: '0 auto' }}>
-        <div style={{ marginBottom: 18 }}>
-          <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0, color: 'var(--fg)' }}>
-            Push notifications
-          </h1>
-          <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 6, maxWidth: 720 }}>
-            Get OS-level notifications for live operations: broadcasts going live or about to end,
-            polling problems, YouTube quota exhaustion, and new auto-discovery candidates.
-            Configure each device independently — your laptop and phone can have different
-            preferences.
-          </p>
-        </div>
+    <SettingsShell
+      breadcrumb="Settings · Notifications"
+      title="Push notifications"
+      description="OS-level notifications for live operations: broadcasts going live or ending, polling problems, YouTube quota exhaustion, new discovery candidates. Each device configures independently."
+    >
+      <div>
 
         {error && (
           <div

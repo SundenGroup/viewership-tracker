@@ -39,6 +39,9 @@ export function Modal({
 
       {/* Dialog */}
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
         className={`
           relative z-10 w-full ${maxWidth}
           rounded-xl border border-navy-700/50 bg-navy-850
@@ -50,6 +53,7 @@ export function Modal({
             <h2 className="text-lg font-semibold text-gray-100">{title}</h2>
             <button
               onClick={onClose}
+              aria-label="Close dialog"
               className="text-gray-500 hover:text-gray-300 transition-colors"
             >
               <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">

@@ -486,6 +486,8 @@ function NavTab({ item, onClick }: { item: NavItem; onClick: () => void }) {
 // ── WS status dot ──────────────────────────────────────────────────────────
 
 function WsDot({ status }: { status: ConnectionStatus }) {
+  // Color-only signals are invisible to screen readers — and to a chunk
+  // of colorblind users. Expose the state as text too.
   const color =
     status === 'connected'
       ? 'var(--live)'
@@ -495,6 +497,8 @@ function WsDot({ status }: { status: ConnectionStatus }) {
   return (
     <span
       title={`Live feed: ${status}`}
+      role="img"
+      aria-label={`Live feed ${status}`}
       style={{
         width: 7,
         height: 7,

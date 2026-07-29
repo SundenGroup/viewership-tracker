@@ -264,7 +264,7 @@ export function DiscoverChannelsTab({
       right={
         <Row gap={6} align="center">
           <span style={{ fontSize: 11, color: 'var(--fg-dim)', marginLeft: 6 }}>
-            {range ? `${filtered.length} on page ${page + 1}` : `${filtered.length} live`}
+            {range ? `${filtered.length} on page ${page + 1}` : `${filtered.length} live${filtered.length === 200 ? ' (top 200)' : ''}`}
           </span>
           {!range && <FreshnessIndicator at={lastUpdatedAt} />}
           <button
@@ -349,6 +349,7 @@ export function DiscoverChannelsTab({
           trackerSlug={slug}
           metricLabel={range ? 'Peak viewers' : 'Viewers'}
           showRangeStats={!!range}
+          rankOffset={range ? page * PAGE_SIZE : 0}
         />
       )}
 
@@ -362,7 +363,7 @@ export function DiscoverChannelsTab({
           )}
           <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
             Page {page + 1}{pageCount != null ? ` of ${pageCount}` : ''}
-            {total != null ? ` · ${total} streamers` : ''}
+            {total != null ? ` · ${total.toLocaleString('en-US')} streamers` : ''}
           </span>
           {hasNextPage && (
             <RangePill active={false} onClick={() => setPage((p) => p + 1)}>

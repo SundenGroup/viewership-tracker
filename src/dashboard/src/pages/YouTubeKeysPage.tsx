@@ -194,17 +194,7 @@ export function YouTubeKeysPage() {
     <SettingsShell breadcrumb="Settings · YouTube API keys" title="YouTube discovery key pool">
     <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 18 }}>
-        <div>
-          <div className="eyebrow" style={{ fontSize: 10, color: 'var(--fg-dim, #6b7280)', marginBottom: 4 }}>
-            SETTINGS · API KEYS
-          </div>
-          <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0 }}>YouTube discovery key pool</h1>
-          <p style={{ fontSize: 13, color: 'var(--fg-muted, #9ca3af)', marginTop: 6, maxWidth: 720 }}>
-            Tag each key with the partner it belongs to (PUBG, PGL, GeoGuessr…). Discovery searches for that
-            partner's series will use that pool first; if it's exhausted, the search falls back to shared
-            (unpartnered) keys, then to no API call. Polling uses a separate path and is not affected by these keys.
-          </p>
-        </div>
+        <div />
         <Button variant="primary" onClick={() => { setCreateForm(EMPTY_FORM); setCreateOpen(true); }}>
           + Add key
         </Button>

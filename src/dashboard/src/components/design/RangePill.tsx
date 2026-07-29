@@ -25,6 +25,7 @@ export function RangePill({
       title={title}
       aria-pressed={active}
       style={{
+        minHeight: 28,
         padding: '4px 12px',
         fontSize: 11,
         fontFamily: 'var(--font-mono)',

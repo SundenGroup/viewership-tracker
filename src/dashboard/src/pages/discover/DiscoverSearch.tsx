@@ -96,7 +96,11 @@ export function DiscoverSearch({ slug, ask, placeholder }: Props) {
     // A search takeover replaces the body — clear any lingering Ask card
     // so the two result surfaces can't stack.
     ask?.dismiss();
-    navigate(`/discover/${slug}?q=${encodeURIComponent(trimmed)}`);
+    // Merge with the current params — entering search must not wipe the
+    // tab/platform/range the user will land back on when clearing it.
+    const params = new URLSearchParams(window.location.search);
+    params.set('q', trimmed);
+    navigate(`/discover/${slug}?${params.toString()}`);
   };
 
   const submitAsk = (q: string) => {
@@ -188,7 +192,12 @@ export function DiscoverSearch({ slug, ask, placeholder }: Props) {
               onClick={() => {
                 setQuery('');
                 setRows(null);
-                if (urlQuery) navigate(`/discover/${slug}`);
+                if (urlQuery) {
+                  const params = new URLSearchParams(window.location.search);
+                  params.delete('q');
+                  const qs = params.toString();
+                  navigate(`/discover/${slug}${qs ? `?${qs}` : ''}`);
+                }
               }}
               aria-label="Clear search"
               style={{

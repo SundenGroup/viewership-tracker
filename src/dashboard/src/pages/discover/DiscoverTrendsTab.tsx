@@ -266,7 +266,8 @@ export function DiscoverTrendsTab({
           <span style={{ fontSize: 11, color: 'var(--fg-dim)', whiteSpace: 'nowrap' }}>
             click a point or drag to inspect ·{' '}
             {range.bucketSeconds < 60 ? `${range.bucketSeconds}s` : `${range.bucketSeconds / 60}m`}{' '}
-            buckets
+            buckets · your local time (UTC{-new Date().getTimezoneOffset() / 60 >= 0 ? '+' : ''}
+            {-new Date().getTimezoneOffset() / 60})
           </span>
         }
       >
@@ -442,7 +443,9 @@ function TrendingSection({ slug, platform }: { slug: string; platform: string })
                         <Pill>new</Pill>
                       </span>
                     ) : spike ? (
-                      <Pill tone="warn">×{(r.cur_peak / r.prev_peak).toFixed(1)}</Pill>
+                      <span title={`Peak is ${(r.cur_peak / r.prev_peak).toFixed(1)}× the prior window's`}>
+                        <Pill tone="warn">×{(r.cur_peak / r.prev_peak).toFixed(1)}</Pill>
+                      </span>
                     ) : null}
                   </td>
                 </tr>
@@ -718,7 +721,7 @@ function BreakdownPanel({
 }) {
   if (!breakdown) {
     return (
-      <Section title="Breakdown" eyebrow="DISTRIBUTION">
+      <Section title="Breakdown" eyebrow="SHARE OF WATCH TIME">
         <div style={{ color: 'var(--fg-muted)', fontSize: 13 }}>Loading…</div>
       </Section>
     );
@@ -730,7 +733,7 @@ function BreakdownPanel({
   const languageTotal = breakdown.language.reduce((sum, p) => sum + Number(p.total_ccv_minutes), 0);
 
   return (
-    <Section title="Breakdown" eyebrow="DISTRIBUTION">
+    <Section title="Breakdown" eyebrow="SHARE OF WATCH TIME">
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 22 }}>
         <BreakdownGroup
           title="Platform"

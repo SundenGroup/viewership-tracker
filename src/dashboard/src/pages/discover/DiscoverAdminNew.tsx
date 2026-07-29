@@ -100,7 +100,13 @@ export function DiscoverAdminNew() {
     }
   };
 
+  const RESERVED_SLUGS = ['admin', 'new'];
+
   const handleSubmit = async () => {
+    if (RESERVED_SLUGS.includes(slug.trim().toLowerCase())) {
+      setError(`"${slug.trim()}" is a reserved URL — pick another slug.`);
+      return;
+    }
     if (!name.trim() || !slug.trim()) {
       setError('Name and slug are required');
       return;
@@ -143,7 +149,7 @@ export function DiscoverAdminNew() {
       <p style={{ marginTop: 6, color: 'var(--fg-muted)', fontSize: 13, marginBottom: 24 }}>
         {isEdit
           ? 'Update this tracker’s name, platform mappings, threshold or status. Re-search only if you need to change the platform IDs.'
-          : 'Continuously track all live streams of a game on Twitch (Kick to follow). Fill in the details and pick the right platform IDs.'}
+          : 'Continuously track all live streams of a game across Twitch, Kick and YouTube. Fill in the details and pick the right platform IDs.'}
       </p>
 
       {loading && (
@@ -318,6 +324,13 @@ export function DiscoverAdminNew() {
               ? 'Save changes'
               : 'Create tracker'}
         </button>
+        {!submitting && (!name.trim() || !slug.trim() || (!twitchPick && !kickPick)) && (
+          <span style={{ alignSelf: 'center', fontSize: 11, color: 'var(--fg-dim)' }}>
+            {!name.trim() || !slug.trim()
+              ? 'Name and slug are required.'
+              : 'Pick at least one platform category above.'}
+          </span>
+        )}
       </div>
     </div>
   );
