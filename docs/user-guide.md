@@ -63,6 +63,35 @@ fairer comparison between two events of different lengths.
 scales with duration, so it's the one to use when comparing a 3-hour final
 against a 9-hour group stage.
 
+### The interactive timeline
+
+The chart on Explore is the analysis surface, not a picture:
+
+- **Diamonds above the chart** mark moments — each broadcast day's start and
+  the scope's peak. Click one to jump there.
+- **Click** any point to freeze that minute. A panel docks beside the chart
+  showing the total at that minute and every channel that was live, scaled to
+  it — "what was live at 21:05" in one glance. *Jump to peak* takes you to the
+  best minute of the window.
+- **Drag** across the chart to measure a window. Peak, average, hours watched
+  and length recompute live for the selection.
+- **Click channel rows** in the table below to overlay them (up to 8) against
+  the total. Colored chips above the description remove them individually;
+  **Reset view** clears everything.
+- On a phone, dragging is replaced by preset windows — **Full window / Peak
+  hour / Last 2h**.
+
+Every one of these states lives in the URL. Copy the address bar and the
+recipient sees exactly the view you built — the same mechanism **Ask** uses
+when it pins the peak minute to prove its answer.
+
+### Comparing two events
+
+**Compare events** (button next to Saved views, or `/explore/compare`) puts
+two series side by side, aligned day by day: peaks, averages, hours watched,
+per-day deltas and overlaid day-peak curves. The numbers are the same ones the
+partner reports print, so the comparison is deck-safe.
+
 ### The co-streaming trap
 
 If a tournament is co-streamed, adding up every channel double-counts nobody —
@@ -86,16 +115,25 @@ when the underlying data is later corrected.
 A **game tracker** watches one game across Twitch, Kick and YouTube. It finds
 live streams, polls them every cycle, and keeps history.
 
+The Discover landing page is a portfolio: each tracker card carries its live
+total, 24h/7d peaks, a 7-day sparkline, the platform split as a colored bar,
+and the top three channels right now — the games compare at a glance before
+you click into one.
+
 Each tracker has three tabs:
 
 **Live** — what's on air right now. The leaderboard is sorted by current CCV.
 This is the "what's happening" view.
 
 **Trends** — the same data over time: 1h / 6h / 24h / 7d / 30d. Use this for
-"is this game growing?" and "when does this game peak?"
+"is this game growing?" and "when does this game peak?" Broadcast windows of
+tracked events are shaded on the chart, so a spike that lines up with a PGS
+day explains itself. The **Total / By platform** toggle splits the curve into
+stacked per-platform areas, and the **hour-of-day strip** below shows the
+game's prime window at a glance.
 
-**Channels** — every channel we've seen, with peak, average, hours live and
-days streamed over the window. This is the scouting view.
+**Channels** — every channel we've seen, with peak, average, **hours watched**,
+hours live and days streamed over the window. This is the scouting view.
 
 The **platform filter** (top right) applies to all three tabs at once and is
 part of the URL, so a filtered view is shareable.
@@ -105,8 +143,10 @@ part of the URL, so a filtered view is shareable.
 Click any row to open a **channel page** — their history, their streams, their
 health over time.
 
-Click a stream to open the **stream page** — the CCV curve for that single
-broadcast, chat activity, and the health breakdown.
+Click a stream to open the **stream page** — the receipt for that single
+broadcast. The minute-by-minute CCV curve (title changes marked on it) and the
+chat-per-minute bars sit on the left; the health evidence that judges the
+stream is docked beside them. Live streams refresh every 30 seconds.
 
 ### Search
 
@@ -137,6 +177,11 @@ it ranks at the very bottom of its cohort.
 
 That's deliberate. The point of the grade is to surface streams worth a second
 look — not to rank popularity.
+
+**A live session is never graded.** Health is computed once a broadcast ends,
+so the live leaderboard's **Last grade** column shows how the channel's most
+recent *completed* broadcast scored — and `—` for a channel that hasn't been
+scored yet. A missing grade means "not measured", never "suspicious".
 
 ### What the score is built from
 
