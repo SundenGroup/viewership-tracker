@@ -22,6 +22,7 @@ export * from './RangeControl';
 export * from './AsyncStates';
 export * from './ConfirmButton';
 export * from './Breadcrumbs';
+export * from './GradeBadge';
 export * from './tableStyles';
 export * from './SettingsShell';
 export * from './PublicLinkButton';

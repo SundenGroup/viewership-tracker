@@ -36,10 +36,12 @@ import {
   IconGrid,
   IconChev,
   IconDownload,
+  LoadingBlock,
+  DeltaChip,
+  GradeBadge,
 } from '@/components/design';
 import { fmtN, fmtCompact, fmtRelative } from '@/design/format';
 import { downloadCsv, csvStamp } from '@/utils/csv';
-import { HealthGradeChip } from './DiscoverChannelPage';
 import { DiscoverTrendsTab } from './DiscoverTrendsTab';
 import { DiscoverYouTubeGating } from './DiscoverYouTubeGating';
 import { DiscoverChannelsTab } from './DiscoverChannelsTab';
@@ -193,10 +195,11 @@ export function DiscoverDetailPage() {
       <Row justify="space-between" align="flex-end" wrap style={{ marginTop: 14, marginBottom: 24, gap: 16 }}>
         <Col gap={10} style={{ minWidth: 0 }}>
           <Row gap={10} align="center" wrap>
+            <Monogram name={detail.name} />
             <h1
               style={{
                 fontFamily: 'var(--font-display, var(--font-sans))',
-                fontSize: 'clamp(28px, 6vw, 44px)',
+                fontSize: 'clamp(28px, 6vw, 34px)',
                 fontWeight: 700,
                 color: 'var(--fg)',
                 margin: 0,
@@ -211,6 +214,12 @@ export function DiscoverDetailPage() {
                 ? '● Live'
                 : detail.status.charAt(0).toUpperCase() + detail.status.slice(1)}
             </Pill>
+          </Row>
+          <Row gap={8} align="center" style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>
+            <span style={{ color: 'var(--live)' }}>●</span>
+            <span className="tabular">{fmtN(detail.active_channel_count)} channels live</span>
+            <span style={{ color: 'var(--fg-dim)' }}>·</span>
+            <span>discovery every {detail.discovery_interval_seconds ?? 60}s</span>
           </Row>
           <Row gap={14} wrap style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
             {detail.twitch_game_name && (
@@ -246,9 +255,38 @@ export function DiscoverDetailPage() {
             )}
           </Row>
         </Col>
-        <div style={{ flex: '1 1 320px', maxWidth: 520, minWidth: 240 }}>
-          <DiscoverSearch slug={slug ?? ''} ask={ask} />
-        </div>
+        <Row gap={8} align="center" wrap style={{ alignSelf: 'flex-start' }}>
+          {trackedPlatforms.length > 1 && (
+            <Row gap={4} align="center" className="card" style={{ padding: 3, borderRadius: 8 }}>
+              {(['all', ...trackedPlatforms]).map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPlatform(p)}
+                  aria-pressed={platform === p}
+                  title={p === 'all' ? 'All platforms' : p}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '5px 10px',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    borderRadius: 6,
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: platform === p ? 'var(--bg-hover)' : 'transparent',
+                    color: platform === p ? 'var(--fg)' : 'var(--fg-muted)',
+                  }}
+                >
+                  {p === 'all' ? 'All' : <PlatformPip id={p} size={13} />}
+                  {p !== 'all' && <span style={{ textTransform: 'capitalize' }}>{p}</span>}
+                </button>
+              ))}
+            </Row>
+          )}
+          <ShareViewButton />
+        </Row>
       </Row>
 
       {/* Ask results — answer card / refusal, between the hero and the
@@ -285,15 +323,9 @@ export function DiscoverDetailPage() {
             <Tab active={tab === 'channels'} onClick={() => setTab('channels')} icon={<IconList size={13} />}>
               Channels
             </Tab>
-            {trackedPlatforms.length > 1 && (
-              <Row gap={4} align="center" style={{ marginLeft: 'auto', paddingBottom: 6 }} wrap>
-                {(['all', ...trackedPlatforms]).map((p) => (
-                  <RangePill key={p} active={platform === p} onClick={() => setPlatform(p)}>
-                    {p}
-                  </RangePill>
-                ))}
-              </Row>
-            )}
+            <div style={{ marginLeft: 'auto', flex: '0 1 430px', minWidth: 220, paddingBottom: 6 }}>
+              <DiscoverSearch slug={slug ?? ''} ask={ask} />
+            </div>
           </Row>
 
           {/* ── Tab content ──────────────────────────────────────────── */}
@@ -388,6 +420,156 @@ export function DiscoverDetailPage() {
   );
 }
 
+/** Copies the exact current view URL — every filter and tab is in it. */
+function ShareViewButton() {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="btn"
+      title="Copy a link to this exact view"
+      onClick={() => {
+        void navigator.clipboard?.writeText(window.location.href).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1800);
+        });
+      }}
+      style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
+    >
+      {copied ? 'Copied ✓' : 'Share'}
+    </button>
+  );
+}
+
+/** Letter tile standing in for game art (per the handoff's Monogram). */
+function Monogram({ name, size = 52 }: { name: string; size?: number }) {
+  return (
+    <div
+      aria-hidden
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 12,
+        flexShrink: 0,
+        background: 'var(--bg-sunken)',
+        border: '1px solid var(--border)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: size * 0.4,
+        fontWeight: 700,
+        color: 'var(--fg-muted)',
+      }}
+    >
+      {name.slice(0, 1).toUpperCase()}
+    </div>
+  );
+}
+
+/** Right-rail: movers vs their 6h baseline. */
+function TrendingRail({ slug }: { slug: string }) {
+  const [rows, setRows] = useState<api.GameTrackerTrendingRow[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      api
+        .getGameTrackerTrending(slug, 6, 5)
+        .then((r) => !cancelled && setRows(r.rows))
+        .catch(() => {});
+    load();
+    const h = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(h);
+    };
+  }, [slug]);
+  const shown = (rows ?? []).filter((r) => r.prev_peak > 0).slice(0, 4);
+  if (rows !== null && shown.length === 0) return null;
+  return (
+    <Section title="Trending" eyebrow="VS. 6H BASELINE" compact>
+      {rows === null ? (
+        <LoadingBlock minHeight={80} />
+      ) : (
+        <Col gap={10}>
+          {shown.map((r) => (
+            <Row key={r.channel_id} justify="space-between" align="center">
+              <Row gap={8} align="center" style={{ minWidth: 0 }}>
+                <Avatar
+                  src={(r.channel?.metadata?.profile_image_url as string | undefined) ?? null}
+                  name={r.channel?.display_name ?? '—'}
+                  size={20}
+                />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.channel?.display_name ?? r.channel_id}
+                  </div>
+                  <div className="tabular" style={{ fontSize: 10.5, color: 'var(--fg-muted)' }}>
+                    {fmtCompact(r.cur_peak)} CCV
+                  </div>
+                </div>
+              </Row>
+              <DeltaChip pct={r.cur_peak / r.prev_peak - 1} />
+            </Row>
+          ))}
+        </Col>
+      )}
+    </Section>
+  );
+}
+
+/** Right-rail: channels discovery found recently. */
+function NewFacesRail({ slug }: { slug: string }) {
+  const [rows, setRows] = useState<api.GameTrackerRecentChannelRow[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getGameTrackerRecentChannels(slug, 48, 6)
+      .then((r) => !cancelled && setRows(r.rows))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
+  if (rows !== null && rows.length === 0) return null;
+  return (
+    <Section title="New faces" eyebrow="FOUND BY DISCOVERY" compact>
+      {rows === null ? (
+        <LoadingBlock minHeight={80} />
+      ) : (
+        <Col gap={9}>
+          {rows.map((r) => (
+            <Row key={r.channel_id} justify="space-between" align="center">
+              <Row gap={8} align="center" style={{ minWidth: 0 }}>
+                <Avatar src={null} name={r.display_name} size={20} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.display_name}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>{fmtRelative(r.joined_at)}</div>
+                </div>
+              </Row>
+              <span className="tabular" style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+                {fmtCompact(r.peak)}
+              </span>
+            </Row>
+          ))}
+          <div
+            style={{
+              fontSize: 10.5,
+              color: 'var(--fg-dim)',
+              lineHeight: 1.5,
+              borderTop: '1px solid var(--border-faint)',
+              paddingTop: 8,
+            }}
+          >
+            YouTube channels count only after review — a missing number beats a wrong one.
+          </div>
+        </Col>
+      )}
+    </Section>
+  );
+}
+
 function BackLink() {
   return (
     <Link
@@ -448,20 +630,33 @@ function LiveTab({
 
   // KPIs are computed from the SAME filtered set as the table below —
   // a "Viewers now" that disagrees with the rows under it reads as a bug.
-  // Δ vs 6h ago — same platform scope as the KPIs so the chip is honest.
+  // One 24h window feeds two KPIs: the Δ-vs-6h chip and the 24h peak —
+  // same platform scope as everything else so the numbers agree.
   const [baseline6h, setBaseline6h] = useState<number | null>(null);
+  const [peak24, setPeak24] = useState<{ value: number; at: string } | null>(null);
   useEffect(() => {
     let cancelled = false;
     const to = new Date();
-    const from = new Date(to.getTime() - 6 * 3600_000);
+    const from = new Date(to.getTime() - 24 * 3600_000);
     api
       .getGameTrackerRange(slug, from, to, 600, platform !== 'all' ? platform : undefined)
       .then((r) => {
         if (cancelled) return;
-        const first = r.buckets.find((b) => b.total_ccv > 0);
-        setBaseline6h(first ? first.total_ccv : null);
+        const sixAgo = to.getTime() - 6 * 3600_000;
+        const base = r.buckets.find((b) => Date.parse(b.ts) >= sixAgo && b.total_ccv > 0);
+        setBaseline6h(base ? base.total_ccv : null);
+        let best: { value: number; at: string } | null = null;
+        for (const b of r.buckets) {
+          if (!best || b.total_ccv > best.value) best = { value: b.total_ccv, at: b.ts };
+        }
+        setPeak24(best && best.value > 0 ? best : null);
       })
-      .catch(() => !cancelled && setBaseline6h(null));
+      .catch(() => {
+        if (!cancelled) {
+          setBaseline6h(null);
+          setPeak24(null);
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -527,50 +722,44 @@ function LiveTab({
       <Row gap={12} wrap style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
         <KpiCard
           icon={<IconUsers size={14} />}
-          label={`Viewers now${scopeSuffix}`}
-          value={fmtN(kpis.total)}
-          sub={
-            deltaVs6h != null ? (
-              <span style={{ color: deltaVs6h >= 0 ? 'var(--live)' : 'var(--danger)' }}>
-                {deltaVs6h >= 0 ? '▲' : '▼'} {Math.abs(deltaVs6h)}% vs 6h ago
-              </span>
-            ) : null
+          label={`Live CCV${scopeSuffix}`}
+          value={
+            <Row gap={10} align="baseline">
+              <span>{fmtN(kpis.total)}</span>
+              {deltaVs6h != null && <DeltaChip pct={deltaVs6h / 100} />}
+            </Row>
           }
         />
         <KpiCard
           icon={<IconTrophy size={14} />}
-          label={`Top stream${scopeSuffix}`}
-          value={fmtN(kpis.peak)}
-          sub={shown?.[0]?.channel?.display_name ?? null}
+          label={`24h peak${scopeSuffix}`}
+          value={peak24 ? fmtCompact(peak24.value) : '—'}
+          sub={
+            peak24
+              ? new Date(peak24.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              : null
+          }
         />
         <KpiCard
           icon={<IconEye size={14} />}
-          label={platform === 'all' ? 'Live streams' : `Live streams${scopeSuffix}`}
+          label="Live channels"
           value={fmtN(platform === 'all' ? activeChannelCount : (shown?.length ?? 0))}
+          sub={platform === 'all' ? 'all platforms' : 'matching filter'}
         />
         <KpiCard
-          icon={<IconGrid size={14} />}
-          label={`Top language${scopeSuffix}`}
-          value={kpis.topLang?.lang ?? '—'}
-          sub={kpis.topLang ? `${kpis.topLang.sharePct}% of viewers` : null}
+          icon={<IconBolt size={14} />}
+          label="New today"
+          value={newToday != null ? fmtN(newToday) : '—'}
+          sub="found by discovery"
         />
-        {newToday != null && (
-          <KpiCard
-            icon={<IconBolt size={14} />}
-            label="New today"
-            value={fmtN(newToday)}
-            sub="channels found by discovery"
-          />
-        )}
       </Row>
 
-      {/* Recently discovered channels (48h) — hidden when empty */}
-      <RecentlyDiscoveredStrip slug={slug} />
-
-      {/* Top streams */}
+      {/* Top streams + the discovery rails, prototype layout */}
+      <div className="live-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 300px', gap: 16, alignItems: 'start' }}>
+        <div>
       <Section
         title="Top streams now"
-        eyebrow="LIVE LEADERBOARD"
+        eyebrow={`${(shown ?? []).length} STREAMS · SORTED BY CCV · GRADES SCORE COMPLETED BROADCASTS, NEVER THE LIVE SESSION`}
         right={
           <Row gap={10} align="center" wrap>
             <FreshnessIndicator at={lastUpdatedAt} />
@@ -615,6 +804,12 @@ function LiveTab({
           {lastCycle.dropped > 0 && ` · ${lastCycle.dropped} dropped`}
         </Row>
       )}
+        </div>
+        <Col gap={16}>
+          <TrendingRail slug={slug} />
+          <NewFacesRail slug={slug} />
+        </Col>
+      </div>
     </Col>
   );
 }
@@ -676,6 +871,12 @@ function KpiCard({
       />
     </div>
   );
+}
+
+/** "3h 32m" since a live session started. */
+function fmtUptime(iso: string): string {
+  const mins = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 60_000));
+  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`;
 }
 
 export type LeaderboardRow = GameTrackerLeaderboardRow & {
@@ -797,7 +998,7 @@ export function LeaderboardTable({
   showLastGrade?: boolean;
 }) {
   const navigate = useNavigate();
-  const colCount = (showRangeStats ? 8 : 5) + (showLastGrade ? 1 : 0);
+  const colCount = (showRangeStats ? 8 : 5) + (showLastGrade ? 2 : 0);
   const platformFilterHint = filterHint ? `(${filterHint})` : '';
   return (
     <TableScroll>
@@ -817,6 +1018,11 @@ export function LeaderboardTable({
           {showRangeStats && (
             <th style={{ ...thStyle, textAlign: 'right', width: 104 }} title="Avg viewers × hours live — total audience time">
               Hours watched
+            </th>
+          )}
+          {showLastGrade && (
+            <th style={{ ...thStyle, textAlign: 'right', width: 78 }} title="Time since this live session started">
+              Uptime
             </th>
           )}
           {showLastGrade && (

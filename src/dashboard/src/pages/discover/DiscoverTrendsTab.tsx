@@ -307,8 +307,8 @@ export function DiscoverTrendsTab({
 
       {/* Drag-to-select chart */}
       <Section
-        title="Total concurrent viewers"
-        eyebrow="TIMELINE"
+        title="Concurrent viewers"
+        eyebrow="TRACKED-EVENT WINDOWS SHADED"
         right={
           <span style={{ fontSize: 11, color: 'var(--fg-dim)', whiteSpace: 'nowrap' }}>
             click a point or drag to inspect ·{' '}
@@ -383,9 +383,9 @@ function HourHeatStrip({ buckets }: { buckets: GameTrackerRangeBucket[] }) {
               key={c.h}
               title={`${String(c.h).padStart(2, '0')}:00 · avg ${fmtCompact(Math.round(c.v))}`}
               style={{
-                height: 26,
+                height: 34,
                 borderRadius: 3,
-                background: `color-mix(in oklab, var(--red) ${Math.round(c.pct * 55)}%, var(--bg-sunken))`,
+                background: `color-mix(in oklab, var(--red) ${Math.round(c.pct * 82)}%, var(--bg-sunken))`,
                 outline: c.h === prime ? '1px solid var(--red)' : 'none',
               }}
             />
@@ -393,7 +393,7 @@ function HourHeatStrip({ buckets }: { buckets: GameTrackerRangeBucket[] }) {
         </div>
         <Row justify="space-between" style={{ fontSize: 9.5, color: 'var(--fg-dim)', fontFamily: 'var(--font-mono)' }}>
           {['00', '06', '12', '18', '23'].map((l) => (
-            <span key={l}>{l}</span>
+            <span key={l}>{l}:00</span>
           ))}
         </Row>
         <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>

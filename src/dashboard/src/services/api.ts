@@ -1273,6 +1273,8 @@ export interface GameTrackerLeaderboardRow {
     /** Grade of the last COMPLETED broadcast — never the live session. */
   last_grade?: string | null;
   last_score?: number | null;
+  /** Start of the channel's current live session (uptime column). */
+  live_started_at?: string | null;
 } | null;
 }
 
