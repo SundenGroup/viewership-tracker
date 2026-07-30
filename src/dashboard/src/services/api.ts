@@ -1270,7 +1270,10 @@ export interface GameTrackerLeaderboardRow {
     channel_identifier: string;
     platform: string;
     metadata: Record<string, unknown>;
-  } | null;
+    /** Grade of the last COMPLETED broadcast — never the live session. */
+  last_grade?: string | null;
+  last_score?: number | null;
+} | null;
 }
 
 export interface GameTrackerRangeBucket {

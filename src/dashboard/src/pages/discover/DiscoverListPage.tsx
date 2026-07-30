@@ -12,6 +12,8 @@ import {
   IconBolt,
 } from '@/components/design';
 import { fmtCompact } from '@/design/format';
+import { getPlatform } from '@/design/platforms';
+import { Avatar } from './DiscoverDetailPage';
 
 /**
  * /discover — landing page listing all game trackers.
@@ -20,6 +22,8 @@ import { fmtCompact } from '@/design/format';
  */
 interface TrackerPulse {
   buckets: Array<{ ts: string; total_ccv: number }>;
+  /** Current live rows — feeds the platform split + top-3. */
+  live?: api.GameTrackerLeaderboardRow[];
 }
 
 export function DiscoverListPage() {
@@ -52,10 +56,12 @@ export function DiscoverListPage() {
     const to = new Date();
     const from = new Date(to.getTime() - 7 * 24 * 3600_000);
     for (const t of trackers) {
-      api
-        .getGameTrackerRange(t.slug, from, to, 3600)
-        .then((r) => {
-          if (!cancelled) setPulse((prev) => ({ ...prev, [t.slug]: { buckets: r.buckets } }));
+      Promise.all([
+        api.getGameTrackerRange(t.slug, from, to, 3600),
+        api.getGameTrackerLeaderboard(t.slug, undefined, 60).catch(() => []),
+      ])
+        .then(([r, live]) => {
+          if (!cancelled) setPulse((prev) => ({ ...prev, [t.slug]: { buckets: r.buckets, live } }));
         })
         .catch(() => {
           if (!cancelled) setPulse((prev) => ({ ...prev, [t.slug]: null }));
@@ -276,6 +282,20 @@ function TrackerPulseStrip({ pulse }: { pulse: TrackerPulse | null | undefined }
   }
   if (pulse === null || !stats) return null;
 
+  const live = pulse.live ?? [];
+  const byPlat = new Map<string, number>();
+  for (const r of live) byPlat.set(r.platform, (byPlat.get(r.platform) ?? 0) + r.concurrent_viewers);
+  const platTotal = [...byPlat.values()].reduce((a, b) => a + b, 0);
+  const split = [...byPlat.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([id, ccv]) => ({
+      id,
+      ccv,
+      pct: platTotal > 0 ? (ccv / platTotal) * 100 : 0,
+      color: getPlatform(id)?.color ?? 'var(--fg-dim)',
+    }));
+  const top3 = live.slice(0, 3);
+
   const W = 260;
   const H = 30;
   const max = Math.max(stats.peak7d, 1);
@@ -315,6 +335,45 @@ function TrackerPulseStrip({ pulse }: { pulse: TrackerPulse | null | undefined }
           <b style={{ color: 'var(--fg)', fontVariantNumeric: 'tabular-nums' }}>{fmtCompact(stats.peak7d)}</b> 7d peak
         </span>
       </Row>
+      {split.length > 1 && (
+        <Col gap={5}>
+          <div style={{ display: 'flex', height: 5, borderRadius: 3, overflow: 'hidden', gap: 1 }}>
+            {split.map((seg) => (
+              <div
+                key={seg.id}
+                title={`${seg.id} · ${fmtCompact(seg.ccv)}`}
+                style={{ width: `${seg.pct}%`, background: seg.color, minWidth: 3 }}
+              />
+            ))}
+          </div>
+          <Row gap={10} wrap style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>
+            {split.map((seg) => (
+              <span key={seg.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ width: 7, height: 7, borderRadius: 2, background: seg.color }} />
+                {fmtCompact(seg.ccv)}
+              </span>
+            ))}
+          </Row>
+        </Col>
+      )}
+      {top3.length > 0 && (
+        <Col gap={6} style={{ borderTop: '1px solid var(--border-faint)', paddingTop: 8 }}>
+          {top3.map((r, i) => (
+            <Row key={r.channel_id} gap={8} align="center" style={{ fontSize: 11.5 }}>
+              <span className="mono" style={{ color: 'var(--fg-dim)', width: 10 }}>{i + 1}</span>
+              <Avatar
+                src={(r.channel?.metadata?.profile_image_url as string | undefined) ?? null}
+                name={r.channel?.display_name ?? '—'}
+                size={18}
+              />
+              <span style={{ fontWeight: 550, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                {r.channel?.display_name ?? r.channel_id}
+              </span>
+              <span className="tabular" style={{ color: 'var(--fg-muted)' }}>{fmtCompact(r.concurrent_viewers)}</span>
+            </Row>
+          ))}
+        </Col>
+      )}
     </Col>
   );
 }

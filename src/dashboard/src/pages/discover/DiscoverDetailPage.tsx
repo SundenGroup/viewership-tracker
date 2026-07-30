@@ -38,6 +38,7 @@ import {
 } from '@/components/design';
 import { fmtN, fmtCompact, fmtRelative } from '@/design/format';
 import { downloadCsv, csvStamp } from '@/utils/csv';
+import { HealthGradeChip } from './DiscoverChannelPage';
 import { DiscoverTrendsTab } from './DiscoverTrendsTab';
 import { DiscoverYouTubeGating } from './DiscoverYouTubeGating';
 import { DiscoverChannelsTab } from './DiscoverChannelsTab';
@@ -393,6 +394,37 @@ function LiveTab({
 
   // KPIs are computed from the SAME filtered set as the table below —
   // a "Viewers now" that disagrees with the rows under it reads as a bug.
+  // Δ vs 6h ago — same platform scope as the KPIs so the chip is honest.
+  const [baseline6h, setBaseline6h] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const to = new Date();
+    const from = new Date(to.getTime() - 6 * 3600_000);
+    api
+      .getGameTrackerRange(slug, from, to, 600, platform !== 'all' ? platform : undefined)
+      .then((r) => {
+        if (cancelled) return;
+        const first = r.buckets.find((b) => b.total_ccv > 0);
+        setBaseline6h(first ? first.total_ccv : null);
+      })
+      .catch(() => !cancelled && setBaseline6h(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, platform]);
+
+  const [newToday, setNewToday] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getGameTrackerRecentChannels(slug, 24, 200)
+      .then((r) => !cancelled && setNewToday(r.rows.length))
+      .catch(() => !cancelled && setNewToday(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
+
   const kpis = useMemo(() => {
     const rows = shown ?? [];
     let total = 0;
@@ -415,6 +447,10 @@ function LiveTab({
     };
   }, [shown]);
   const scopeSuffix = platform === 'all' ? '' : ` · ${platform}`;
+  const deltaVs6h =
+    baseline6h != null && baseline6h > 0 && kpis.total > 0
+      ? Math.round(((kpis.total - baseline6h) / baseline6h) * 100)
+      : null;
 
   const exportCsv = () => {
     if (!shown || shown.length === 0) return;
@@ -439,6 +475,13 @@ function LiveTab({
           icon={<IconUsers size={14} />}
           label={`Viewers now${scopeSuffix}`}
           value={fmtN(kpis.total)}
+          sub={
+            deltaVs6h != null ? (
+              <span style={{ color: deltaVs6h >= 0 ? 'var(--live)' : 'var(--danger)' }}>
+                {deltaVs6h >= 0 ? '▲' : '▼'} {Math.abs(deltaVs6h)}% vs 6h ago
+              </span>
+            ) : null
+          }
         />
         <KpiCard
           icon={<IconTrophy size={14} />}
@@ -457,6 +500,14 @@ function LiveTab({
           value={kpis.topLang?.lang ?? '—'}
           sub={kpis.topLang ? `${kpis.topLang.sharePct}% of viewers` : null}
         />
+        {newToday != null && (
+          <KpiCard
+            icon={<IconBolt size={14} />}
+            label="New today"
+            value={fmtN(newToday)}
+            sub="channels found by discovery"
+          />
+        )}
       </Row>
 
       {/* Recently discovered channels (48h) — hidden when empty */}
@@ -481,7 +532,7 @@ function LiveTab({
           </Row>
         }
       >
-        <LeaderboardTable rows={shown} trackerSlug={slug} />
+        <LeaderboardTable rows={shown} trackerSlug={slug} showLastGrade />
         {activeChannelCount > (leaderboard?.length ?? 0) && (
           <button
             type="button"
@@ -676,6 +727,7 @@ export function LeaderboardTable({
   showRangeStats = false,
   filterHint = null,
   rankOffset = 0,
+  showLastGrade = false,
 }: {
   rows: LeaderboardRow[] | null;
   trackerSlug: string;
@@ -687,9 +739,11 @@ export function LeaderboardTable({
   filterHint?: string | null;
   /** First row's rank − 1 (pagination) so on-screen ranks match the CSV. */
   rankOffset?: number;
+  /** Live boards: show each channel's last completed-broadcast grade. */
+  showLastGrade?: boolean;
 }) {
   const navigate = useNavigate();
-  const colCount = showRangeStats ? 8 : 5;
+  const colCount = (showRangeStats ? 8 : 5) + (showLastGrade ? 1 : 0);
   const platformFilterHint = filterHint ? `(${filterHint})` : '';
   return (
     <TableScroll>
@@ -709,6 +763,14 @@ export function LeaderboardTable({
           {showRangeStats && (
             <th style={{ ...thStyle, textAlign: 'right', width: 104 }} title="Avg viewers × hours live — total audience time">
               Hours watched
+            </th>
+          )}
+          {showLastGrade && (
+            <th
+              style={{ ...thStyle, textAlign: 'center', width: 82 }}
+              title="Grades score completed broadcasts, never the live session"
+            >
+              Last grade
             </th>
           )}
           <th style={{ ...thStyle, textAlign: 'right', width: 110 }}>{metricLabel}</th>

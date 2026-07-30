@@ -31,6 +31,15 @@ import { downloadCsv, csvStamp } from '@/utils/csv';
 import { Avatar } from './DiscoverDetailPage';
 import { ChannelKpi } from './DiscoverChannelPage';
 import { DiscoverTimelineChart } from './DiscoverTimelineChart';
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+} from 'recharts';
 
 type RangePreset = '1h' | '6h' | '24h' | '7d' | '30d';
 
@@ -74,6 +83,11 @@ export function DiscoverTrendsTab({
     return RANGE_OPTIONS.some((o) => o.key === r) ? (r as RangePreset) : '24h';
   });
   const [events, setEvents] = useState<api.GameTrackerEventWindow[]>([]);
+  /** Total line vs stacked per-platform areas ("who is the audience on?"). */
+  const [chartMode, setChartMode] = useState<'total' | 'platform'>('total');
+  const [platformSeries, setPlatformSeries] = useState<
+    Array<{ platform: string; buckets: GameTrackerRangeBucket[] }> | null
+  >(null);
   const [buckets, setBuckets] = useState<GameTrackerRangeBucket[]>([]);
   const [bucketsLoading, setBucketsLoading] = useState(true);
   const [selection, setSelection] = useState<Selection | null>(() => {
@@ -168,6 +182,29 @@ export function DiscoverTrendsTab({
     };
   }, [slug, range.hours, range.bucketSeconds, platform]);
 
+  // Stacked mode fetches one series per platform. Only runs while the
+  // mode is active — three extra range queries are not a default cost.
+  useEffect(() => {
+    if (chartMode !== 'platform') return;
+    let cancelled = false;
+    const from = new Date(Date.now() - range.hours * 3600_000);
+    const to = new Date();
+    const plats = ['twitch', 'kick', 'youtube'];
+    Promise.all(
+      plats.map((pf) =>
+        api
+          .getGameTrackerRange(slug, from, to, range.bucketSeconds, pf)
+          .then((r) => ({ platform: pf, buckets: r.buckets }))
+          .catch(() => ({ platform: pf, buckets: [] as GameTrackerRangeBucket[] })),
+      ),
+    ).then((rows) => {
+      if (!cancelled) setPlatformSeries(rows.filter((r) => r.buckets.some((b) => b.total_ccv > 0)));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [chartMode, slug, range.hours, range.bucketSeconds]);
+
   useEffect(() => {
     if (!selection) return;
     let cancelled = false;
@@ -219,11 +256,21 @@ export function DiscoverTrendsTab({
       <TrendingSection slug={slug} platform={platform} />
 
       {/* Range picker — same control + ?range vocabulary as Channels */}
-      <RangeControl
-        options={RANGE_OPTIONS.map((o) => o.key)}
-        value={rangeKey}
-        onChange={(k) => setRangeKey(k as RangePreset)}
-      />
+      <Row gap={12} align="center" wrap>
+        <RangeControl
+          options={RANGE_OPTIONS.map((o) => o.key)}
+          value={rangeKey}
+          onChange={(k) => setRangeKey(k as RangePreset)}
+        />
+        <Row gap={4} align="center" style={{ marginLeft: 'auto' }}>
+          <RangePill active={chartMode === 'total'} onClick={() => setChartMode('total')}>
+            Total
+          </RangePill>
+          <RangePill active={chartMode === 'platform'} onClick={() => setChartMode('platform')}>
+            By platform
+          </RangePill>
+        </Row>
+      </Row>
 
       {error && (
         <Section style={{ color: 'var(--danger)' }}>{error}</Section>
@@ -271,14 +318,18 @@ export function DiscoverTrendsTab({
           </span>
         }
       >
-        <DiscoverTimelineChart
-          buckets={buckets}
-          loading={bucketsLoading}
-          selection={selection}
-          onPick={setSelection}
-          height={300}
-          events={events}
-        />
+        {chartMode === 'total' ? (
+          <DiscoverTimelineChart
+            buckets={buckets}
+            loading={bucketsLoading}
+            selection={selection}
+            onPick={setSelection}
+            height={300}
+            events={events}
+          />
+        ) : (
+          <StackedPlatformChart series={platformSeries} height={300} />
+        )}
       </Section>
 
       {/* Side-by-side on wide screens, stacked on phones */}
@@ -292,7 +343,140 @@ export function DiscoverTrendsTab({
         />
         <BreakdownPanel breakdown={breakdown} />
       </div>
+
+      {range.hours >= 24 && <HourHeatStrip buckets={buckets} />}
     </Col>
+  );
+}
+
+/**
+ * Hour-of-day heat strip — 24 cells of average total CCV by local hour.
+ * Answers "when is this game's prime window?" at a glance.
+ */
+function HourHeatStrip({ buckets }: { buckets: GameTrackerRangeBucket[] }) {
+  const cells = useMemo(() => {
+    const sum = new Array<number>(24).fill(0);
+    const n = new Array<number>(24).fill(0);
+    for (const b of buckets) {
+      const h = new Date(b.ts).getHours();
+      sum[h]! += b.total_ccv;
+      n[h]! += 1;
+    }
+    const avg = sum.map((s, i) => (n[i]! > 0 ? s / n[i]! : 0));
+    const max = Math.max(...avg, 1);
+    return avg.map((v, h) => ({ h, v, pct: v / max }));
+  }, [buckets]);
+
+  const prime = useMemo(() => {
+    let best = 0;
+    for (let i = 1; i < cells.length; i++) if (cells[i]!.v > cells[best]!.v) best = i;
+    return best;
+  }, [cells]);
+
+  if (buckets.length === 0) return null;
+  return (
+    <Section title="Hour of day" eyebrow="AVERAGE VIEWERS BY LOCAL HOUR" compact>
+      <Col gap={6}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(24, 1fr)', gap: 2 }}>
+          {cells.map((c) => (
+            <div
+              key={c.h}
+              title={`${String(c.h).padStart(2, '0')}:00 · avg ${fmtCompact(Math.round(c.v))}`}
+              style={{
+                height: 26,
+                borderRadius: 3,
+                background: `color-mix(in oklab, var(--red) ${Math.round(c.pct * 55)}%, var(--bg-sunken))`,
+                outline: c.h === prime ? '1px solid var(--red)' : 'none',
+              }}
+            />
+          ))}
+        </div>
+        <Row justify="space-between" style={{ fontSize: 9.5, color: 'var(--fg-dim)', fontFamily: 'var(--font-mono)' }}>
+          {['00', '06', '12', '18', '23'].map((l) => (
+            <span key={l}>{l}</span>
+          ))}
+        </Row>
+        <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+          Prime window peaks around {String(prime).padStart(2, '0')}:00 your time.
+        </span>
+      </Col>
+    </Section>
+  );
+}
+
+/** Stacked per-platform areas — platform brand colors, shared x-axis. */
+function StackedPlatformChart({
+  series,
+  height,
+}: {
+  series: Array<{ platform: string; buckets: GameTrackerRangeBucket[] }> | null;
+  height: number;
+}) {
+  const data = useMemo(() => {
+    if (!series || series.length === 0) return [];
+    const base = series.reduce((a, b) => (b.buckets.length > a.buckets.length ? b : a), series[0]!);
+    return base.buckets.map((b, i) => {
+      const row: Record<string, number | string> = { ts: b.ts };
+      for (const s of series) row[s.platform] = s.buckets[i]?.total_ccv ?? 0;
+      return row;
+    });
+  }, [series]);
+  const PLATFORM_COLORS: Record<string, string> = {
+    twitch: '#9146FF',
+    youtube: '#FF3B3B',
+    kick: '#53FC18',
+  };
+  if (!series) {
+    return <div className="placeholder" style={{ height }}>Loading platform split…</div>;
+  }
+  if (data.length === 0) {
+    return <div className="placeholder" style={{ height }}>No platform data in this range.</div>;
+  }
+  return (
+    <div style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={{ top: 8, right: 20, bottom: 5, left: 5 }}>
+          <CartesianGrid stroke="var(--border-faint)" strokeDasharray="3 3" />
+          <XAxis
+            dataKey="ts"
+            tickFormatter={(v: string) => {
+              const d = new Date(v);
+              return data.length > 0 && (Date.parse(String(data[data.length - 1]!.ts)) - Date.parse(String(data[0]!.ts))) / 3600_000 >= 48
+                ? d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+                : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            }}
+            stroke="var(--fg-dim)"
+            fontSize={11}
+            minTickGap={40}
+          />
+          <YAxis stroke="var(--fg-dim)" fontSize={11} width={50} tickFormatter={(v: number) => fmtCompact(v)} />
+          <Tooltip
+            contentStyle={{
+              background: 'color-mix(in oklab, var(--bg-card) 95%, transparent)',
+              border: '1px solid var(--border-strong)',
+              borderRadius: 6,
+              fontSize: 11.5,
+              padding: '8px 10px',
+            }}
+            labelFormatter={(v: string) => new Date(v).toLocaleString()}
+            formatter={(value: number, name: string) => [fmtN(value), name]}
+          />
+          {series.map((s) => (
+            <Area
+              key={s.platform}
+              type="monotone"
+              dataKey={s.platform}
+              stackId="1"
+              stroke={PLATFORM_COLORS[s.platform] ?? 'var(--fg-dim)'}
+              fill={PLATFORM_COLORS[s.platform] ?? 'var(--fg-dim)'}
+              fillOpacity={0.35}
+              strokeWidth={1.4}
+              isAnimationActive={false}
+            />
+          ))}
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
