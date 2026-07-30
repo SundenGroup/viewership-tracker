@@ -304,6 +304,64 @@ function ExploreScopedView({
     });
   }, [seriesDetail, scopeLevel, activeStage, timeline.timestamps]);
 
+  // Moments lane — the chart's landmarks. Broadcast starts (day
+  // boundaries) plus the scope peak; clicking a diamond pins that minute.
+  const peakMoment = useMemo(() => {
+    if (timeline.total.length === 0) return null;
+    let idx = 0;
+    for (let i = 1; i < timeline.total.length; i++) {
+      if (timeline.total[i]! > timeline.total[idx]!) idx = i;
+    }
+    return { index: idx, iso: timeline.timestamps[idx]!, value: timeline.total[idx]! };
+  }, [timeline.total, timeline.timestamps]);
+
+  const moments = useMemo(() => {
+    const n = timeline.timestamps.length;
+    if (n < 2) return [] as Array<{ frac: number; iso: string; label: string; kind: 'day' | 'peak' }>;
+    const out: Array<{ frac: number; iso: string; label: string; kind: 'day' | 'peak' }> = [];
+    for (const b of dayBoundaries) {
+      out.push({
+        frac: b.index / (n - 1),
+        iso: timeline.timestamps[b.index]!,
+        label: `${b.label} start`,
+        kind: 'day',
+      });
+    }
+    if (out.length === 0 && timeline.timestamps[0]) {
+      out.push({ frac: 0, iso: timeline.timestamps[0], label: 'Broadcast start', kind: 'day' });
+    }
+    if (peakMoment) {
+      out.push({ frac: peakMoment.index / (n - 1), iso: peakMoment.iso, label: 'Peak', kind: 'peak' });
+    }
+    return out.sort((a, b) => a.frac - b.frac);
+  }, [dayBoundaries, timeline.timestamps, peakMoment]);
+
+  // Window stats — recompute from the brushed range (?from/?to) or the
+  // full scope. Same math as the reports (avg × length = hours watched).
+  const windowStats = useMemo(() => {
+    const ts = timeline.timestamps;
+    const total = timeline.total;
+    if (total.length === 0) return null;
+    let i0 = 0;
+    let i1 = total.length - 1;
+    if (fromParam && toParam) {
+      const f = Date.parse(fromParam);
+      const t = Date.parse(toParam);
+      const ms = ts.map((x) => Date.parse(x));
+      i0 = Math.max(0, ms.findIndex((m) => m >= f));
+      let hi = ms.length - 1;
+      for (let i = ms.length - 1; i >= 0; i--) {
+        if (ms[i]! <= t) { hi = i; break; }
+      }
+      i1 = Math.max(i0, hi);
+    }
+    const win = total.slice(i0, i1 + 1);
+    const peak = win.reduce((m, v) => Math.max(m, v), 0);
+    const avg = win.length ? Math.round(win.reduce((a, b) => a + b, 0) / win.length) : 0;
+    const hoursLen = win.length / 60;
+    return { peak, avg, hoursLen, hoursWatched: Math.round(avg * hoursLen), i0, i1, brushed: !!(fromParam && toParam) };
+  }, [timeline.timestamps, timeline.total, fromParam, toParam]);
+
   // Per-channel time-series for the chart (used when 1+ channels selected)
   const { data: channelTs } = useApi<TimeSeriesResponse>(
     () =>
@@ -334,6 +392,19 @@ function ExploreScopedView({
   // ── Compare mode ────────────────────────────────────────────────────
   // Overlay another scope of the SAME level (day vs day, stage vs stage),
   // aligned by minutes-from-start so different wall-clock days line up.
+  const [snapExpanded, setSnapExpanded] = useState(false);
+
+  // Option counts for the filter dropdowns — "RU (14)" beats guessing
+  // which options are worth clicking. Counted on the unfiltered set.
+  const filterCounts = useMemo(() => {
+    const lang = new Map<string, number>();
+    const region = new Map<string, number>();
+    for (const c of leaderboard ?? []) {
+      if (c.language) lang.set(c.language, (lang.get(c.language) ?? 0) + 1);
+      if (c.region) region.set(c.region, (region.get(c.region) ?? 0) + 1);
+    }
+    return { lang, region };
+  }, [leaderboard]);
   const compareId = searchParams.get('compare');
   const compareOptions = useMemo<ScopeOption[]>(() => {
     if (scopeLevel === 'day') return dayOptions.filter((d) => d.id !== dayIdFromUrl);
@@ -885,6 +956,14 @@ function ExploreScopedView({
             reports render) when no channels are checked, so the visual style
             matches exactly. When 2-4 channels are checked we fall through to
             the custom multi-line overlay below. */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: atParam && !fromParam ? 'minmax(0, 1fr) 320px' : 'minmax(0, 1fr)',
+            gap: 16,
+            alignItems: 'start',
+          }}
+        >
         <Section
           eyebrow="Timeline"
           title="Concurrent viewers — interactive"
@@ -907,6 +986,30 @@ function ExploreScopedView({
             </Pill>
           }
         >
+          {moments.length > 0 && (
+            <div style={{ position: 'relative', height: 18, margin: '0 0 2px' }} aria-label="Chart moments">
+              {moments.map((m) => (
+                <button
+                  key={`${m.kind}-${m.iso}`}
+                  type="button"
+                  title={`${m.label} · click to pin`}
+                  onClick={() => setAnchorTimestamp(m.iso)}
+                  style={{
+                    position: 'absolute',
+                    left: `${(m.frac * 100).toFixed(3)}%`,
+                    top: 4,
+                    width: 9,
+                    height: 9,
+                    transform: 'translateX(-50%) rotate(45deg)',
+                    borderRadius: 2,
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: m.kind === 'peak' ? 'var(--red)' : 'var(--fg-dim)',
+                  }}
+                />
+              ))}
+            </div>
+          )}
           {selectedChannelIds.length === 0 ? (
             timeline.total.length > 0 ? (
               <InteractiveMainChart
@@ -946,6 +1049,67 @@ function ExploreScopedView({
               rangeTo={toParam}
             />
           )}
+          {windowStats && (
+            <Row
+              gap={14}
+              align="baseline"
+              wrap
+              style={{ borderTop: '1px solid var(--border-faint)', paddingTop: 10, marginTop: 10 }}
+            >
+              <span
+                className="eyebrow"
+                style={{ fontSize: 9.5, color: windowStats.brushed ? 'var(--red)' : 'var(--fg-dim)', alignSelf: 'center' }}
+              >
+                {windowStats.brushed && fromParam && toParam
+                  ? `Selection ${formatChartTimeInTz(new Date(fromParam), series?.timezone ?? 'UTC', false)}–${formatChartTimeInTz(new Date(toParam), series?.timezone ?? 'UTC', false)}`
+                  : 'Full window'}
+              </span>
+              {(
+                [
+                  ['Peak', fmtN(windowStats.peak)],
+                  ['Average', fmtN(windowStats.avg)],
+                  ['Hours watched', fmtCompact(windowStats.hoursWatched)],
+                  ['Length', `${windowStats.hoursLen.toFixed(1)}h`],
+                ] as const
+              ).map(([l, v]) => (
+                <Row key={l} gap={6} align="baseline">
+                  <span className="tabular" style={{ fontSize: 17, fontWeight: 650 }}>{v}</span>
+                  <span className="eyebrow" style={{ fontSize: 9 }}>{l}</span>
+                </Row>
+              ))}
+              {selectedChannelIds.map((cid, i) => {
+                const nm = leaderboard?.find((l) => l.channelId === cid)?.displayName ?? '—';
+                return (
+                  <Row key={cid} gap={5} align="center">
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: OVERLAY_COLORS[i % OVERLAY_COLORS.length] }} />
+                    <span style={{ fontSize: 11.5, fontWeight: 600 }}>{nm}</span>
+                    <button
+                      type="button"
+                      onClick={() => toggleChannel(cid)}
+                      aria-label={`Remove ${nm} from the overlay`}
+                      style={{ background: 'transparent', border: 0, color: 'var(--fg-dim)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }}
+                    >
+                      ×
+                    </button>
+                  </Row>
+                );
+              })}
+              {(fromParam || atParam || selectedChannelIds.length > 0) && (
+                <button
+                  type="button"
+                  className="btn btn-xs"
+                  style={{ marginLeft: 'auto', cursor: 'pointer' }}
+                  onClick={() => {
+                    setRange(null, null);
+                    setAnchorTimestamp(null);
+                    updateUrl((prms) => prms.delete('channels'));
+                  }}
+                >
+                  Reset view
+                </button>
+              )}
+            </Row>
+          )}
           <div
             style={{
               marginTop: 10,
@@ -972,6 +1136,75 @@ function ExploreScopedView({
           </div>
         </Section>
 
+        {/* Freeze-a-minute rail — what was live at the pinned minute */}
+        {atParam && !fromParam && (
+          <Section
+            eyebrow="what was live at that minute"
+            title={`At ${formatChartTimeInTz(new Date(atParam), series?.timezone ?? 'UTC', false) || atParam}`}
+            compact
+            right={
+              <button
+                type="button"
+                className="btn btn-xs"
+                onClick={() => setAnchorTimestamp(null)}
+                aria-label="Unpin minute"
+                style={{ cursor: 'pointer' }}
+              >
+                ×
+              </button>
+            }
+          >
+            <Col gap={12}>
+              <div>
+                <div className="tabular" style={{ fontSize: 30, fontWeight: 700, letterSpacing: '-0.02em' }}>
+                  {fmtN((atTimestampData?.channels ?? []).reduce((sum, c) => sum + (c.ccv || 0), 0))}
+                </div>
+                <div className="eyebrow" style={{ fontSize: 9.5, marginTop: 2 }}>total CCV</div>
+              </div>
+              <Col gap={7}>
+                {[...(atTimestampData?.channels ?? [])]
+                  .sort((a, b) => (b.ccv || 0) - (a.ccv || 0))
+                  .slice(0, 8)
+                  .map((c) => (
+                    <Row key={c.channelId} justify="space-between" align="center" style={{ minWidth: 0 }}>
+                      <Row gap={7} align="center" style={{ minWidth: 0 }}>
+                        <PlatformPip id={c.platform} size={12} />
+                        <span style={{ fontSize: 12, fontWeight: 550, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {c.displayName}
+                        </span>
+                      </Row>
+                      <span className="tabular" style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{fmtN(c.ccv || 0)}</span>
+                    </Row>
+                  ))}
+                {(atTimestampData?.channels ?? []).length === 0 && (
+                  <span style={{ fontSize: 11.5, color: 'var(--fg-dim)' }}>No channel had data at that minute.</span>
+                )}
+              </Col>
+              <Row gap={6} wrap>
+                {peakMoment && (
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => setAnchorTimestamp(peakMoment.iso)}
+                  >
+                    Jump to peak
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-xs"
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setSnapExpanded((v) => !v)}
+                >
+                  {snapExpanded ? 'Hide full table' : 'Full table'}
+                </button>
+              </Row>
+            </Col>
+          </Section>
+        )}
+        </div>
+
         {/* Compare overlay — current scope vs a sibling scope, aligned by
             minutes-from-start so different days line up on one axis */}
         {compareId && compareLabel && (
@@ -987,8 +1220,8 @@ function ExploreScopedView({
           />
         )}
 
-        {/* "All channels at T" panel — shown when a single timestamp is pinned */}
-        {atParam && !fromParam && (
+        {/* Full at-minute table — opt-in from the rail's "Full table" */}
+        {atParam && !fromParam && snapExpanded && (
           <AllChannelsAtTimestampPanel
             timestamp={atParam}
             timezone={series?.timezone ?? 'UTC'}
@@ -1163,7 +1396,7 @@ function ExploreScopedView({
                     <FilterChipRow label="Region">
                       <FilterMultiSelect
                         label="Region"
-                        options={availableRegions.map((r) => ({ value: r, label: r }))}
+                        options={availableRegions.map((r) => ({ value: r, label: r, count: filterCounts.region.get(r) }))}
                         selected={regionFilter}
                         onChange={setRegions}
                       />
@@ -1190,7 +1423,7 @@ function ExploreScopedView({
                   <FilterChipRow label="Language">
                     <FilterMultiSelect
                       label="Language"
-                      options={availableLanguages.map((l) => ({ value: l, label: l.toUpperCase() }))}
+                      options={availableLanguages.map((l) => ({ value: l, label: l.toUpperCase(), count: filterCounts.lang.get(l) }))}
                       selected={languageFilter}
                       onChange={setLanguages}
                     />
