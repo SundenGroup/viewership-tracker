@@ -175,3 +175,8 @@
 .text-gray-300, .text-gray-400 { color: var(--fg-muted) !important; }
 .text-gray-500, .text-gray-600, .text-gray-700 { color: var(--fg-dim) !important; }
 .placeholder-gray-500::placeholder, .placeholder-gray-600::placeholder { color: var(--fg-dim) !important; }
+
+/* Receipt grid collapses to one column on narrow screens */
+@media (max-width: 980px) {
+  .receipt-grid { grid-template-columns: minmax(0, 1fr) !important; }
+}

@@ -37,6 +37,7 @@ import {
   IconCalendar,
   IconChev,
   IconList,
+  Breadcrumbs,
 } from '@/components/design';
 import { fmtN, fmtCompact, fmtDuration, fmtRelative } from '@/design/format';
 import { Avatar, FreshnessIndicator } from './DiscoverDetailPage';
@@ -294,7 +295,13 @@ export function DiscoverChannelPage() {
   if (error) {
     return (
       <div style={{ padding: 32 }}>
-        <BackLink slug={slug} name={trackerName} />
+        <Breadcrumbs
+          items={[
+            { label: 'Discover', to: '/discover' },
+            { label: trackerName ?? slug ?? '…', to: slug ? `/discover/${slug}?tab=channels` : undefined },
+            { label: data?.channel?.display_name ?? 'Channel' },
+          ]}
+        />
         <Section style={{ marginTop: 20, color: 'var(--danger)' }}>{error}</Section>
       </div>
     );
@@ -302,7 +309,13 @@ export function DiscoverChannelPage() {
   if (!data) {
     return (
       <div style={{ padding: 32, color: 'var(--fg-muted)' }}>
-        <BackLink slug={slug} name={trackerName} />
+        <Breadcrumbs
+          items={[
+            { label: 'Discover', to: '/discover' },
+            { label: trackerName ?? slug ?? '…', to: slug ? `/discover/${slug}?tab=channels` : undefined },
+            { label: 'Channel' },
+          ]}
+        />
         <div style={{ marginTop: 20 }}>Loading…</div>
       </div>
     );
@@ -311,7 +324,13 @@ export function DiscoverChannelPage() {
   return (
     <div style={{ padding: '32px 24px 64px', maxWidth: 1280, margin: '0 auto' }}>
       <Row justify="space-between" align="center">
-        <BackLink slug={slug} name={trackerName} />
+        <Breadcrumbs
+          items={[
+            { label: 'Discover', to: '/discover' },
+            { label: trackerName ?? slug ?? '…', to: slug ? `/discover/${slug}?tab=channels` : undefined },
+            { label: data?.channel?.display_name ?? 'Channel' },
+          ]}
+        />
       </Row>
 
       {/* Hero */}

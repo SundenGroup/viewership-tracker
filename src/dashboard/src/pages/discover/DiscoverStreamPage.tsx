@@ -31,6 +31,7 @@ import {
   IconChev,
   IconList,
   IconDownload,
+  Breadcrumbs,
 } from '@/components/design';
 import { fmtN, fmtCompact, fmtDuration } from '@/design/format';
 import { downloadCsv, csvStamp } from '@/utils/csv';
@@ -72,6 +73,19 @@ export function DiscoverStreamPage() {
     () => (location.state as { channel?: TrackerChannelMeta } | null)?.channel ?? null,
   );
   const chan = channel && channel.id === channelId ? channel : null;
+
+  const [trackerName, setTrackerName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!slug) return;
+    let cancelled = false;
+    api
+      .getGameTracker(slug)
+      .then((t) => !cancelled && setTrackerName(t.name))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
 
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
   useEffect(() => {
@@ -182,7 +196,13 @@ export function DiscoverStreamPage() {
   if (error) {
     return (
       <div style={{ padding: 32 }}>
-        <BackLink slug={slug} channelId={channelId} />
+        <Breadcrumbs
+          items={[
+            { label: 'Discover', to: '/discover' },
+            { label: slug ?? '…', to: slug ? `/discover/${slug}?tab=channels` : undefined },
+            { label: 'Stream' },
+          ]}
+        />
         <Section style={{ marginTop: 20, color: 'var(--danger)' }}>{error}</Section>
       </div>
     );
@@ -190,7 +210,13 @@ export function DiscoverStreamPage() {
   if (!detail || !slug || !channelId) {
     return (
       <div style={{ padding: 32, color: 'var(--fg-muted)' }}>
-        <BackLink slug={slug} channelId={channelId} />
+        <Breadcrumbs
+          items={[
+            { label: 'Discover', to: '/discover' },
+            { label: slug ?? '…', to: slug ? `/discover/${slug}?tab=channels` : undefined },
+            { label: 'Stream' },
+          ]}
+        />
         <div style={{ marginTop: 20 }}>Loading…</div>
       </div>
     );
@@ -243,7 +269,17 @@ export function DiscoverStreamPage() {
   return (
     <div style={{ padding: '32px 24px 64px', maxWidth: 1280, margin: '0 auto' }}>
       <Row justify="space-between" align="center">
-        <BackLink slug={slug} channelId={channelId} />
+        <Breadcrumbs
+          items={[
+            { label: 'Discover', to: '/discover' },
+            { label: trackerName ?? slug ?? '…', to: slug ? `/discover/${slug}?tab=channels` : undefined },
+            {
+              label: chan?.display_name ?? 'Channel',
+              to: slug && channelId ? `/discover/${slug}/channel/${channelId}` : undefined,
+            },
+            { label: start.toLocaleDateString([], { month: 'short', day: 'numeric' }) },
+          ]}
+        />
         <Row gap={6} align="center">
           <NavChevron to={prevTo} dir="prev" state={navState} />
           <NavChevron to={nextTo} dir="next" state={navState} />
@@ -362,16 +398,6 @@ export function DiscoverStreamPage() {
         )}
       </Row>
 
-      {/* Stream health — rendered only once the scorer has graded this
-          session (ended, big enough, chat-covered) AND the channel has
-          passed the evidence gate (enough scored sessions). */}
-      {session.health_grade != null && session.health_score != null && (
-        <StreamHealthPanel
-          grade={session.health_grade}
-          score={session.health_score}
-          evidence={session.health_evidence}
-        />
-      )}
       {session.health_grade == null && detail?.healthPending && (
         <div
           style={{
@@ -388,6 +414,21 @@ export function DiscoverStreamPage() {
         </div>
       )}
 
+      {/* The receipt: broadcast minute-by-minute on the left, the health
+          evidence that judges it docked alongside — one glance couples the
+          curve with its verdict. */}
+      <div
+        className="receipt-grid"
+        style={{
+          display: 'grid',
+          gridTemplateColumns:
+            session.health_grade != null && session.health_score != null
+              ? 'minmax(0, 1fr) 330px'
+              : 'minmax(0, 1fr)',
+          gap: 16,
+          alignItems: 'start',
+        }}
+      >
       {/* Main chart */}
       <Section
         title={chart.hasChatBars ? 'Viewers & chat activity' : 'Concurrent viewers'}
@@ -507,6 +548,15 @@ export function DiscoverStreamPage() {
         )}
       </Section>
 
+      {session.health_grade != null && session.health_score != null && (
+        <StreamHealthPanel
+          grade={session.health_grade}
+          score={session.health_score}
+          evidence={session.health_evidence}
+        />
+      )}
+      </div>
+
       {/* Prev/next footer — same wording as the top chevrons' tooltips */}
       <Row justify="space-between" align="center">
         <FooterNavLink to={prevTo} state={navState} label="‹ Previous stream" disabledHint="No earlier stream tracked" />
@@ -516,26 +566,6 @@ export function DiscoverStreamPage() {
   );
 }
 
-function BackLink({ slug, channelId }: { slug: string | undefined; channelId: string | undefined }) {
-  return (
-    <Link
-      to={slug && channelId ? `/discover/${slug}/channel/${channelId}` : '/discover'}
-      style={{
-        color: 'var(--fg-muted)',
-        fontSize: 12,
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-        textDecoration: 'none',
-      }}
-    >
-      <span style={{ display: 'inline-block', transform: 'rotate(180deg)' }}>
-        <IconChev size={12} />
-      </span>
-      back to channel
-    </Link>
-  );
-}
 
 function NavChevron({
   to,
