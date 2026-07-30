@@ -646,3 +646,35 @@ export async function avgChattersPerViewerPct(
   const pct = result.rows[0]?.pct;
   return pct != null ? Number(pct) : null;
 }
+
+/**
+ * Last COMPLETED-broadcast grade per channel — the honest thing to show
+ * beside a live row. Grades only exist once a session ends and is scored,
+ * so a live session never grades itself; this is "how did their recent
+ * broadcasts score", not "is this stream clean right now".
+ */
+export async function lastGradesFor(
+  gameTrackerId: string,
+  channelIds: string[],
+): Promise<Map<string, { grade: string; score: number | null }>> {
+  if (channelIds.length === 0) return new Map();
+  const { rows } = await db.raw<{
+    rows: Array<{ channel_id: string; health_grade: string; health_score: string | null }>;
+  }>(
+    `
+    SELECT DISTINCT ON (channel_id) channel_id, health_grade, health_score
+    FROM stream_sessions
+    WHERE game_tracker_id = ?
+      AND channel_id = ANY(?)
+      AND health_grade IS NOT NULL
+    ORDER BY channel_id, started_at DESC
+    `,
+    [gameTrackerId, channelIds],
+  );
+  return new Map(
+    rows.map((r) => [
+      r.channel_id,
+      { grade: r.health_grade, score: r.health_score != null ? Number(r.health_score) : null },
+    ]),
+  );
+}

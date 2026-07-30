@@ -429,11 +429,17 @@ router.get('/:slug/leaderboard', async (req: Request, res: Response, next: NextF
       return;
     }
     const channelIds = rows.map((r) => r.channel_id);
-    const channels = await ChannelModel.findByIds(channelIds);
+    const [channels, grades] = await Promise.all([
+      ChannelModel.findByIds(channelIds),
+      StreamSessionModel.lastGradesFor(tracker.id, channelIds),
+    ]);
     const channelMap = new Map(channels.map((c) => [c.id, c]));
     const merged = rows.map((r) => ({
       ...r,
       channel: channelMap.get(r.channel_id) ?? null,
+      // Grade of the channel's last COMPLETED broadcast — never the live one.
+      last_grade: grades.get(r.channel_id)?.grade ?? null,
+      last_score: grades.get(r.channel_id)?.score ?? null,
     }));
     res.json(merged);
   } catch (err) {
