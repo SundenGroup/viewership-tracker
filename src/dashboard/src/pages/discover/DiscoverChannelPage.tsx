@@ -38,6 +38,8 @@ import {
   IconChev,
   IconList,
   Breadcrumbs,
+  GradeBadge,
+  StatBlock,
 } from '@/components/design';
 import { fmtN, fmtCompact, fmtDuration, fmtRelative } from '@/design/format';
 import { Avatar, FreshnessIndicator } from './DiscoverDetailPage';
@@ -246,6 +248,15 @@ export function DiscoverChannelPage() {
     [data, peakCcv],
   );
   const totalSessions = data?.sessions?.length ?? 0;
+  const daysStreamed = useMemo(() => {
+    const cutoff = Date.now() - RANGES[rangeKey].hours * 3600_000;
+    const days = new Set<string>();
+    for (const r of sessionsData?.rows ?? []) {
+      const t = Date.parse(r.started_at);
+      if (!Number.isNaN(t) && t >= cutoff) days.add(new Date(t).toDateString());
+    }
+    return days.size;
+  }, [sessionsData, rangeKey]);
   const totalMinutes = useMemo(
     () => (data?.sessions ?? []).reduce((s, x) => s + x.minutes_live, 0),
     [data],
@@ -333,86 +344,70 @@ export function DiscoverChannelPage() {
         />
       </Row>
 
-      {/* Hero */}
-      <Row gap={16} align="center" wrap style={{ marginTop: 16, marginBottom: 28 }}>
-        <Avatar src={profilePic} name={data.channel.display_name} size={64} />
-        <Col gap={6} style={{ minWidth: 0 }}>
-          <Row gap={10} align="center" wrap style={{ minWidth: 0 }}>
-            <h1
-              style={{
-                fontFamily: 'var(--font-display, var(--font-sans))',
-                fontSize: 'clamp(24px, 5.5vw, 36px)',
-                fontWeight: 700,
-                color: 'var(--fg)',
-                margin: 0,
-                letterSpacing: '-0.02em',
-                lineHeight: 1,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                maxWidth: '100%',
-              }}
-            >
-              {data.channel.display_name}
-            </h1>
-            <Pill tone={data.timeline.length > 0 && data.timeline[data.timeline.length - 1]!.concurrent_viewers > 0 ? 'live' : 'default'}>
-              {data.channel.platform}
-            </Pill>
-          </Row>
-          <Row gap={6} align="center" style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
-            <PlatformPip id={data.channel.platform} size={11} />
-            <ChannelNameWithLink
-              name={data.channel.channel_identifier}
-              platform={data.channel.platform}
-              channelIdentifier={data.channel.channel_identifier}
-              weight={400}
-            />
-          </Row>
-          {/* Summary badge pills — each renders only when the backend has
-              the number (every summary field is nullable). */}
-          {hasSummaryPills && (
-            <Row gap={6} wrap align="center" style={{ marginTop: 2 }}>
-              {summary?.rank?.todayByPeak != null && (
-                <Pill tone="red">
-                  #{summary.rank.todayByPeak} in {trackerName ?? slug} today
-                </Pill>
+      {/* Hero — per the handoff: name + median grade, one meta line, and
+          the rank card on the right. */}
+      <Row gap={16} align="flex-start" justify="space-between" wrap style={{ marginTop: 16, marginBottom: 24 }}>
+        <Row gap={14} align="center" style={{ minWidth: 0 }}>
+          <Avatar src={profilePic} name={data.channel.display_name} size={56} />
+          <Col gap={7} style={{ minWidth: 0 }}>
+            <Row gap={10} align="center" wrap style={{ minWidth: 0 }}>
+              <h1
+                style={{
+                  fontFamily: 'var(--font-display, var(--font-sans))',
+                  fontSize: 'clamp(24px, 5.5vw, 32px)',
+                  fontWeight: 700,
+                  color: 'var(--fg)',
+                  margin: 0,
+                  letterSpacing: '-0.02em',
+                  lineHeight: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  maxWidth: '100%',
+                }}
+              >
+                {data.channel.display_name}
+              </h1>
+              {summary?.healthGrade30d != null && (
+                <GradeBadge grade={summary.healthGrade30d} score={summary.healthAvgScore30d} size={24} />
               )}
-              {topPct != null && <Pill tone="info">Top {topPct}% (30d)</Pill>}
-              {summary?.followers?.current != null && (
-                <Pill>
-                  {fmtCompact(summary.followers.current)} followers
-                  {summary.followers.delta7d != null && (
-                    <span
-                      className="tabular"
-                      style={{
-                        color: summary.followers.delta7d >= 0 ? 'var(--live)' : 'var(--danger)',
-                      }}
-                    >
-                      ({summary.followers.delta7d >= 0 ? '+' : ''}
-                      {fmtCompact(summary.followers.delta7d)})
-                    </span>
-                  )}
-                </Pill>
-              )}
-              {engagementPct != null && <Pill>{engagementPct}% chatters/viewer</Pill>}
-              {summary?.healthGrade30d != null ? (
-                // Same color semantics as the per-session chips: A/B green,
-                // C neutral (typical), D amber, F red — the pill previously
-                // painted C amber and merged D+F, contradicting the table.
-                <HealthPill grade={summary.healthGrade30d} />
-              ) : summary != null &&
-                summary.healthScoredSessions30d > 0 &&
-                summary.healthMinSessions != null &&
-                summary.healthScoredSessions30d < summary.healthMinSessions ? (
-                // Evidence gate: grades stay silent until enough sessions are
-                // scored — one odd stream must not read as a verdict.
-                <Pill>
-                  {collectingHealthCopy(summary.healthScoredSessions30d, summary.healthMinSessions)}
-                </Pill>
-              ) : null}
             </Row>
-          )}
-        </Col>
+            <Row gap={8} align="center" wrap style={{ fontSize: 11.5, color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)' }}>
+              <PlatformPip id={data.channel.platform} size={13} />
+              <ChannelNameWithLink
+                name={`/${data.channel.channel_identifier}`}
+                platform={data.channel.platform}
+                channelIdentifier={data.channel.channel_identifier}
+                weight={400}
+              />
+              {summary?.followers?.current != null && (
+                <>
+                  <span style={{ color: 'var(--border)' }}>·</span>
+                  <span>
+                    {fmtN(summary.followers.current)} followers{' '}
+                    {summary.followers.delta7d != null && (
+                      <span style={{ color: summary.followers.delta7d >= 0 ? 'var(--live)' : 'var(--danger)' }}>
+                        {summary.followers.delta7d >= 0 ? '+' : ''}
+                        {fmtCompact(summary.followers.delta7d)} / 7d
+                      </span>
+                    )}
+                  </span>
+                </>
+              )}
+            </Row>
+          </Col>
+        </Row>
+        {summary?.rank?.todayByPeak != null && summary.rank.of != null && (
+          <div className="card" style={{ padding: '12px 16px', textAlign: 'right' }}>
+            <div className="tabular" style={{ fontSize: 24, fontWeight: 700, lineHeight: 1 }}>
+              #{summary.rank.todayByPeak}
+              <span style={{ fontSize: 13, color: 'var(--fg-dim)', fontWeight: 500 }}> / {fmtN(summary.rank.of)}</span>
+            </div>
+            <div className="eyebrow" style={{ fontSize: 9.5, marginTop: 4, color: 'var(--fg-dim)' }}>
+              Today by peak · this game
+            </div>
+          </div>
+        )}
       </Row>
 
       {/* Range picker */}
@@ -438,11 +433,17 @@ export function DiscoverChannelPage() {
         </Row>
       </Row>
 
-      {/* KPIs */}
-      <Row gap={12} wrap style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', marginBottom: 16 }}>
-        <ChannelKpi
-          icon={<IconTrophy size={13} />}
-          label={`Peak viewers (${RANGES[rangeKey].label})`}
+      {/* KPIs — the spec's five plain stats, health from the 30d summary */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+          gap: 16,
+          marginBottom: 20,
+        }}
+      >
+        <StatBlock
+          label={`Peak · ${RANGES[rangeKey].label}`}
           value={fmtN(peakCcv)}
           sub={
             peakBucket
@@ -452,52 +453,33 @@ export function DiscoverChannelPage() {
                   hour: '2-digit',
                   minute: '2-digit',
                 })
-              : null
+              : undefined
           }
         />
-        <ChannelKpi
-          icon={<IconUsers size={13} />}
-          label={`Avg viewers (${RANGES[rangeKey].label})`}
-          value={fmtN(avgCcv)}
+        <StatBlock label={`Average · ${RANGES[rangeKey].label}`} value={fmtN(avgCcv)} />
+        <StatBlock label={`Hours live · ${RANGES[rangeKey].label}`} value={(totalMinutes / 60).toFixed(1)} />
+        <StatBlock
+          label="Days streamed"
+          value={`${daysStreamed} / ${RANGES[rangeKey].hours / 24 >= 1 ? Math.round(RANGES[rangeKey].hours / 24) : 1}`}
         />
-        <ChannelKpi
-          icon={<IconBolt size={13} />}
-          label="Sessions"
-          value={String(totalSessions)}
-          sub={`${fmtDuration(totalMinutes * 60_000)} live`}
+        <StatBlock
+          label="Health · post-broadcast"
+          value={
+            summary?.healthGrade30d != null
+              ? `${summary.healthGrade30d} · ${summary.healthAvgScore30d ?? '—'}`
+              : '—'
+          }
+          sub={
+            summary?.healthGrade30d != null
+              ? `median of ${summary.healthScoredSessions30d} scored broadcasts`
+              : summary != null &&
+                  summary.healthScoredSessions30d > 0 &&
+                  summary.healthMinSessions != null
+                ? collectingHealthCopy(summary.healthScoredSessions30d, summary.healthMinSessions)
+                : 'not scored yet'
+          }
         />
-        {rangeStats.messages > 0 && (
-          <ChannelKpi
-            icon={<IconList size={13} />}
-            label={`Messages (${RANGES[rangeKey].label})`}
-            value={fmtN(rangeStats.messages)}
-          />
-        )}
-        {rangeStats.chatters > 0 && (
-          <ChannelKpi
-            icon={<IconUsers size={13} />}
-            label={`Unique chatters (${RANGES[rangeKey].label})`}
-            value={fmtN(rangeStats.chatters)}
-            sub={rangeStats.count > 1 ? `summed across ${rangeStats.count} sessions` : undefined}
-          />
-        )}
-        {rangeStats.hasFollowers && rangeStats.followersDelta !== 0 && (
-          <ChannelKpi
-            icon={<IconUser size={13} />}
-            label={`Followers Δ (${RANGES[rangeKey].label})`}
-            value={
-              <span
-                style={{
-                  color: rangeStats.followersDelta >= 0 ? 'var(--live)' : 'var(--danger)',
-                }}
-              >
-                {rangeStats.followersDelta >= 0 ? '+' : ''}
-                {fmtN(rangeStats.followersDelta)}
-              </span>
-            }
-          />
-        )}
-      </Row>
+      </div>
 
       {/* Timeline chart */}
       <Section
@@ -586,13 +568,16 @@ export function DiscoverChannelPage() {
       </Section>
 
       {/* Recent sessions */}
-      <Section title="Recent broadcasts" eyebrow="SESSIONS">
+      <Section title="Streams" eyebrow="EVERY TRACKED SESSION · CLICK ONE FOR THE FULL RECEIPT">
         <SessionsTable
           sessions={sessionsData?.rows ?? null}
           slug={slug}
           channelId={channelId}
           channel={data.channel}
         />
+        <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+          D and F are reserved for real red flags — a small stream with nothing wrong floors at C.
+        </div>
         {sessionsData != null && sessionsData.total > sessionsData.rows.length && (
           <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
             Showing {sessionsData.rows.length} of {fmtN(sessionsData.total)} sessions

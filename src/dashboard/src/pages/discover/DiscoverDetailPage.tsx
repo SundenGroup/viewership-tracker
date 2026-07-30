@@ -39,6 +39,7 @@ import {
   LoadingBlock,
   DeltaChip,
   GradeBadge,
+  StatBlock,
 } from '@/components/design';
 import { fmtN, fmtCompact, fmtRelative } from '@/design/format';
 import { downloadCsv, csvStamp } from '@/utils/csv';
@@ -586,7 +587,7 @@ function BackLink() {
       <span style={{ display: 'inline-block', transform: 'rotate(180deg)' }}>
         <IconChev size={12} />
       </span>
-      back to Discover
+      ← All trackers
     </Link>
   );
 }
@@ -720,18 +721,18 @@ function LiveTab({
     <Col gap={16}>
       {/* Hero KPI strip */}
       <Row gap={12} wrap style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-        <KpiCard
-          icon={<IconUsers size={14} />}
-          label={`Live CCV${scopeSuffix}`}
-          value={
-            <Row gap={10} align="baseline">
-              <span>{fmtN(kpis.total)}</span>
-              {deltaVs6h != null && <DeltaChip pct={deltaVs6h / 100} />}
-            </Row>
-          }
-        />
-        <KpiCard
-          icon={<IconTrophy size={14} />}
+        <div className="card" style={{ padding: '16px 18px' }}>
+          <div className="eyebrow" style={{ fontSize: 9.5, marginBottom: 6, color: 'var(--fg-dim)' }}>
+            Live CCV{scopeSuffix}
+          </div>
+          <Row gap={10} align="baseline">
+            <span className="tabular" style={{ fontSize: 34, fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1 }}>
+              {fmtCompact(kpis.total)}
+            </span>
+            {deltaVs6h != null && <DeltaChip pct={deltaVs6h / 100} />}
+          </Row>
+        </div>
+        <StatBlock
           label={`24h peak${scopeSuffix}`}
           value={peak24 ? fmtCompact(peak24.value) : '—'}
           sub={
@@ -740,14 +741,12 @@ function LiveTab({
               : null
           }
         />
-        <KpiCard
-          icon={<IconEye size={14} />}
+        <StatBlock
           label="Live channels"
           value={fmtN(platform === 'all' ? activeChannelCount : (shown?.length ?? 0))}
           sub={platform === 'all' ? 'all platforms' : 'matching filter'}
         />
-        <KpiCard
-          icon={<IconBolt size={14} />}
+        <StatBlock
           label="New today"
           value={newToday != null ? fmtN(newToday) : '—'}
           sub="found by discovery"

@@ -32,6 +32,8 @@ import {
   IconList,
   IconDownload,
   Breadcrumbs,
+  StatBlock,
+  GradeBadge,
 } from '@/components/design';
 import { fmtN, fmtCompact, fmtDuration } from '@/design/format';
 import { downloadCsv, csvStamp } from '@/utils/csv';
@@ -287,104 +289,87 @@ export function DiscoverStreamPage() {
       </Row>
 
       {/* Header */}
-      <Row gap={16} align="flex-start" style={{ marginTop: 16, marginBottom: 24 }}>
-        <Avatar src={profilePic} name={chan?.display_name ?? '?'} size={52} />
-        <Col gap={7} style={{ minWidth: 0, flex: 1 }}>
-          <Row gap={10} align="center" wrap>
+      <Row gap={16} align="flex-start" justify="space-between" wrap style={{ marginTop: 16, marginBottom: 24 }}>
+        <Row gap={14} align="flex-start" style={{ minWidth: 0 }}>
+          <Avatar src={profilePic} name={chan?.display_name ?? '?'} size={44} />
+          <Col gap={7} style={{ minWidth: 0 }}>
+            <div className="eyebrow" style={{ fontSize: 10, color: 'var(--fg-dim)' }}>Stream session</div>
             <h1
               style={{
                 fontFamily: 'var(--font-display, var(--font-sans))',
-                fontSize: 26,
+                fontSize: 'clamp(22px, 5vw, 30px)',
                 fontWeight: 700,
                 color: 'var(--fg)',
                 margin: 0,
                 letterSpacing: '-0.02em',
-                lineHeight: 1,
+                lineHeight: 1.1,
               }}
             >
-              {chan?.display_name ?? '…'}
-            </h1>
-            <PlatformPip id={chan?.platform ?? null} size={12} />
-            {isLive && (
-              <Pill tone="live">
-                <span className="dot dot-live" /> live
-              </Pill>
-            )}
-          </Row>
-          <div
-            title={latestTitle ?? ''}
-            style={{
-              fontSize: 14,
-              color: 'var(--fg)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {latestTitle ?? '—'}
-          </div>
-          <Row gap={10} wrap align="center" style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
-            {session.category && <Pill>{session.category}</Pill>}
-            <span>
+              {chan?.display_name ?? '…'} —{' '}
               {start.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
-            </span>
-            <span className="mono tabular">
-              {startTime}–{endTime}
-            </span>
-            <span>{fmtDuration(session.minutes_live * 60_000)}</span>
-            {session.titles.length > 1 && (
-              <span style={{ color: 'var(--fg-dim)' }}>
-                {session.titles.length - 1} title change{session.titles.length > 2 ? 's' : ''}
+            </h1>
+            <Row gap={8} wrap align="center" style={{ fontSize: 11.5, color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)' }}>
+              <PlatformPip id={chan?.platform ?? null} size={13} />
+              <span className="tabular" style={{ whiteSpace: 'nowrap' }}>
+                {startTime} → {endTime} · {fmtDuration(session.minutes_live * 60_000)}
               </span>
-            )}
-          </Row>
-        </Col>
+              {isLive && (
+                <Pill tone="live">
+                  <span className="dot dot-live" /> live
+                </Pill>
+              )}
+              {session.titles.length > 1 && (
+                <span style={{ color: 'var(--fg-dim)' }}>
+                  {session.titles.length - 1} title change{session.titles.length > 2 ? 's' : ''}
+                </span>
+              )}
+            </Row>
+            <div
+              title={latestTitle ?? ''}
+              style={{ fontSize: 13, color: 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {latestTitle ?? ''}
+            </div>
+          </Col>
+        </Row>
+        {session.health_grade != null && (
+          <GradeBadge grade={session.health_grade} score={session.health_score} size={40} />
+        )}
       </Row>
 
-      {/* KPI strip */}
-      <Row gap={12} wrap style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginBottom: 16 }}>
-        <ChannelKpi
-          icon={<IconTrophy size={13} />}
-          label="Peak viewers"
+      {/* KPI strip — the receipt's six, plain per the handoff */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+          gap: 16,
+          marginBottom: 20,
+        }}
+      >
+        <StatBlock
+          label="Peak CCV"
           value={fmtN(session.peak_ccv)}
           sub={
             peakPoint
-              ? new Date(peakPoint.ts).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })
+              ? `at ${new Date(peakPoint.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
               : undefined
           }
         />
-        <ChannelKpi icon={<IconUsers size={13} />} label="Avg viewers" value={fmtN(session.avg_ccv)} />
-        <ChannelKpi
-          icon={<IconEye size={13} />}
-          label="Hours watched"
-          value={fmtCompact(hoursWatched)}
-        />
+        <StatBlock label="Average CCV" value={fmtN(session.avg_ccv)} />
+        <StatBlock label="Hours watched" value={fmtCompact(hoursWatched)} />
         {hasChatData && (
-          <ChannelKpi icon={<IconList size={13} />} label="Messages" value={fmtN(messages)} />
-        )}
-        {hasChatData && (
-          <ChannelKpi
-            icon={<IconUsers size={13} />}
-            label="Unique chatters"
-            value={fmtN(chatters)}
+          <StatBlock
+            label="Chat messages"
+            value={fmtN(messages)}
+            sub={session.minutes_live > 0 ? `${(messages / session.minutes_live).toFixed(0)} / min` : undefined}
           />
         )}
-        {hasChatData && session.minutes_live > 0 && (
-          <ChannelKpi
-            icon={<IconBolt size={13} />}
-            label="Msgs/min"
-            value={(messages / session.minutes_live).toFixed(1)}
-          />
-        )}
+        {hasChatData && <StatBlock label="Unique chatters" value={fmtN(chatters)} />}
         {followersDelta != null && (
-          <ChannelKpi
-            icon={<IconUser size={13} />}
-            label="Followers ±"
+          <StatBlock
+            label="Followers"
             value={
-              <span style={{ color: followersDelta >= 0 ? 'var(--live)' : 'var(--red)' }}>
+              <span style={{ color: followersDelta >= 0 ? 'var(--live)' : 'var(--danger)' }}>
                 {followersDelta >= 0 ? '+' : ''}
                 {fmtN(followersDelta)}
               </span>
@@ -396,7 +381,7 @@ export function DiscoverStreamPage() {
             }
           />
         )}
-      </Row>
+      </div>
 
       {session.health_grade == null && detail?.healthPending && (
         <div
@@ -431,8 +416,8 @@ export function DiscoverStreamPage() {
       >
       {/* Main chart */}
       <Section
-        title={chart.hasChatBars ? 'Viewers & chat activity' : 'Concurrent viewers'}
-        eyebrow="PER-MINUTE"
+        title="The broadcast, minute by minute"
+        eyebrow={chart.hasChatBars ? 'CCV CURVE · CHAT ACTIVITY BELOW · TITLE CHANGES MARKED' : 'CCV CURVE · TITLE CHANGES MARKED'}
         style={{ marginBottom: 16 }}
         right={
           <Row gap={8} align="center">
