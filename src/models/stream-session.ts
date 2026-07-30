@@ -678,3 +678,25 @@ export async function lastGradesFor(
     ]),
   );
 }
+
+/** Start time of each channel's CURRENT live session (for uptime columns). */
+export async function liveStartsFor(
+  gameTrackerId: string,
+  channelIds: string[],
+): Promise<Map<string, Date>> {
+  if (channelIds.length === 0) return new Map();
+  const { rows } = await db.raw<{
+    rows: Array<{ channel_id: string; started_at: Date }>;
+  }>(
+    `
+    SELECT DISTINCT ON (channel_id) channel_id, started_at
+    FROM stream_sessions
+    WHERE game_tracker_id = ?
+      AND channel_id = ANY(?)
+      AND status = 'live'
+    ORDER BY channel_id, started_at DESC
+    `,
+    [gameTrackerId, channelIds],
+  );
+  return new Map(rows.map((r) => [r.channel_id, r.started_at]));
+}
