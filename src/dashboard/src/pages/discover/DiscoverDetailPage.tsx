@@ -13,6 +13,7 @@ import {
   useDiscoverAsk,
 } from '@/components/discover/DiscoverAskBox';
 import { useAuth } from '@/hooks/useAuth';
+import { useViewportBelow } from '@/hooks/useViewport';
 import {
   Row,
   Col,
@@ -82,6 +83,7 @@ export function DiscoverDetailPage() {
   // answer to one control (and one shareable ?platform= URL) instead of
   // each tab inventing its own.
   const platform = searchParams.get('platform') ?? 'all';
+  const isPhone = useViewportBelow(700);
   const setPlatform = (next: string) => {
     const params = new URLSearchParams(searchParams);
     if (next === 'all') params.delete('platform');
@@ -329,6 +331,58 @@ export function DiscoverDetailPage() {
             </Col>
           )}
         </>
+      )}
+
+      {/* Phone-only bottom tab bar — thumb-reachable Live/Trends/Channels,
+          mirroring the top tabs. */}
+      {isPhone && !searchQuery && (
+        <nav
+          aria-label="Tracker sections"
+          style={{
+            position: 'fixed',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 30,
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr',
+            background: 'var(--bg-card)',
+            borderTop: '1px solid var(--border)',
+            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          }}
+        >
+          {(
+            [
+              ['live', 'Live', <IconBolt key="i" size={15} />],
+              ['trends', 'Trends', <IconGrid key="i" size={15} />],
+              ['channels', 'Channels', <IconList key="i" size={15} />],
+            ] as const
+          ).map(([id, label, icon]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              aria-current={tab === id ? 'page' : undefined}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 3,
+                padding: '9px 0 10px',
+                minHeight: 48,
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: 10.5,
+                fontWeight: 600,
+                color: tab === id ? 'var(--red)' : 'var(--fg-muted)',
+              }}
+            >
+              {icon}
+              {label}
+            </button>
+          ))}
+        </nav>
       )}
     </div>
   );

@@ -180,3 +180,8 @@
 @media (max-width: 980px) {
   .receipt-grid { grid-template-columns: minmax(0, 1fr) !important; }
 }
+
+/* Touch surfaces get real targets — 28px pills are for mice. */
+@media (pointer: coarse) {
+  .range-pill { min-height: 40px; padding: 8px 14px; }
+}

@@ -21,6 +21,7 @@ export function RangePill({
   return (
     <button
       type="button"
+      className="range-pill"
       onClick={onClick}
       title={title}
       aria-pressed={active}

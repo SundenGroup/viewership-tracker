@@ -36,6 +36,7 @@ import {
   IconSearch,
   InteractiveMainChart,
   LineChart,
+  RangePill,
 } from '@/components/design';
 import type { SeriesData } from '@/components/design';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
@@ -44,6 +45,7 @@ import { fmtCompact, fmtN, fmtDateMD, fmtDateLong } from '@/design/format';
 import { formatChartTimeInTz } from '@/utils/formatters';
 import { downloadCsv, csvStamp } from '@/utils/csv';
 import { useAuth } from '@/hooks/useAuth';
+import { useViewportBelow } from '@/hooks/useViewport';
 import { useApi, usePollingApi } from '@/hooks/useApi';
 import * as api from '@/services/api';
 import { ExploreAskBox, ExploreAskResults, useExploreAsk } from '@/components/editor/ExploreAskBox';
@@ -393,6 +395,8 @@ function ExploreScopedView({
   // Overlay another scope of the SAME level (day vs day, stage vs stage),
   // aligned by minutes-from-start so different wall-clock days line up.
   const [snapExpanded, setSnapExpanded] = useState(false);
+  const isNarrow = useViewportBelow(700);
+
 
   // Option counts for the filter dropdowns — "RU (14)" beats guessing
   // which options are worth clicking. Counted on the unfiltered set.
@@ -818,6 +822,29 @@ function ExploreScopedView({
     [updateUrl],
   );
 
+  // Touch preset windows — drag-to-brush is miserable on phones, so
+  // narrow screens pick from fixed windows instead (same ?from/?to).
+  const applyPreset = useCallback(
+    (preset: 'full' | 'peak' | 'last2h') => {
+      const ts = timeline.timestamps;
+      if (ts.length < 2) return;
+      if (preset === 'full') {
+        setRange(null, null);
+        setAnchorTimestamp(null);
+        return;
+      }
+      if (preset === 'peak' && peakMoment) {
+        const c = Date.parse(peakMoment.iso);
+        setRange(new Date(c - 30 * 60_000).toISOString(), new Date(c + 30 * 60_000).toISOString());
+        setAnchorTimestamp(peakMoment.iso);
+        return;
+      }
+      const end = Date.parse(ts[ts.length - 1]!);
+      setRange(new Date(end - 2 * 3600_000).toISOString(), new Date(end).toISOString());
+    },
+    [timeline.timestamps, peakMoment, setRange, setAnchorTimestamp],
+  );
+
   // Available platforms in current data (for filter chip row)
   const availablePlatforms = useMemo(() => {
     const set = new Set<string>();
@@ -986,6 +1013,25 @@ function ExploreScopedView({
             </Pill>
           }
         >
+          {isNarrow && timeline.total.length > 0 && (
+            <Row gap={6} wrap style={{ marginBottom: 8 }}>
+              {(
+                [
+                  ['full', 'Full window'],
+                  ['peak', 'Peak hour'],
+                  ['last2h', 'Last 2h'],
+                ] as const
+              ).map(([k, l]) => (
+                <RangePill
+                  key={k}
+                  active={k === 'full' ? !fromParam : false}
+                  onClick={() => applyPreset(k)}
+                >
+                  {l}
+                </RangePill>
+              ))}
+            </Row>
+          )}
           {moments.length > 0 && (
             <div style={{ position: 'relative', height: 18, margin: '0 0 2px' }} aria-label="Chart moments">
               {moments.map((m) => (
