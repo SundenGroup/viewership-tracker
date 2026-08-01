@@ -49,6 +49,8 @@ export function HeroKPIs({
   yoyAvg,
   yoyHours,
   yoyLabel,
+  comparisonKind,
+  baseline,
   days = 3,
   timeSeries,
   peakAt,
@@ -64,6 +66,14 @@ export function HeroKPIs({
   yoyHours?: number | null;
   /** Tooltip / aria-label for the trend chip (e.g. "vs Day 1"). */
   yoyLabel?: string;
+  /**
+   * Renders a visible badge above the KPIs naming the baseline — a bare
+   * "▲ 12%" without its denominator is how numbers get misquoted. 'custom'
+   * = hand-picked baseline (info tone), 'auto' = previous day (quiet).
+   */
+  comparisonKind?: 'custom' | 'auto';
+  /** Baseline absolutes for per-chip tooltips ("their peak: 222,190"). */
+  baseline?: { peak?: number | null; avg?: number | null; hours?: number | null };
   days?: number;
   /** Per-minute total CCV series, drives the sparkline + peak marker. */
   timeSeries?: number[];
@@ -387,7 +397,53 @@ export function HeroKPIs({
     },
   ];
 
+  const badge =
+    yoyLabel && comparisonKind ? (
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'flex-start',
+          marginBottom: 8,
+        }}
+      >
+        <span
+          title={
+            baseline
+              ? `Baseline — peak ${baseline.peak?.toLocaleString('en-US') ?? '—'} · avg ${baseline.avg?.toLocaleString('en-US') ?? '—'} · ${baseline.hours != null ? Math.round(baseline.hours).toLocaleString('en-US') : '—'} hours watched`
+              : undefined
+          }
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '3px 10px',
+            borderRadius: 999,
+            fontSize: 10.5,
+            fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+            fontWeight: 600,
+            color: comparisonKind === 'custom' ? 'var(--info)' : 'var(--fg-muted)',
+            background:
+              comparisonKind === 'custom'
+                ? 'color-mix(in oklab, var(--info) 12%, transparent)'
+                : 'var(--bg-sunken)',
+            border:
+              comparisonKind === 'custom'
+                ? '1px solid color-mix(in oklab, var(--info) 30%, transparent)'
+                : '1px solid var(--border)',
+          }}
+        >
+          <span aria-hidden>⇄</span>
+          {comparisonKind === 'custom' ? 'Compared to' : 'vs previous day'} ·{' '}
+          <span style={{ color: comparisonKind === 'custom' ? 'var(--info)' : 'var(--fg)' }}>{yoyLabel}</span>
+        </span>
+      </div>
+    ) : null;
+
   return (
+    <>
+    {badge}
     <div
       style={{
         display: 'grid',
@@ -413,5 +469,6 @@ export function HeroKPIs({
         </div>
       ))}
     </div>
+    </>
   );
 }

@@ -459,11 +459,13 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     };
     return {
       label: previousScope.label,
+      kind: (customCompare ? 'custom' : 'auto') as 'custom' | 'auto',
+      baseline: { peak: prevPeak, avg: prevAvg, hours: prevHours },
       peak: delta(model.peakTotal, prevPeak),
       avg: delta(model.avgTotal, prevAvg),
       hours: delta(model.viewedHours, prevHours),
     };
-  }, [prevMetrics, previousScope, model.peakTotal, model.avgTotal, model.viewedHours]);
+  }, [prevMetrics, previousScope, customCompare, model.peakTotal, model.avgTotal, model.viewedHours]);
 
   const scope = !resolvedScope
     ? null
@@ -662,6 +664,10 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
 
 interface TrendDeltas {
   label: string;
+  /** custom = hand-picked baseline; auto = previous day in the stage. */
+  kind: 'custom' | 'auto';
+  /** Baseline absolutes — feeds the badge tooltip. */
+  baseline: { peak: number; avg: number; hours: number };
   peak: number | null;
   avg: number | null;
   hours: number | null;
@@ -792,6 +798,8 @@ function SimpleReport({
           peakAt={model.peakTotalAt}
           timezone={seriesInfo.timezone}
           peakIncludeDate={scopeLevel !== 'day'}
+          comparisonKind={trend?.kind}
+          baseline={trend?.baseline}
           yoyPeak={trend?.peak ?? null}
           yoyAvg={trend?.avg ?? null}
           yoyHours={trend?.hours ?? null}
@@ -1202,6 +1210,8 @@ function DetailedReport({
           peakAt={model.peakTotalAt}
           timezone={seriesInfo.timezone}
           peakIncludeDate={scopeLevel !== 'day'}
+          comparisonKind={trend?.kind}
+          baseline={trend?.baseline}
           yoyPeak={trend?.peak ?? null}
           yoyAvg={trend?.avg ?? null}
           yoyHours={trend?.hours ?? null}
