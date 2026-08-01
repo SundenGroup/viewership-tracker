@@ -348,6 +348,22 @@ interface ImportBody {
   dryRun?: boolean;
 }
 
+/**
+ * Big replace-imports delete + insert hundreds of thousands of rows in
+ * one go — episodic churn autovacuum is slow to chase. A stale
+ * visibility map turns index-only scans into disk heap-fetches, and a
+ * series switch in the editor goes from ~30ms to 20+ seconds (bitten in
+ * production after the EWC CSV surgery). Fire-and-forget; VACUUM can't
+ * run in a transaction and nobody should wait on it.
+ */
+function vacuumSnapshotsSoon(changedRows: number): void {
+  if (changedRows < 10_000) return;
+  void db
+    .raw('VACUUM (ANALYZE) viewership_snapshots')
+    .then(() => logger.info(`[Import] VACUUM ANALYZE after ${changedRows} changed rows`))
+    .catch((err: Error) => logger.warn(`[Import] post-import vacuum failed: ${err.message}`));
+}
+
 router.post('/csv', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const {
@@ -590,6 +606,7 @@ router.post('/csv', async (req: Request, res: Response, next: NextFunction) => {
         `(${summary.range.fromLocal} → ${summary.range.toLocal} ${timezone})`,
     );
 
+    vacuumSnapshotsSoon(deleted + insertRows.length);
     res.json({ dryRun: false, ...summary, deleted, inserted: insertRows.length });
   } catch (err) {
     next(err);
@@ -837,6 +854,7 @@ router.post('/discover-backfill', async (req: Request, res: Response, next: Next
         `(${summary.range.fromLocal} → ${summary.range.toLocal} ${timezone})`,
     );
 
+    vacuumSnapshotsSoon(deleted + insertRows.length);
     res.json({ dryRun: false, ...summary, deleted, inserted: insertRows.length });
   } catch (err) {
     next(err);
