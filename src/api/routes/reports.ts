@@ -32,7 +32,33 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       return;
     }
 
-    const { scope, id, ids, template, format, deliveryMethod, skipNarratives, detail, viewGroup, excludeTiers, excludeLanguages, excludeChannelIds } = req.body;
+    const { scope, id, ids, template, format, deliveryMethod, skipNarratives, detail, viewGroup, excludeTiers, excludeLanguages, excludeChannelIds, compare } = req.body;
+
+    // Optional custom comparison: same scope level, real UUID. Multi-stage
+    // reports have no single aligned baseline — reject rather than guess.
+    if (compare != null) {
+      const cOk =
+        typeof compare === 'object' &&
+        ['day', 'stage', 'series'].includes(compare.scope) &&
+        typeof compare.id === 'string' &&
+        /^[0-9a-f-]{36}$/i.test(compare.id);
+      if (!cOk) {
+        res.status(400).json({ error: "compare must be { scope: 'day'|'stage'|'series', id: uuid }" });
+        return;
+      }
+      if (scope === 'multi_stage') {
+        res.status(400).json({ error: 'compare is not supported for multi-stage reports' });
+        return;
+      }
+      if (compare.scope !== scope) {
+        res.status(400).json({ error: `compare scope must match the report scope (${scope} report → ${scope} baseline)` });
+        return;
+      }
+      if (compare.id === id) {
+        res.status(400).json({ error: 'compare target is the report itself' });
+        return;
+      }
+    }
 
     // Validate scope
     if (!scope) {
@@ -120,6 +146,7 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       detail: (detail === 'detailed' ? 'detailed' : 'simple') as 'simple' | 'detailed',
       filter,
       groupName,
+      compare: compare ?? undefined,
     });
 
     res.json({

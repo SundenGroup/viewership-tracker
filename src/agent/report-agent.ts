@@ -84,6 +84,13 @@ export interface ReportRequest {
   format?: 'pdf' | 'docx' | 'html';
   deliveryMethod?: DeliveryMethod;
   branding?: BrandingConfig;
+  /**
+   * Optional custom comparison baseline ("vs PEC Spring · Cup Week 1").
+   * Same scope level as the report; replaces the automatic previous-day
+   * trend when present. Deltas are baked into the artifact at generation
+   * time — reports are frozen snapshots, comparisons included.
+   */
+  compare?: { scope: 'day' | 'stage' | 'series'; id: string };
   /** If true, skip narrative generation (faster). */
   skipNarratives?: boolean;
   /** Report detail level: 'simple' (top 10-20 channels) or 'detailed' (all channels). */
@@ -208,9 +215,13 @@ export class ReportAgent {
       // 5. Aggregate metrics and build HTML
       const aggregated = this.aggregateMetrics(payload.metrics, isDetailed);
 
-      // 5b. Compute trend data (day scope only: compare with previous day in same stage)
+      // 5b. Trend data. A custom baseline (any scope) replaces the
+      // automatic previous-day comparison; without one, day reports keep
+      // comparing to the previous day in the same stage.
       let trend: HTMLReportData['trend'];
-      if (scope === 'day' && payload.broadcastDays.length === 1) {
+      if (request.compare) {
+        trend = await this.computeCustomTrend(request.compare, aggregated, request.filter);
+      } else if (scope === 'day' && payload.broadcastDays.length === 1) {
         try {
           trend = await this.computeDayTrend(payload.broadcastDays[0], request.filter);
         } catch (err) {
@@ -755,6 +766,76 @@ export class ReportAgent {
       peakCCV: prevPeakVal,
       avgCCV: prevAvgVal,
       totalViewedHours: prevHoursVal,
+    };
+  }
+
+  /**
+   * Custom comparison baseline — resolves a human label, fetches the same
+   * three aggregates the hero shows, and flags materially different
+   * broadcast lengths (hours watched scales with duration; Avg CCV is the
+   * fair cross-length metric, and the report should say so).
+   */
+  private async computeCustomTrend(
+    compare: { scope: 'day' | 'stage' | 'series'; id: string },
+    current: { totalViewedHours: number; avgCCV: number },
+    filter?: ViewershipSnapshotModel.ViewFilter,
+  ): Promise<HTMLReportData['trend']> {
+    // Resolve label + owning series
+    let label = 'Comparison';
+    let seriesShort: string | null = null;
+    if (compare.scope === 'day') {
+      const day = await db('broadcast_days').where('id', compare.id).first();
+      if (!day) throw new ReportAgentError('Comparison day not found');
+      const series = await db('tournament_series').where('id', day.series_id).first();
+      seriesShort = series?.short_name ?? series?.name ?? null;
+      label = day.label ?? 'Day';
+    } else if (compare.scope === 'stage') {
+      const stage = await db('stages').where('id', compare.id).first();
+      if (!stage) throw new ReportAgentError('Comparison stage not found');
+      const series = await db('tournament_series').where('id', stage.series_id).first();
+      seriesShort = series?.short_name ?? series?.name ?? null;
+      label = stage.name ?? 'Stage';
+    } else {
+      const series = await db('tournament_series').where('id', compare.id).first();
+      if (!series) throw new ReportAgentError('Comparison series not found');
+      label = series.short_name ?? series.name;
+    }
+    const fullLabel = seriesShort ? `${seriesShort} · ${label}` : label;
+
+    const scopeObj: ViewershipSnapshotModel.Scope = { level: compare.scope, id: compare.id };
+    const [peak, avg, hours] = await Promise.all([
+      ViewershipSnapshotModel.getPeakCCV(scopeObj, filter),
+      ViewershipSnapshotModel.getAverageCCV(scopeObj, filter),
+      ViewershipSnapshotModel.getTotalViewedHours(scopeObj, filter),
+    ]);
+    const peakVal = peak ? parseInt(peak.total_ccv, 10) : 0;
+    const avgVal = avg ? parseFloat(String(avg)) : 0;
+    const hoursVal = hours ? parseFloat(String(hours)) : 0;
+    if (peakVal <= 0 && avgVal <= 0) {
+      throw new ReportAgentError(
+        'The chosen comparison has no viewership data — pick a different baseline',
+      );
+    }
+
+    // Broadcast length honesty: hours-watched deltas mislead when the
+    // windows differ. Approximate each side's length as hours ÷ avg.
+    let lengthNote: string | undefined;
+    const curLen = current.avgCCV > 0 ? current.totalViewedHours / current.avgCCV : 0;
+    const baseLen = avgVal > 0 ? hoursVal / avgVal : 0;
+    if (curLen > 0 && baseLen > 0) {
+      const ratio = Math.max(curLen, baseLen) / Math.min(curLen, baseLen);
+      if (ratio > 1.15) {
+        lengthNote = `broadcast lengths differ (${curLen.toFixed(1)}h vs ${baseLen.toFixed(1)}h) — Avg CCV is the fair comparison`;
+      }
+    }
+
+    return {
+      previousDayLabel: fullLabel,
+      custom: true,
+      lengthNote,
+      peakCCV: peakVal,
+      avgCCV: avgVal,
+      totalViewedHours: hoursVal,
     };
   }
 

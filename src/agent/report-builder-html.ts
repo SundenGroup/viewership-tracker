@@ -26,6 +26,10 @@ import type {
 
 export interface TrendData {
   previousDayLabel: string;
+  /** True when the baseline was hand-picked (vs the automatic previous day). */
+  custom?: boolean;
+  /** Set when broadcast lengths differ enough to mislead on hours watched. */
+  lengthNote?: string;
   peakCCV: number;
   avgCCV: number;
   totalViewedHours: number;
@@ -884,7 +888,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
       ${trend ? trendHTML(aggregated.peakCCV, trend.peakCCV) : ''}
     </div>
   </div>
-  ${trend ? `<p style="font-size:11px;color:#6b7280;text-align:center;margin-top:-16px;margin-bottom:16px;">vs ${esc(trend.previousDayLabel)}</p>` : ''}
+  ${trend ? `<p style="font-size:11px;color:#6b7280;text-align:center;margin-top:-16px;margin-bottom:16px;">${trend.custom ? 'Compared to' : 'vs'} <strong style="color:#4b5563;">${esc(trend.previousDayLabel)}</strong>${trend.lengthNote ? ` &middot; <span style="font-style:italic;">${esc(trend.lengthNote)}</span>` : ''}</p>` : ''}
 
   <!-- Concurrent Line Chart -->
   <div class="chart-card full" style="margin-bottom:32px;">
