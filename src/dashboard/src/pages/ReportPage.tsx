@@ -65,6 +65,19 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
   // scopeSlug is YYYY-MM-DD (day), stage-<order> (stage), or a raw UUID.
   const stageIdFromUrl = searchParams.get('stage') ?? undefined;
   const dayIdFromUrl = searchParams.get('day') ?? undefined;
+  // Custom comparison baseline riding the link (?vs_scope&vs_id&vs_label&vs_sn)
+  // — "every view is a URL" applies to comparisons too.
+  const vsScope = searchParams.get('vs_scope');
+  const vsId = searchParams.get('vs_id');
+  const vsLabel = searchParams.get('vs_label');
+  const vsShortName = searchParams.get('vs_sn');
+  const customCompare = useMemo(
+    () =>
+      vsId && (vsScope === 'day' || vsScope === 'stage' || vsScope === 'series')
+        ? { level: vsScope as 'day' | 'stage' | 'series', id: vsId, label: vsLabel ?? 'baseline' }
+        : null,
+    [vsScope, vsId, vsLabel],
+  );
   // Multi-stage exports: ?stages=<order>,<order>,... (or comma-separated UUIDs)
   const stagesFromUrl = searchParams.get('stages') ?? undefined;
   // View-group filter: ?view=<groupName> — applied to all metrics / live-CCV /
@@ -368,8 +381,10 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
   // Find the previous broadcast day in the same series (or stage) — used to
   // compute trend deltas for HeroKPIs. Only meaningful for day/stage scope.
   const previousScope = useMemo<
-    { level: 'day' | 'stage'; id: string; label: string } | null
+    { level: 'day' | 'stage' | 'series'; id: string; label: string } | null
   >(() => {
+    // A hand-picked baseline replaces the automatic previous-day trend.
+    if (customCompare) return customCompare;
     if (!seriesInfo || !resolvedScope) return null;
     // Multi-stage reports flatten across stages — there's no single
     // "previous" scope to compare against, so skip the trend chips.
@@ -400,13 +415,13 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       return prev ? { level: 'stage', id: prev.id, label: prev.name } : null;
     }
     return null;
-  }, [seriesInfo, resolvedScope]);
+  }, [seriesInfo, resolvedScope, customCompare]);
 
   const { data: prevMetrics } = usePollingApi<MetricsResponse>(
     () =>
       previousScope && shortName
         ? api.getPublicMetrics(
-            shortName,
+            customCompare && vsShortName ? vsShortName : shortName,
             previousScope.level,
             previousScope.id,
             viewFilter.languages,
@@ -414,7 +429,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
             excludeChannelIds,
           )
         : Promise.resolve(null as unknown as MetricsResponse),
-    [shortName, previousScope?.id ?? '', filterKey],
+    [shortName, vsShortName ?? '', previousScope?.id ?? '', filterKey],
     { intervalMs: 60_000, enabled: !!previousScope && !!shortName },
   );
 

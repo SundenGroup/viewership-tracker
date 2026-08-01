@@ -16,7 +16,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import * as api from '@/services/api';
 import { Row, Col, IconX, IconDownload, IconShare } from '@/components/design';
 import { useAuth } from '@/hooks/useAuth';
-import type { SeriesWithStages, ScopeLevel, ViewGroup } from '@/types/api';
+import type { SeriesWithStages, ScopeLevel, ViewGroup, TournamentSeries } from '@/types/api';
 
 export interface ExportDialogProps {
   open: boolean;
@@ -356,6 +356,73 @@ export function ExportDialog({
   //   Day:           /public/<short>/report/<variant>/<YYYY-MM-DD>
   //   Multi-stage:   /public/<short>/report/<variant>?stages=<order1>,<order2>
   // Falls back to the raw UUID slug if we can't resolve the friendlier form.
+  // ── Optional comparison baseline ("vs PEC Spring · Cup Week 1") ──────
+  // Collapsed by default; expanding lazily loads the series list, and
+  // picking a series loads its stages/days. Same-level rule: a day report
+  // compares to a day, stage to stage, series to series.
+  const [cmpOpen, setCmpOpen] = useState(false);
+  const [cmpSeriesList, setCmpSeriesList] = useState<TournamentSeries[] | null>(null);
+  const [cmpSeriesId, setCmpSeriesId] = useState('');
+  const [cmpDetail, setCmpDetail] = useState<SeriesWithStages | null>(null);
+  const [cmpTargetId, setCmpTargetId] = useState('');
+
+  useEffect(() => {
+    if (!cmpOpen || cmpSeriesList) return;
+    api.listSeries().then(setCmpSeriesList).catch(() => setCmpSeriesList([]));
+  }, [cmpOpen, cmpSeriesList]);
+
+  useEffect(() => {
+    if (!cmpSeriesId) {
+      setCmpDetail(null);
+      setCmpTargetId('');
+      return;
+    }
+    let cancelled = false;
+    api.getSeries(cmpSeriesId).then((d) => {
+      if (cancelled) return;
+      setCmpDetail(d);
+      // Auto-suggest the same-labelled target ("Cup Week 1" → Spring's
+      // "Cup Week 1") — the naming convention makes weeklies zero-click.
+      const t = resolveTarget();
+      if (t.kind === 'single' && t.scopeLevel === 'day') {
+        const curLabel = seriesDetail?.stages
+          .flatMap((st) => st.broadcast_days)
+          .find((dd) => dd.id === t.id)?.label;
+        const match = d.stages
+          .flatMap((st) => st.broadcast_days)
+          .find((dd) => dd.label === curLabel);
+        setCmpTargetId(match?.id ?? '');
+      } else if (t.kind === 'single' && t.scopeLevel === 'stage') {
+        const curName = seriesDetail?.stages.find((st) => st.id === t.id)?.name;
+        const match = d.stages.find((st) => st.name === curName);
+        setCmpTargetId(match?.id ?? '');
+      }
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cmpSeriesId]);
+
+  /** The resolved comparison, or null when unset/invalid for this scope. */
+  const resolvedCompare = (): { scope: 'day' | 'stage' | 'series'; id: string; label: string } | null => {
+    const t = resolveTarget();
+    if (t.kind !== 'single') return null;
+    if (t.scopeLevel === 'series') {
+      if (!cmpSeriesId || cmpSeriesId === t.id) return null;
+      const sName = cmpSeriesList?.find((x) => x.id === cmpSeriesId);
+      return { scope: 'series', id: cmpSeriesId, label: sName?.short_name || sName?.name || 'series' };
+    }
+    if (!cmpTargetId || cmpTargetId === t.id || !cmpDetail) return null;
+    const short = cmpDetail.short_name || cmpDetail.name;
+    if (t.scopeLevel === 'stage') {
+      const st = cmpDetail.stages.find((x) => x.id === cmpTargetId);
+      return st ? { scope: 'stage', id: cmpTargetId, label: `${short} · ${st.name}` } : null;
+    }
+    const day = cmpDetail.stages.flatMap((st) => st.broadcast_days).find((dd) => dd.id === cmpTargetId);
+    return day ? { scope: 'day', id: cmpTargetId, label: `${short} · ${day.label}` } : null;
+  };
+
   const buildSpaReportUrl = (): string | null => {
     const shortName = seriesDetail?.short_name?.trim();
     if (!shortName) return null;
@@ -411,10 +478,12 @@ export function ExportDialog({
       if (reRender) {
         // Legacy server-generated static HTML (old design, archival).
         setBusy(true);
+        const cmp = resolvedCompare();
         const result = await api.generateReport({
           ...(target.kind === 'multi_stage'
             ? { scope: 'multi_stage' as const, ids: target.ids }
             : { scope: target.scopeLevel, id: target.id }),
+          ...(cmp ? { compare: { scope: cmp.scope, id: cmp.id } } : {}),
           format: 'html',
           skipNarratives: false,
           detail,
@@ -441,7 +510,17 @@ export function ExportDialog({
       } else {
         // Preview default: open the redesigned ReportPage. It renders live
         // from the API, so it's always up-to-date and matches the v7 UI.
-        const spaUrl = buildSpaReportUrl();
+        let spaUrl = buildSpaReportUrl();
+        const cmpSpa = resolvedCompare();
+        if (spaUrl && cmpSpa) {
+          const u = new URL(spaUrl);
+          u.searchParams.set('vs_scope', cmpSpa.scope);
+          u.searchParams.set('vs_id', cmpSpa.id);
+          u.searchParams.set('vs_label', cmpSpa.label);
+          const vsShort = (cmpDetail?.short_name || cmpSeriesList?.find((x) => x.id === cmpSeriesId)?.short_name || '').trim();
+          if (vsShort) u.searchParams.set('vs_sn', vsShort);
+          spaUrl = u.toString();
+        }
         if (!spaUrl) {
           setError(
             'This series has no short_name. Set a short_name in Edit Series before exporting an HTML report.',
@@ -1219,6 +1298,118 @@ export function ExportDialog({
                     </label>
                   </div>
                 </Field>
+
+                {/* Optional comparison — collapsed to one quiet row until
+                    opened; picked state reads as a single sentence. */}
+                {resolveTarget().kind === 'single' && (
+                  <div
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: 5,
+                      border: '1px solid var(--border-faint)',
+                      background: cmpOpen ? 'var(--bg-sunken)' : 'transparent',
+                    }}
+                  >
+                    {!cmpOpen ? (
+                      <button
+                        type="button"
+                        onClick={() => setCmpOpen(true)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontSize: 11.5,
+                          color: 'var(--fg-muted)',
+                          padding: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                        }}
+                      >
+                        <span style={{ color: 'var(--fg-dim)' }}>+</span> Compare against another event
+                        <span style={{ color: 'var(--fg-dim)', fontSize: 10.5 }}>
+                          — % chips vs a baseline of your choice
+                        </span>
+                      </button>
+                    ) : (
+                      <Col gap={8}>
+                        <Row gap={8} align="center" wrap>
+                          <span className="eyebrow" style={{ fontSize: 9.5, color: 'var(--fg-muted)' }}>
+                            Compare against
+                          </span>
+                          <select
+                            value={cmpSeriesId}
+                            onChange={(e) => setCmpSeriesId(e.target.value)}
+                            aria-label="Comparison series"
+                            style={cmpSelectStyle}
+                          >
+                            <option value="">Pick a series…</option>
+                            {(cmpSeriesList ?? [])
+                              .filter((x) => !(resolveTarget().kind === 'single' && (resolveTarget() as { id?: string }).id === x.id))
+                              .map((x) => (
+                                <option key={x.id} value={x.id}>
+                                  {x.short_name || x.name}
+                                </option>
+                              ))}
+                          </select>
+                          {resolveTarget().kind === 'single' &&
+                            (resolveTarget() as { scopeLevel?: string }).scopeLevel !== 'series' &&
+                            cmpDetail && (
+                              <select
+                                value={cmpTargetId}
+                                onChange={(e) => setCmpTargetId(e.target.value)}
+                                aria-label="Comparison target"
+                                style={cmpSelectStyle}
+                              >
+                                <option value="">
+                                  Pick a {(resolveTarget() as { scopeLevel?: string }).scopeLevel}…
+                                </option>
+                                {(resolveTarget() as { scopeLevel?: string }).scopeLevel === 'stage'
+                                  ? cmpDetail.stages.map((st) => (
+                                      <option key={st.id} value={st.id}>
+                                        {st.name}
+                                      </option>
+                                    ))
+                                  : cmpDetail.stages.flatMap((st) =>
+                                      st.broadcast_days.map((dd) => (
+                                        <option key={dd.id} value={dd.id}>
+                                          {dd.label} · {String(dd.date).slice(0, 10)}
+                                        </option>
+                                      )),
+                                    )}
+                              </select>
+                            )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCmpOpen(false);
+                              setCmpSeriesId('');
+                              setCmpTargetId('');
+                            }}
+                            aria-label="Remove comparison"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                              color: 'var(--fg-dim)',
+                              fontSize: 12,
+                              marginLeft: 'auto',
+                            }}
+                          >
+                            ×
+                          </button>
+                        </Row>
+                        {resolvedCompare() && (
+                          <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+                            Report will show % vs{' '}
+                            <b style={{ color: 'var(--fg)' }}>{resolvedCompare()!.label}</b>
+                            {' '}(replaces the automatic previous-day chip)
+                          </span>
+                        )}
+                      </Col>
+                    )}
+                  </div>
+                )}
               </>
             )}
 
@@ -1435,3 +1626,13 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     </div>
   );
 }
+
+const cmpSelectStyle: React.CSSProperties = {
+  padding: '5px 8px',
+  fontSize: 11.5,
+  borderRadius: 5,
+  border: '1px solid var(--border)',
+  background: 'var(--bg-card)',
+  color: 'var(--fg)',
+  maxWidth: 200,
+};
