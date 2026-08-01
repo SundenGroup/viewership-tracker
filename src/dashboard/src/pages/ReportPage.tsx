@@ -1221,7 +1221,7 @@ function DetailedReport({
 
       {/* Section 01 — timeline */}
       <Section
-        eyebrow="01 · Timeline"
+        eyebrow="Timeline"
         title="Concurrent viewers — interactive"
         right={<Pill>{totalDayCount}-day span</Pill>}
       >
@@ -1323,7 +1323,7 @@ function DetailedReport({
         return (
           <>
             <Section
-              eyebrow="02 · By category"
+              eyebrow="By category"
               title={
                 tierMetric === 'hours'
                   ? 'Viewed hours by category'
@@ -1410,7 +1410,7 @@ function DetailedReport({
         }}
       >
         <Section
-          eyebrow="03 · Platforms"
+          eyebrow="Platforms"
           title={
             platformMetric === 'hours'
               ? 'Share of viewed hours'
@@ -1477,7 +1477,7 @@ function DetailedReport({
         </Section>
         {languageStats.length > 0 && (
           <Section
-            eyebrow="04 · Languages"
+            eyebrow="Languages"
             title={
               languageMetric === 'hours'
                 ? `Viewed hours by language · ${languageStats.length} tracked`
@@ -1608,7 +1608,7 @@ function DetailedReport({
         ];
         return (
           <Section
-            eyebrow="05 · Operational breakdown"
+            eyebrow="Operational breakdown"
             title="Per-channel & airtime stats"
           >
             <div
@@ -1644,7 +1644,7 @@ function DetailedReport({
 
       {/* Section 06 — leaderboard */}
       <Section
-        eyebrow="06 · Leaderboard"
+        eyebrow="Leaderboard"
         title={`All ${model.leaderboard.length} tracked channels — sort any column`}
       >
         <Leaderboard channels={model.leaderboard} />
