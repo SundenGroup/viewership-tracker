@@ -198,6 +198,9 @@ function AppContent() {
   } = useApi<SeriesWithStages | null>(
     () => (selectedSeriesId ? api.getSeries(selectedSeriesId) : Promise.resolve(null)),
     [selectedSeriesId],
+    // A stale schedule under the new series' name reads as a broken
+    // switch — blank + placeholders is the honest intermediate state.
+    { resetOnDepsChange: true },
   );
 
   // Polling status (refreshes every 5s)
