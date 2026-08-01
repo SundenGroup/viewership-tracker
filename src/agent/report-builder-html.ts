@@ -122,13 +122,13 @@ function capitalize(s: string): string {
 }
 
 /** Format a trend percentage with arrow icon */
-function trendHTML(current: number, previous: number): string {
+function trendHTML(current: number, previous: number, tooltip?: string): string {
   if (previous <= 0) return '';
   const pct = ((current - previous) / previous) * 100;
   const sign = pct >= 0 ? '+' : '';
   const arrow = pct >= 0 ? '&#9650;' : '&#9660;'; // ▲ or ▼
   const color = pct >= 0 ? '#34d399' : '#f87171'; // green or red
-  return `<span class="kpi-trend" style="color:${color}">${arrow} ${sign}${pct.toFixed(1)}%</span>`;
+  return `<span class="kpi-trend"${tooltip ? ` title="${tooltip}"` : ''} style="color:${color}">${arrow} ${sign}${pct.toFixed(1)}%</span>`;
 }
 
 function tierLabel(tier: string | null | undefined): string {
@@ -875,20 +875,25 @@ export function buildHTMLReport(data: HTMLReportData): string {
     <div class="kpi">
       <div class="kpi-label">Total Viewed Hours</div>
       <div class="kpi-value">${fmtNum(Math.round(aggregated.totalViewedHours))}</div>
-      ${trend ? trendHTML(aggregated.totalViewedHours, trend.totalViewedHours) : ''}
+      ${trend ? trendHTML(aggregated.totalViewedHours, trend.totalViewedHours, `${esc(trend.previousDayLabel)}: ${Math.round(trend.totalViewedHours).toLocaleString('en-US')} hours watched`) : ''}
     </div>
     <div class="kpi">
       <div class="kpi-label">Avg Concurrent</div>
       <div class="kpi-value">${fmtNum(aggregated.avgCCV)}</div>
-      ${trend ? trendHTML(aggregated.avgCCV, trend.avgCCV) : ''}
+      ${trend ? trendHTML(aggregated.avgCCV, trend.avgCCV, `${esc(trend.previousDayLabel)}: ${Math.round(trend.avgCCV).toLocaleString('en-US')} avg CCV`) : ''}
     </div>
     <div class="kpi">
       <div class="kpi-label">Peak Concurrent</div>
       <div class="kpi-value">${fmtNum(aggregated.peakCCV)}</div>
-      ${trend ? trendHTML(aggregated.peakCCV, trend.peakCCV) : ''}
+      ${trend ? trendHTML(aggregated.peakCCV, trend.peakCCV, `${esc(trend.previousDayLabel)}: ${trend.peakCCV.toLocaleString('en-US')} peak CCV`) : ''}
     </div>
   </div>
-  ${trend ? `<p style="font-size:11px;color:#6b7280;text-align:center;margin-top:-16px;margin-bottom:16px;">${trend.custom ? 'Compared to' : 'vs'} <strong style="color:#4b5563;">${esc(trend.previousDayLabel)}</strong>${trend.lengthNote ? ` &middot; <span style="font-style:italic;">${esc(trend.lengthNote)}</span>` : ''}</p>` : ''}
+  ${trend ? `<div style="text-align:center;margin-top:-14px;margin-bottom:18px;">
+    <span title="Baseline — peak ${trend.peakCCV.toLocaleString('en-US')} &middot; avg ${Math.round(trend.avgCCV).toLocaleString('en-US')} &middot; ${Math.round(trend.totalViewedHours).toLocaleString('en-US')} hours watched" style="display:inline-flex;align-items:center;gap:6px;padding:3px 12px;border-radius:999px;font-size:10.5px;letter-spacing:0.06em;text-transform:uppercase;font-weight:600;${trend.custom ? 'color:#2563EB;background:rgba(37,99,235,0.09);border:1px solid rgba(37,99,235,0.28);' : 'color:#6b7280;background:#f4f4f2;border:1px solid #e5e3de;'}">
+      &#8644; ${trend.custom ? 'Compared to' : 'vs previous day'} &middot; <strong>${esc(trend.previousDayLabel)}</strong>
+    </span>
+    ${trend.lengthNote ? `<div style="font-size:10.5px;color:#9ca3af;font-style:italic;margin-top:5px;">${esc(trend.lengthNote)}</div>` : ''}
+  </div>` : ''}
 
   <!-- Concurrent Line Chart -->
   <div class="chart-card full" style="margin-bottom:32px;">
