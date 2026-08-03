@@ -189,7 +189,7 @@ export function DiscoverTrendsTab({
     let cancelled = false;
     const from = new Date(Date.now() - range.hours * 3600_000);
     const to = new Date();
-    const plats = ['twitch', 'kick', 'youtube'];
+    const plats = ['twitch', 'kick', 'youtube', 'soop'];
     Promise.all(
       plats.map((pf) =>
         api
@@ -425,6 +425,7 @@ function StackedPlatformChart({
     twitch: '#9146FF',
     youtube: '#FF3B3B',
     kick: '#53FC18',
+    soop: '#2E6BFF',
   };
   if (!series) {
     return <div className="placeholder" style={{ height }}>Loading platform split…</div>;

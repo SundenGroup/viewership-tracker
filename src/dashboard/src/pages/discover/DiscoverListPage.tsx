@@ -244,6 +244,12 @@ export function DiscoverListPage() {
                     <span>reviewed channels</span>
                   </Row>
                 )}
+                {t.soop_category_id && (
+                  <Row gap={6} align="center">
+                    <PlatformPip id="soop" size={11} />
+                    <span>{t.soop_category_name ?? t.soop_category_id}</span>
+                  </Row>
+                )}
               </Col>
               <TrackerPulseStrip pulse={pulse[t.slug]} />
               {isAdmin && (

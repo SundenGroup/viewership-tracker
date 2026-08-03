@@ -1117,6 +1117,8 @@ export interface GameTracker {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  soop_category_id: string | null;
+  soop_category_name: string | null;
 }
 
 export interface GameTrackerDetail extends GameTracker {
@@ -1255,6 +1257,8 @@ export interface CreateGameTracker {
   polling_interval_seconds?: number;
   youtube_enabled?: boolean;
   youtube_config?: YouTubeTrackerConfig;
+  soop_category_id?: string | null;
+  soop_category_name?: string | null;
 }
 
 export interface GameTrackerLeaderboardRow {

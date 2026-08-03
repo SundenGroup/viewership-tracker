@@ -6,6 +6,7 @@ import { Row } from '@/components/design';
 interface GameLookupResult {
   twitch: Array<{ id: string; name: string }>;
   kick: Array<{ id: string; name: string }>;
+  soop?: Array<{ id: string; name: string }>;
 }
 
 /**
@@ -29,6 +30,7 @@ export function DiscoverAdminNew() {
   const [searching, setSearching] = useState(false);
   const [twitchPick, setTwitchPick] = useState<{ id: string; name: string } | null>(null);
   const [kickPick, setKickPick] = useState<{ id: string; name: string } | null>(null);
+  const [soopPick, setSoopPick] = useState<{ id: string; name: string } | null>(null);
   const [minCcv, setMinCcv] = useState(10);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(isEdit);
@@ -54,6 +56,9 @@ export function DiscoverAdminNew() {
           t.kick_category_id != null
             ? { id: String(t.kick_category_id), name: t.kick_category_slug ?? String(t.kick_category_id) }
             : null,
+        );
+        setSoopPick(
+          t.soop_category_id ? { id: t.soop_category_id, name: t.soop_category_name ?? t.soop_category_id } : null,
         );
         setLoading(false);
       })
@@ -111,7 +116,7 @@ export function DiscoverAdminNew() {
       setError('Name and slug are required');
       return;
     }
-    if (!twitchPick && !kickPick) {
+    if (!twitchPick && !kickPick && !soopPick) {
       setError('Pick at least one platform mapping');
       return;
     }
@@ -125,6 +130,9 @@ export function DiscoverAdminNew() {
       twitch_game_name: twitchPick?.name ?? null,
       kick_category_id: kickPick ? Number(kickPick.id) : null,
       kick_category_slug: kickPick?.name ?? null,
+      // SOOP ids are zero-padded strings — never Number() them.
+      soop_category_id: soopPick?.id ?? null,
+      soop_category_name: soopPick?.name ?? null,
       min_ccv_threshold: minCcv,
     };
     try {
@@ -203,7 +211,7 @@ export function DiscoverAdminNew() {
         <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--fg)', marginBottom: 12 }}>
           2. {isEdit ? 'Platform IDs' : 'Find platform IDs'}
         </h3>
-        {(twitchPick || kickPick) && (
+        {(twitchPick || kickPick || soopPick) && (
           <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
             {twitchPick && (
               <span style={currentPickStyle}>
@@ -241,7 +249,7 @@ export function DiscoverAdminNew() {
         </div>
 
         {searchResults && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 16 }}>
             <PlatformPickList
               label="Twitch"
               results={searchResults.twitch}
@@ -253,6 +261,12 @@ export function DiscoverAdminNew() {
               results={searchResults.kick}
               picked={kickPick}
               onPick={setKickPick}
+            />
+            <PlatformPickList
+              label="SOOP"
+              results={searchResults.soop ?? []}
+              picked={soopPick}
+              onPick={setSoopPick}
             />
           </div>
         )}
@@ -314,7 +328,7 @@ export function DiscoverAdminNew() {
           type="button"
           className="btn btn-primary"
           onClick={handleSubmit}
-          disabled={submitting || (!twitchPick && !kickPick) || !name.trim() || !slug.trim()}
+          disabled={submitting || (!twitchPick && !kickPick && !soopPick) || !name.trim() || !slug.trim()}
         >
           {submitting
             ? isEdit

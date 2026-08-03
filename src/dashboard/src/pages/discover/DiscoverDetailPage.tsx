@@ -153,8 +153,9 @@ export function DiscoverDetailPage() {
     if (detail?.twitch_game_id) out.push('twitch');
     if (detail?.kick_category_id) out.push('kick');
     if (detail?.youtube_enabled) out.push('youtube');
+    if (detail?.soop_category_id) out.push('soop');
     return out;
-  }, [detail?.twitch_game_id, detail?.kick_category_id, detail?.youtube_enabled]);
+  }, [detail?.twitch_game_id, detail?.kick_category_id, detail?.youtube_enabled, detail?.soop_category_id]);
 
   // A search takeover replaces the body — clear any lingering Ask card so
   // the two result surfaces never stack.
@@ -243,6 +244,12 @@ export function DiscoverDetailPage() {
                 <span title="YouTube streams are matched by title rules and reviewed per channel">
                   reviewed channels
                 </span>
+              </Row>
+            )}
+            {detail.soop_category_id && (
+              <Row gap={6} align="center">
+                <PlatformPip id="soop" size={12} />
+                <span>{detail.soop_category_name ?? detail.soop_category_id}</span>
               </Row>
             )}
             {/* Polling config is operator detail — admins only */}
