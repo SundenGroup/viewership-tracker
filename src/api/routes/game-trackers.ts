@@ -63,8 +63,8 @@ router.post('/', requireRole('admin'), async (req: Request, res: Response, next:
       res.status(400).json({ error: 'slug must be lowercase alphanumeric + hyphens only' });
       return;
     }
-    if (!req.body.twitch_game_id && !req.body.kick_category_id) {
-      res.status(400).json({ error: 'at least one of twitch_game_id or kick_category_id is required' });
+    if (!req.body.twitch_game_id && !req.body.kick_category_id && !req.body.soop_category_id) {
+      res.status(400).json({ error: 'at least one of twitch_game_id, kick_category_id or soop_category_id is required' });
       return;
     }
     const tracker = await GameTrackerModel.create(req.body);

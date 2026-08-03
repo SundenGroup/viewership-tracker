@@ -19,6 +19,8 @@ export interface GameTracker {
   /** Days of raw game_tracker_snapshots to keep; NULL = keep forever. */
   retain_raw_days: number | null;
   /** YouTube branch (Discover) — off until a roster + rules are configured. */
+  soop_category_id: string | null;
+  soop_category_name: string | null;
   youtube_enabled: boolean;
   /** { queries, include, exclude, maxRoster } — see YouTubeTrackerConfig. */
   youtube_config: Record<string, unknown>;
@@ -41,6 +43,8 @@ export interface CreateGameTracker {
   polling_interval_seconds?: number;
   max_active_channels?: number;
   retain_raw_days?: number | null;
+  soop_category_id?: string | null;
+  soop_category_name?: string | null;
   youtube_enabled?: boolean;
   youtube_config?: Record<string, unknown>;
   metadata?: Record<string, unknown>;

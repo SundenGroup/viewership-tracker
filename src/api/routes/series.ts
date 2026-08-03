@@ -5,6 +5,7 @@ import { requireRole, hasMinRole, type UserRole } from '../middleware/auth';
 import { AdapterRegistry } from '../../adapters';
 import { TwitchAdapter } from '../../adapters/twitch';
 import { KickAdapter } from '../../adapters/kick';
+import { SoopAdapter } from '../../adapters/soop';
 import { getDiscoveryService } from './polling';
 import logger from '../../utils/logger';
 
@@ -68,10 +69,11 @@ router.get('/games/lookup', requireRole('admin', 'editor'), async (req: Request,
     const results: Record<string, Array<{ id: string; name: string }>> = {
       twitch: [],
       kick: [],
+      soop: [],
     };
 
-    // Search Twitch and Kick in parallel — return ALL matches
-    const [twitchResult, kickResult] = await Promise.allSettled([
+    // Search Twitch, Kick and SOOP in parallel — return ALL matches
+    const [twitchResult, kickResult, soopResult] = await Promise.allSettled([
       (async () => {
         try {
           const registry = new AdapterRegistry();
@@ -93,6 +95,16 @@ router.get('/games/lookup', requireRole('admin', 'editor'), async (req: Request,
           return [];
         }
       })(),
+      (async () => {
+        try {
+          const registry = new AdapterRegistry();
+          const adapter = registry.getAdapter('soop') as SoopAdapter;
+          return await adapter.searchCategories(name);
+        } catch (err) {
+          logger.warn(`Game lookup: Soop search failed for "${name}"`, { error: (err as Error).message });
+          return [];
+        }
+      })(),
     ]);
 
     if (twitchResult.status === 'fulfilled') {
@@ -100,6 +112,9 @@ router.get('/games/lookup', requireRole('admin', 'editor'), async (req: Request,
     }
     if (kickResult.status === 'fulfilled') {
       results.kick = kickResult.value;
+    }
+    if (soopResult.status === 'fulfilled') {
+      results.soop = soopResult.value;
     }
 
     res.json(results);

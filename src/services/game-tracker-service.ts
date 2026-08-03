@@ -26,7 +26,7 @@ import type { YouTubeAdapter } from '../adapters/youtube';
 import type { DiscoveredStream } from '../adapters/types';
 import { YouTubeGameTracker } from './youtube-game-tracker';
 
-type TrackedPlatform = 'twitch' | 'kick' | 'youtube';
+type TrackedPlatform = 'twitch' | 'kick' | 'youtube' | 'soop';
 
 interface PlatformStream {
   platform: TrackedPlatform;
@@ -206,6 +206,27 @@ export class GameTrackerService {
         })(),
       );
     }
+
+    // SOOP mirrors Kick: an authoritative category live-list, no gating.
+    // Category ids are zero-padded 8-digit strings (PUBG = 00040066).
+    if (tracker.soop_category_id) {
+      fetches.push((async () => {
+        try {
+          const soop = this.registry.getAdapter('soop');
+          const streams = await soop.searchLiveStreams(String(tracker.soop_category_id));
+          for (const s of streams) {
+            liveStreams.push({
+              platform: 'soop',
+              stream: { ...s, gameName: s.gameName ?? tracker.soop_category_name ?? null },
+            });
+          }
+        } catch (err) {
+          logger.warn(`[GameTracker:${tracker.slug}] Soop fetch failed`, {
+            error: (err as Error).message,
+          });
+        }
+      })());
+    }
     // YouTube runs in the same parallel wave. Unlike Twitch/Kick there is
     // no authoritative category listing, so this branch builds its own
     // roster and gates membership itself (see youtube-game-tracker.ts).
@@ -363,7 +384,9 @@ export class GameTrackerService {
           (platform === 'twitch'
             ? tracker.twitch_game_name
             : platform === 'kick'
-              ? tracker.kick_category_slug
+              ? tracker.kick_category_slug ?? tracker.name
+              : platform === 'soop'
+                ? tracker.soop_category_name
               : tracker.name) ??
           null,
         started_at: stream.startedAt ? new Date(stream.startedAt) : null,
