@@ -1274,12 +1274,12 @@ export interface GameTrackerLeaderboardRow {
     channel_identifier: string;
     platform: string;
     metadata: Record<string, unknown>;
-    /** Grade of the last COMPLETED broadcast — never the live session. */
+  } | null;
+  /** Grade of the last COMPLETED broadcast — never the live session. */
   last_grade?: string | null;
   last_score?: number | null;
   /** Start of the channel's current live session (uptime column). */
   live_started_at?: string | null;
-} | null;
 }
 
 export interface GameTrackerRangeBucket {

@@ -1158,6 +1158,26 @@ export function LeaderboardTable({
                     : '—'}
                 </td>
               )}
+              {showLastGrade && (
+                <td
+                  style={{
+                    ...tdStyle,
+                    textAlign: 'right',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11.5,
+                    color: 'var(--fg-muted)',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title="Time since this live session started"
+                >
+                  {row.live_started_at ? fmtUptime(row.live_started_at) : '—'}
+                </td>
+              )}
+              {showLastGrade && (
+                <td style={{ ...tdStyle, textAlign: 'center' }}>
+                  <GradeBadge grade={row.last_grade} score={row.last_score} />
+                </td>
+              )}
               <td
                 style={{
                   ...tdStyle,
