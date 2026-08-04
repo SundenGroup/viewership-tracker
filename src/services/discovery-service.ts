@@ -2,6 +2,7 @@ import type { Knex } from 'knex';
 import logger from '../utils/logger';
 import { config } from '../utils/config';
 import { normalizeLanguageCode } from '../utils/language';
+import { keywordMatches } from '../utils/keyword-match';
 import type { AdapterRegistry, PlatformName } from '../adapters';
 import type { DiscoveredStream } from '../adapters/types';
 import type { TournamentSeries } from '../models/tournament-series';
@@ -251,10 +252,15 @@ export class DiscoveryService {
       tagsByChannel.set(t.channel_id, arr);
     }
 
+    // TikTok identifiers exist in the DB both as '@name' and bare 'name';
+    // strip the '@' when building comparison keys so the two forms can
+    // never dodge dedup. Harmless for every other platform (no '@' ids).
+    const normIdent = (identifier: string): string => identifier.toLowerCase().replace(/^@/, '');
+
     const trackedSet = new Set<string>();
     const offScheduleActive = new Map<string, string>(); // lookupKey -> channel id
     for (const ch of activeChannels) {
-      const key = `${ch.platform}:${ch.channel_identifier.toLowerCase()}`;
+      const key = `${ch.platform}:${normIdent(ch.channel_identifier)}`;
       const tags = tagsByChannel.get(ch.id);
       const trackedToday = !tags || tags.length === 0 || tags.some((d) => liveDaySet.has(d));
       if (trackedToday || liveDaySet.size === 0) {
@@ -278,13 +284,13 @@ export class DiscoveryService {
 
     const disabledMap = new Map<string, string>();
     for (const ch of disabledChannels) {
-      disabledMap.set(`${ch.platform}:${ch.channel_identifier.toLowerCase()}`, ch.id);
+      disabledMap.set(`${ch.platform}:${normIdent(ch.channel_identifier)}`, ch.id);
     }
 
     // 3. Load blocklist from series metadata
     const blocklist = this.getBlocklist(series);
     const blockSet = new Set<string>(
-      blocklist.map((b) => b.toLowerCase()),
+      blocklist.map((b) => normIdent(b)),
     );
 
     // 4. Search each platform in parallel
@@ -327,23 +333,16 @@ export class DiscoveryService {
     // Helper: check if a stream title/channel name matches any discovery keyword.
     // Used to avoid storing metadata from non-relevant concurrent streams
     // (e.g. a music stream on a channel that also streams PUBG).
-    const matchesKeywords = (title: string | null, channelName?: string): boolean => {
-      if (keywords.length === 0) return true; // No keywords = accept all
-      const titleLower = (title ?? '').toLowerCase();
-      const channelLower = (channelName ?? '').toLowerCase();
-      return keywords.some((kw) => {
-        const kwLower = kw.toLowerCase();
-        // Use word boundary matching to avoid partial matches (e.g. "rpg" matching "pubg")
-        const re = new RegExp(`\\b${kwLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-        return re.test(titleLower) || re.test(channelLower);
-      });
-    };
+    // Shared util: ASCII keywords get word boundaries, non-ASCII (Hangul
+    // etc.) get substring semantics — see src/utils/keyword-match.ts.
+    const matchesKeywords = (title: string | null, channelName?: string): boolean =>
+      keywordMatches(keywords, title, channelName);
 
     for (const { platform, streams } of searchResults) {
       for (const stream of streams) {
         discovered++;
 
-        const lookupKey = `${platform}:${stream.channelIdentifier.toLowerCase()}`;
+        const lookupKey = `${platform}:${normIdent(stream.channelIdentifier)}`;
 
         // Already tracked?
         if (trackedSet.has(lookupKey)) {
@@ -387,7 +386,7 @@ export class DiscoveryService {
         }
 
         // In blocklist?
-        if (blockSet.has(stream.channelIdentifier.toLowerCase())) {
+        if (blockSet.has(normIdent(stream.channelIdentifier))) {
           blocked++;
           continue;
         }
@@ -490,7 +489,7 @@ export class DiscoveryService {
     // 6. Direct live-check for disabled channels not found via search
     // Search APIs have result limits and may miss smaller channels
     const uncheckedDisabled = disabledChannels.filter(
-      (ch) => !trackedSet.has(`${ch.platform}:${ch.channel_identifier.toLowerCase()}`),
+      (ch) => !trackedSet.has(`${ch.platform}:${normIdent(ch.channel_identifier)}`),
     );
     if (uncheckedDisabled.length > 0) {
       // Group by platform for batch checking
@@ -510,7 +509,7 @@ export class DiscoveryService {
           for (const snap of snapshots) {
             if (snap.isLive && snap.concurrentViewers > 0) {
               const ch = channels.find(
-                (c) => c.channel_identifier.toLowerCase() === snap.channelIdentifier.toLowerCase(),
+                (c) => normIdent(c.channel_identifier) === normIdent(snap.channelIdentifier),
               );
               if (ch) {
                 // Defense-in-depth: if the scraper returned a snapshot

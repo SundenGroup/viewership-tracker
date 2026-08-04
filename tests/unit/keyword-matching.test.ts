@@ -1,26 +1,14 @@
 /**
  * Tests for discovery keyword matching logic.
  *
- * The matchesKeywords function uses word boundary regex to prevent
- * partial matches (e.g. "rpg" should not match "pubg").
+ * ASCII keywords use word-boundary regex to prevent partial matches
+ * ("rpg" must not match "pubg"). Non-ASCII keywords (Hangul etc.) use
+ * substring matching, because JS \b does not exist between non-ASCII
+ * characters — a pure-Hangul keyword under \b matched nothing, ever.
  */
+import { keywordMatches as matchesKeywords } from '../../src/utils/keyword-match';
 
 describe('Keyword matching with word boundaries', () => {
-  // Replicate the matchesKeywords logic from discovery-service.ts
-  function matchesKeywords(
-    keywords: string[],
-    title: string | null,
-    channelName?: string,
-  ): boolean {
-    if (keywords.length === 0) return true;
-    const titleLower = (title ?? '').toLowerCase();
-    const channelLower = (channelName ?? '').toLowerCase();
-    return keywords.some((kw) => {
-      const kwLower = kw.toLowerCase();
-      const re = new RegExp(`\\b${kwLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-      return re.test(titleLower) || re.test(channelLower);
-    });
-  }
 
   test('matches exact keyword in title', () => {
     expect(matchesKeywords(['pubg'], 'PUBG Tournament Day 3')).toBe(true);
@@ -73,5 +61,32 @@ describe('Keyword matching with word boundaries', () => {
 
   test('multiple keywords — none match returns false', () => {
     expect(matchesKeywords(['pubg', 'pgs'], 'Smooth Jazz 24/7')).toBe(false);
+  });
+
+  // ── Hangul / non-ASCII keywords (substring semantics) ────────────────
+  // These four are the cases the old \b implementation silently failed.
+
+  test('Hangul keyword matches inside a Korean title', () => {
+    expect(matchesKeywords(['배틀그라운드'], 'PGS7 배틀그라운드 공식 중계')).toBe(true);
+  });
+
+  test('Hangul keyword matches with no surrounding spaces', () => {
+    expect(matchesKeywords(['배그'], '오늘도배그한판!')).toBe(true);
+  });
+
+  test('Hangul keyword matches in channel name', () => {
+    expect(matchesKeywords(['배틀그라운드'], null, 'PUBG 배틀그라운드 코리아')).toBe(true);
+  });
+
+  test('Hangul keyword absent returns false', () => {
+    expect(matchesKeywords(['배틀그라운드'], '리그 오브 레전드 랭크')).toBe(false);
+  });
+
+  test('mixed-script keyword uses substring matching', () => {
+    expect(matchesKeywords(['pgs 배그'], 'PGS 배그 그랜드파이널')).toBe(true);
+  });
+
+  test('ASCII keywords keep word-boundary strictness alongside Hangul ones', () => {
+    expect(matchesKeywords(['rpg', '배틀그라운드'], 'PUBG Tournament')).toBe(false);
   });
 });

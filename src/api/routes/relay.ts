@@ -15,6 +15,7 @@ import * as path from 'path';
 import db from '../../utils/db';
 import logger from '../../utils/logger';
 import { getPushNotifier } from '../../services/push-notifier';
+import * as TikTokDiscoveredModel from '../../models/tiktok-discovered-stream';
 
 const router = Router();
 
@@ -615,6 +616,63 @@ router.get('/tiktok/channels', requireRelayToken, async (_req: Request, res: Res
       .select('c.channel_identifier', 'c.display_name');
 
     res.json({ channels });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── TikTok live-category discovery via residential relay ─────────────────
+//
+// TikTok's category feed (webcast.tiktok.com/webcast/feed/, the data
+// behind tiktok.com/live/gaming/<Category>) rejects unsigned requests,
+// and the signing runs only inside a real browser session. So the
+// tracking machine's Chrome captures the feed and relays the rooms here
+// (scripts/tiktok-category-discovery.ts); the TikTok adapter serves the
+// fresh buffer to the discovery pipeline, where keywords/thresholds/
+// blocklists apply exactly as for any other platform.
+
+/**
+ * GET /api/relay/tiktok/discover-config
+ * Category pages the relay box should capture. Env-overridable so new
+ * games don't need a deploy: TIKTOK_DISCOVER_CATEGORIES="slug|slug".
+ */
+router.get('/tiktok/discover-config', requireRelayToken, async (_req: Request, res: Response) => {
+  const raw = process.env.TIKTOK_DISCOVER_CATEGORIES ?? 'gaming/PUBG:_BATTLEGROUNDS';
+  const categories = raw.split('|').map((s) => s.trim()).filter(Boolean);
+  res.json({ categories, intervalSeconds: 300 });
+});
+
+/**
+ * POST /api/relay/tiktok/discovered
+ * Body: { category: "gaming/PUBG:_BATTLEGROUNDS",
+ *         rooms: [{ username, nickname?, roomId?, title?, viewerCount, language? }] }
+ */
+router.post('/tiktok/discovered', requireRelayToken, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const category = typeof req.body?.category === 'string' ? req.body.category.trim() : '';
+    const roomsIn = req.body?.rooms;
+    if (!category || !Array.isArray(roomsIn)) {
+      res.status(400).json({ error: 'category and rooms[] required' });
+      return;
+    }
+    const rooms = (roomsIn as Array<Record<string, unknown>>)
+      .map((r) => ({
+        username: typeof r.username === 'string' ? r.username.trim() : '',
+        nickname: typeof r.nickname === 'string' && r.nickname ? r.nickname : null,
+        roomId: typeof r.roomId === 'string' && r.roomId ? r.roomId : null,
+        title: typeof r.title === 'string' && r.title ? r.title : null,
+        viewerCount: Number.isFinite(Number(r.viewerCount)) ? Math.max(0, Math.round(Number(r.viewerCount))) : 0,
+        language: typeof r.language === 'string' && r.language ? r.language : null,
+      }))
+      .filter((r) => /^[a-z0-9_.]{2,64}$/i.test(r.username.replace(/^@/, '')));
+
+    const stored = await TikTokDiscoveredModel.upsertBatch(category, rooms);
+    const swept = await TikTokDiscoveredModel.sweep();
+    logger.info(
+      `[Relay] TikTok discovery: ${stored} room(s) staged for ${category}` +
+        (swept > 0 ? `, swept ${swept} stale` : ''),
+    );
+    res.json({ stored, swept });
   } catch (err) {
     next(err);
   }
