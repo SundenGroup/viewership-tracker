@@ -8,8 +8,11 @@
  * poller routes every unknown channel here instead of guessing, and one
  * click records a decision that sticks forever.
  *
- * Pending channels are NOT being counted while they sit here. That's the
- * point: silence beats a wrong number.
+ * Pending channels are NOT being counted while they sit here — silence
+ * beats a wrong number. But since 2026-08 they ARE being recorded: the
+ * poller banks their viewership in a quarantine table, and approving a
+ * channel backfills it retroactively (denying discards it). So a slow
+ * review costs nothing, and the queue can be worked at leisure.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -28,6 +31,10 @@ import {
 } from '@/components/design';
 import { fmtCompact, fmtRelative } from '@/design/format';
 
+/** Distinct minutes of banked viewership → "3h 12m" / "42m". */
+const fmtHeldMinutes = (min: number): string =>
+  min >= 60 ? `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m` : `${min}m`;
+
 type Tab = api.YouTubeGatingDecision;
 
 export function DiscoverYouTubeGating({
@@ -44,6 +51,7 @@ export function DiscoverYouTubeGating({
   const [data, setData] = useState<api.YouTubeGatingResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<api.YouTubeTrackerConfig>({});
   const [saving, setSaving] = useState(false);
@@ -67,9 +75,31 @@ export function DiscoverYouTubeGating({
     scope: api.YouTubeGatingScope = 'matching',
   ) => {
     setBusy(channelIdentifier);
+    setNotice(null);
     try {
-      await api.decideYouTubeGating(slug, channelIdentifier, decision, undefined, scope);
+      const res = await api.decideYouTubeGating(slug, channelIdentifier, decision, undefined, scope);
       await load();
+      // Tell the reviewer what happened to the viewership banked while
+      // this channel waited — that's the part they can't see in the table.
+      if (res && typeof res === 'object' && !('ok' in res)) {
+        if (res.promoted && res.promoted.promoted > 0) {
+          setNotice(
+            `Backfilled ${fmtHeldMinutes(res.promoted.minutes)} of held viewership retroactively` +
+              (res.promoted.skipped > 0
+                ? ` — ${res.promoted.skipped} non-matching held rows discarded.`
+                : '.'),
+          );
+        } else if (res.promoted && res.promoted.skipped > 0) {
+          setNotice(
+            `None of the held streams matched this game's vocabulary — ${res.promoted.skipped} held rows discarded. ` +
+              `If that title should count, add its wording to the matching rules.`,
+          );
+        } else if (res.promotion_error) {
+          setError(res.promotion_error);
+        } else if ((res.discarded_snapshots ?? 0) > 0) {
+          setNotice(`Discarded the viewership held for this channel (${res.discarded_snapshots} rows).`);
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Decision failed');
     } finally {
@@ -202,7 +232,9 @@ export function DiscoverYouTubeGating({
 
       <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', lineHeight: 1.6 }}>
         YouTube doesn't say which game a stream is playing, so channels wait here until you
-        decide. <b>Pending channels are not counted</b> in this tracker's numbers.
+        decide. <b>Pending channels are not counted</b> in this tracker's numbers — but their
+        viewership is <b>banked while they wait</b>: approving counts it retroactively from the
+        moment they appeared, denying discards it. No rush.
         <br />
         <b>Track matching</b> — a variety streamer: only counts their streams whose title
         matches this game. <b>Track all</b> — a dedicated channel (an org or tournament
@@ -265,6 +297,7 @@ export function DiscoverYouTubeGating({
       )}
 
       {error && <div style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
+      {notice && <div style={{ fontSize: 12, color: 'var(--info)' }}>{notice}</div>}
 
       {!data && !error && <LoadingBlock minHeight={120} />}
 
@@ -332,6 +365,18 @@ export function DiscoverYouTubeGating({
                     </div>
                     {r.reason && (
                       <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>{r.reason}</div>
+                    )}
+                    {r.decision === 'pending' && (r.held_minutes ?? 0) > 0 && (
+                      <div
+                        style={{ fontSize: 10.5, color: 'var(--info)' }}
+                        title={
+                          'Viewership recorded while this channel waits for review' +
+                          (r.held_from ? ` (since ${new Date(r.held_from).toLocaleString()})` : '') +
+                          '. Approve → counted retroactively. Deny → discarded. Undecided holds expire after 14 days.'
+                        }
+                      >
+                        {fmtHeldMinutes(r.held_minutes!)} of viewership banked — nothing lost while you decide
+                      </div>
                     )}
                     {r.decision === 'allow' && (
                       <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>

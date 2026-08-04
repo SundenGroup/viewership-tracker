@@ -1172,6 +1172,18 @@ export interface YouTubeGatingRow {
   last_seen_at: string | null;
   decided_by: string | null;
   decided_at: string | null;
+  /** Distinct minutes of viewership held in quarantine while pending. */
+  held_minutes?: number;
+  held_from?: string | null;
+}
+
+/** What happened to a channel's held (quarantined) viewership on decide. */
+export interface YouTubeGatingSettlement {
+  /** Set on 'allow': held rows copied into real snapshots retroactively. */
+  promoted?: { promoted: number; skipped: number; minutes: number };
+  promotion_error?: string;
+  /** Set on 'deny': held rows discarded. */
+  discarded_snapshots?: number;
 }
 
 export interface YouTubeGatingResponse {
@@ -1196,7 +1208,7 @@ export function decideYouTubeGating(
   note?: string,
   scope: YouTubeGatingScope = 'matching',
 ) {
-  return request<YouTubeGatingRow | { ok: true }>(
+  return request<(YouTubeGatingRow & YouTubeGatingSettlement) | { ok: true }>(
     `/api/game-trackers/${encodeURIComponent(slug)}/youtube/gating/${encodeURIComponent(channelIdentifier)}`,
     { method: 'POST', body: JSON.stringify({ decision, note, scope }) },
   );
