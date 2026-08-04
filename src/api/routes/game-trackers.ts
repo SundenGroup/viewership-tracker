@@ -6,6 +6,8 @@ import * as GameTrackerSnapshotModel from '../../models/game-tracker-snapshot';
 import * as StreamSessionModel from '../../models/stream-session';
 import * as ChannelModel from '../../models/channel';
 import * as GatingModel from '../../models/game-tracker-youtube-channel';
+import * as QuarantineModel from '../../models/game-tracker-youtube-quarantine';
+import { promoteHeldSnapshots } from '../../services/youtube-quarantine-promote';
 import { requireRole } from '../middleware/auth';
 import type { GameTrackerService } from '../../services/game-tracker-service';
 import logger from '../../utils/logger';
@@ -190,15 +192,23 @@ router.get(
         res.status(400).json({ error: 'decision must be allow, deny or pending' });
         return;
       }
-      const [rows, counts] = await Promise.all([
+      const [rows, counts, held] = await Promise.all([
         GatingModel.list(tracker.id, decision),
         GatingModel.counts(tracker.id),
+        QuarantineModel.statsByChannel(tracker.id),
       ]);
       res.json({
         enabled: tracker.youtube_enabled,
         config: tracker.youtube_config ?? {},
         counts,
-        rows,
+        // held_minutes/held_from tell the reviewer data is banked while
+        // they decide — approving late recovers it, so no need to rush.
+        rows: rows.map((r) => {
+          const h = held.get(r.channel_identifier);
+          return h
+            ? { ...r, held_minutes: h.held_minutes, held_from: h.held_from }
+            : r;
+        }),
       });
     } catch (err) {
       next(err);
@@ -303,13 +313,14 @@ router.post(
         res.status(400).json({ error: "scope must be 'matching' or 'all'" });
         return;
       }
+      const effectiveScope = (scope as GatingModel.GatingScope | undefined) ?? 'matching';
       const row = await GatingModel.decide(
         tracker.id,
         channelIdentifier,
         decision,
         user?.username ?? 'unknown',
         note,
-        (scope as GatingModel.GatingScope | undefined) ?? 'matching',
+        effectiveScope,
       );
       if (!row) {
         res.status(404).json({ error: 'Channel not found in this tracker’s queue' });
@@ -318,7 +329,32 @@ router.post(
       logger.info(
         `[YTGating] ${user?.username ?? 'unknown'} set ${channelIdentifier} → ${decision} on ${tracker.slug}`,
       );
-      res.json(row);
+
+      // Settle the quarantine: approval promotes the held viewership into
+      // real snapshots (with original timestamps), denial discards it.
+      // The decision above is already recorded — a failure here must not
+      // undo it, so report it instead of throwing.
+      if (decision === 'allow') {
+        try {
+          const promoted = await promoteHeldSnapshots(tracker, channelIdentifier, effectiveScope);
+          res.json({ ...row, promoted });
+          return;
+        } catch (err) {
+          logger.error(`[YTGating] promotion failed for ${channelIdentifier} on ${tracker.slug}`, {
+            error: (err as Error).message,
+          });
+          res.json({ ...row, promotion_error: 'held data could not be promoted — see server logs' });
+          return;
+        }
+      }
+      const discarded = await QuarantineModel.discardChannel(tracker.id, channelIdentifier)
+        .catch((err) => {
+          logger.warn(`[YTGating] quarantine discard failed for ${channelIdentifier}`, {
+            error: (err as Error).message,
+          });
+          return 0;
+        });
+      res.json({ ...row, discarded_snapshots: discarded });
     } catch (err) {
       next(err);
     }

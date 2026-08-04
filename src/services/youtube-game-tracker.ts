@@ -18,9 +18,13 @@
  *                 Channel decisions are sticky and human-owned; keyword
  *                 rules only ever route a channel INTO the review queue.
  *
- * Only 'allow' channels produce snapshots. 'pending' is deliberately not
- * tracked — quietly counting unreviewed channels is how the wrong game
- * ends up in a tracker's numbers.
+ * Only 'allow' channels produce snapshots — quietly counting unreviewed
+ * channels is how the wrong game ends up in a tracker's numbers. But a
+ * 'pending' stream is not DROPPED either: its would-be snapshots are
+ * held in game_tracker_youtube_quarantine, a separate table no read
+ * path touches. Approval promotes them retroactively (scope-aware),
+ * denial or a 14-day TTL discards them. So review latency costs no
+ * data, while unreviewed numbers still cannot reach a chart.
  *
  * APPROVAL SCOPE. Approving a channel asks one further question, because
  * a channel is not the same as a stream:
@@ -48,6 +52,7 @@ import type { YouTubeAdapter, YouTubeLiveVideo } from '../adapters/youtube';
 import type { DiscoveredStream } from '../adapters/types';
 import type { GameTracker } from '../models/game-tracker';
 import * as GatingModel from '../models/game-tracker-youtube-channel';
+import * as Quarantine from '../models/game-tracker-youtube-quarantine';
 import { discoverLive } from './youtube-live-discovery';
 import { watchlistVideoIds } from './youtube-channel-watch';
 
@@ -133,6 +138,8 @@ export interface YouTubeCycleResult {
   allowed: number;
   pending: number;
   denied: number;
+  /** Quarantine rows written this cycle for pending channels. */
+  held: number;
   discoveryRan: boolean;
   quotaCalls: number;
 }
@@ -140,6 +147,24 @@ export interface YouTubeCycleResult {
 interface GateOutcome {
   decision: GatingModel.GatingDecision;
   reason: string;
+}
+
+/**
+ * Does a title look like the tracked game — judged against the tracker's
+ * OWN vocabulary (strong phrases, strong tags, include list), TITLE only.
+ * Shared by live gating and quarantine promotion, so "matching" means the
+ * same thing at review time as it did at poll time.
+ */
+export function titleMatchesGame(
+  rawTitle: string | null | undefined,
+  cfg: YouTubeTrackerConfig,
+): string | null {
+  const title = normalizeTitle(rawTitle);
+  const terms = [
+    ...(cfg.strongPhrases ?? []), ...(cfg.strongTags ?? []), ...(cfg.include ?? []),
+  ].map((x) => x.toLowerCase()).filter(Boolean);
+  const hit = terms.find((kw) => title.includes(kw));
+  return hit ? `title "${hit}"` : null;
 }
 
 /**
@@ -186,13 +211,7 @@ export function gateVideo(
    * too — so they can corroborate an unknown channel's identity but can
    * never tell us what is on screen right now.
    */
-  const matchesThisGame = (): string | null => {
-    const terms = [
-      ...(cfg.strongPhrases ?? []), ...(cfg.strongTags ?? []), ...(cfg.include ?? []),
-    ].map((x) => x.toLowerCase()).filter(Boolean);
-    const inTitle = terms.find((kw) => titleEarly.includes(kw));
-    return inTitle ? `title "${inTitle}"` : null;
-  };
+  const matchesThisGame = (): string | null => titleMatchesGame(video.title, cfg);
 
   const titleExcluded = (cfg.exclude ?? [])
     .map((x) => x.toLowerCase())
@@ -354,7 +373,7 @@ export class YouTubeGameTracker {
     const cfg = (tracker.youtube_config ?? {}) as YouTubeTrackerConfig;
     const result: YouTubeCycleResult = {
       rosterSize: 0, liveFound: 0, allowed: 0, pending: 0, denied: 0,
-      discoveryRan: false, quotaCalls: 0,
+      held: 0, discoveryRan: false, quotaCalls: 0,
     };
 
     // ── 1. Roster ──────────────────────────────────────────────────────
@@ -404,6 +423,8 @@ export class YouTubeGameTracker {
     // ── 3. Gate ────────────────────────────────────────────────────────
     const streams: DiscoveredStream[] = [];
     const observations: Parameters<typeof GatingModel.observe>[0] = [];
+    const heldRows: Quarantine.InsertHeldSnapshot[] = [];
+    const cycleTime = new Date();
 
     for (const v of live) {
       const { decision, reason } = gateVideo(v, cfg, decisions.get(v.channelId));
@@ -424,6 +445,22 @@ export class YouTubeGameTracker {
         sampleCcv: v.concurrentViewers,
       });
 
+      // A pending stream is held, not dropped — approval promotes these
+      // rows retroactively, so slow review costs no data.
+      if (decision === 'pending') {
+        heldRows.push({
+          game_tracker_id: tracker.id,
+          channel_identifier: v.channelId,
+          display_name: v.channelTitle || null,
+          video_id: v.videoId,
+          stream_title: v.title || null,
+          concurrent_viewers: v.concurrentViewers,
+          language: v.language ?? null,
+          started_at: v.startedAt ? new Date(v.startedAt) : null,
+          timestamp: cycleTime,
+        });
+      }
+
       if (decision !== 'allow') continue;
       streams.push({
         channelIdentifier: v.channelId,
@@ -442,6 +479,24 @@ export class YouTubeGameTracker {
     } catch (err) {
       // Never let bookkeeping break a poll cycle.
       logger.warn(`[YT:${tracker.slug}] gating upsert failed`, { error: (err as Error).message });
+    }
+
+    if (heldRows.length > 0) {
+      try {
+        result.held = await Quarantine.hold(heldRows);
+      } catch (err) {
+        logger.warn(`[YT:${tracker.slug}] quarantine hold failed`, { error: (err as Error).message });
+      }
+    }
+    // Age out holds nobody ruled on — on the discovery beat, not every
+    // poll, so the delete runs a few times an hour instead of every 30s.
+    if (result.discoveryRan) {
+      try {
+        const swept = await Quarantine.sweep(tracker.id);
+        if (swept > 0) logger.info(`[YT:${tracker.slug}] quarantine swept ${swept} expired rows`);
+      } catch (err) {
+        logger.debug(`[YT:${tracker.slug}] quarantine sweep failed: ${(err as Error).message}`);
+      }
     }
 
     return { streams, result };

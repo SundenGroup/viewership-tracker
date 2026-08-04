@@ -178,8 +178,23 @@ PUBG-known streamer carries "pubg" tags through their Valorant nights — so
 tags can corroborate an unknown channel's identity but never say what's on
 screen right now.
 
-**Pending channels are not counted.** Silence beats a wrong number. Work the
-queue or you are quietly losing real viewership.
+**Pending channels are not counted — but nothing is lost.** Silence beats a
+wrong number, so a pending channel never appears in charts or reports. Its
+viewership is **banked** instead: every poll writes the would-be snapshot to a
+quarantine table no read path touches. The queue row shows how much is held
+("3h 12m of viewership banked"). Then:
+
+- **Approve** → the held rows are copied into the real data with their
+  original timestamps, so the channel's history starts when it first
+  appeared, not when you got around to it. Under *Track matching*, only
+  held streams whose title matches the vocabulary are backfilled — the
+  rest are discarded, exactly as live tracking would have treated them.
+- **Exclude** → the hold is discarded.
+- **Nobody decides** → the hold expires after 14 days.
+
+So the queue can be worked at leisure — review latency costs no data. The
+one thing backfill cannot recover is a hold that already expired, so aim to
+clear the queue within two weeks.
 
 Your decisions are permanent. Automatic decisions are provisional and get
 re-checked once a stream crosses `alwaysReviewAboveCcv` — a channel
