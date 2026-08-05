@@ -157,6 +157,7 @@ export async function rangeLeaderboard(
 ): Promise<
   Array<{
     channel_id: string;
+    peak_title: string | null;
     peak_ccv: number;
     avg_ccv: number;
     minutes_live: number;
@@ -195,6 +196,7 @@ export async function rangeLeaderboard(
   const rows = await db.raw<{
     rows: Array<{
       channel_id: string;
+      peak_title: string | null;
       peak_ccv: string;
       avg_ccv: string;
       minutes_live: string;
@@ -206,6 +208,10 @@ export async function rangeLeaderboard(
     `
     SELECT
       (array_agg(s.channel_id ORDER BY s.concurrent_viewers DESC))[1] AS channel_id,
+      -- Title as it stood at the row's PEAK minute. The row is ranked by
+      -- peak, so this is the stream that earned the ranking — the "latest"
+      -- title would often describe a different, smaller broadcast.
+      (array_agg(s.stream_title ORDER BY s.concurrent_viewers DESC))[1] AS peak_title,
       MAX(s.concurrent_viewers) AS peak_ccv,
       AVG(s.concurrent_viewers)::int AS avg_ccv,
       COUNT(DISTINCT date_trunc('minute', s."timestamp")) AS minutes_live,
@@ -226,6 +232,7 @@ export async function rangeLeaderboard(
   );
   return rows.rows.map((r) => ({
     channel_id: r.channel_id,
+    peak_title: r.peak_title ?? null,
     peak_ccv: Number(r.peak_ccv),
     avg_ccv: Number(r.avg_ccv),
     minutes_live: Number(r.minutes_live),

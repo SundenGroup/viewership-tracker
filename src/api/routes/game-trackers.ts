@@ -762,13 +762,28 @@ router.get('/:slug/range-leaderboard', async (req: Request, res: Response, next:
       res.json({ from: fromTs, to: toTs, total, rows: [] });
       return;
     }
-    const channels = await ChannelModel.findByIds(rows.map((r) => r.channel_id));
+    const [channels, grades] = await Promise.all([
+      ChannelModel.findByIds(rows.map((r) => r.channel_id)),
+      // Period grade: median across the sessions inside the range, keyed by
+      // streamer identity to match how the leaderboard groups rows.
+      StreamSessionModel.rangeGradesFor(tracker.id, fromTs, toTs).catch(() => new Map()),
+    ]);
     const channelMap = new Map(channels.map((c) => [c.id, c]));
     res.json({
       from: fromTs,
       to: toTs,
       total,
-      rows: rows.map((r) => ({ ...r, channel: channelMap.get(r.channel_id) ?? null })),
+      rows: rows.map((r) => {
+        const ch = channelMap.get(r.channel_id) ?? null;
+        const g = ch ? grades.get(`${ch.platform}:${ch.channel_identifier.toLowerCase()}`) : undefined;
+        return {
+          ...r,
+          channel: ch,
+          range_grade: g?.grade ?? null,
+          range_grade_sessions: g?.sessions ?? 0,
+          range_grade_score: g?.avgScore ?? null,
+        };
+      }),
     });
   } catch (err) {
     next(err);

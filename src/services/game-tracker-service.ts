@@ -498,6 +498,7 @@ export class GameTrackerService {
     const twitchNeed: Array<{ login: string; channel: Ch }> = [];
     const kickNeed: Array<{ slug: string; channel: Ch }> = [];
     const youtubeNeed: Array<{ channelId: string; channel: Ch }> = [];
+    const tiktokNeed: Array<{ username: string; channel: Ch }> = [];
     for (const { platform, stream } of streams) {
       const ch = channelMap.get(this.channelKey(platform, stream.channelIdentifier));
       if (!ch) continue;
@@ -506,6 +507,7 @@ export class GameTrackerService {
       if (platform === 'twitch') twitchNeed.push({ login: stream.channelIdentifier, channel: ch });
       else if (platform === 'kick') kickNeed.push({ slug: stream.channelIdentifier, channel: ch });
       else if (platform === 'youtube') youtubeNeed.push({ channelId: stream.channelIdentifier, channel: ch });
+      else if (platform === 'tiktok') tiktokNeed.push({ username: stream.channelIdentifier, channel: ch });
     }
 
     const persist = async (channel: Ch, patch: Record<string, unknown>) => {
@@ -568,6 +570,37 @@ export class GameTrackerService {
       } catch (err) {
         logger.warn('[GameTracker] youtube profile pic fetch failed', { error: (err as Error).message });
       }
+    }
+
+    // TikTok — tiktok.com/api-live/user/room answers UNSIGNED from a
+    // datacenter IP (verified 2026-08), so avatars need no relay, no
+    // browser and no signing service. One small request per new channel,
+    // cached forever after (the `profile_image_url` guard above).
+    // Sequential with a short gap: this is an unofficial endpoint and a
+    // burst from one IP is exactly what gets it rate-limited.
+    for (const { username, channel } of tiktokNeed.slice(0, 10)) {
+      try {
+        const clean = username.replace(/^@/, '');
+        const { data } = await axios.get(
+          'https://www.tiktok.com/api-live/user/room/',
+          {
+            params: { aid: 1988, sourceType: 54, uniqueId: clean },
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0 Safari/537.36',
+              Referer: 'https://www.tiktok.com/',
+            },
+            timeout: 8_000,
+          },
+        );
+        const user = (data as { data?: { user?: Record<string, unknown> } })?.data?.user ?? {};
+        const url = [user.avatarLarger, user.avatarMedium, user.avatarThumb]
+          .find((u): u is string => typeof u === 'string' && u.startsWith('http'));
+        if (url) await persist(channel, { profile_image_url: url });
+      } catch (err) {
+        logger.debug(`[GameTracker] tiktok avatar fetch failed for ${username}: ${(err as Error).message}`);
+      }
+      await new Promise((r) => setTimeout(r, 300));
     }
   }
 

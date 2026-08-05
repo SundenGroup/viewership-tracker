@@ -700,3 +700,56 @@ export async function liveStartsFor(
   );
   return new Map(rows.map((r) => [r.channel_id, r.started_at]));
 }
+
+/**
+ * Median health grade per streamer for sessions overlapping a range.
+ *
+ * The live leaderboard shows "last grade" — the most recent COMPLETED
+ * broadcast — which is the right answer for "right now". A range view is
+ * a period summary (peak, hours, days are all aggregates), so the grade
+ * has to summarise the period too: the median across the sessions that
+ * actually fall inside it.
+ *
+ * Median rather than mean because grades are ordinal letters — median is
+ * defined on them directly (percentile_disc over A…F, already used by the
+ * per-language health rollup) and needs no score→letter thresholds that
+ * could drift from the scorer's own.
+ *
+ * Keyed by "platform:lower(identifier)" — the same streamer identity the
+ * range leaderboard groups by, so a streamer with rows in several series
+ * resolves to one grade.
+ */
+export async function rangeGradesFor(
+  gameTrackerId: string,
+  fromTs: Date,
+  toTs: Date,
+): Promise<Map<string, { grade: string; sessions: number; avgScore: number | null }>> {
+  const rows = await db.raw<{
+    rows: Array<{ key: string; grade: string; sessions: string; avg_score: string | null }>;
+  }>(
+    `
+    SELECT c.platform || ':' || LOWER(c.channel_identifier) AS key,
+           percentile_disc(0.5) WITHIN GROUP (ORDER BY ss.health_grade) AS grade,
+           COUNT(*) AS sessions,
+           AVG(ss.health_score)::numeric(6,1) AS avg_score
+    FROM stream_sessions ss
+    JOIN channels c ON c.id = ss.channel_id
+    WHERE ss.game_tracker_id = ?
+      AND ss.health_grade IS NOT NULL
+      AND ss.status <> 'live'
+      AND ss.started_at < ?
+      AND COALESCE(ss.ended_at, ss.started_at) >= ?
+    GROUP BY 1
+    `,
+    [gameTrackerId, toTs, fromTs],
+  );
+  const out = new Map<string, { grade: string; sessions: number; avgScore: number | null }>();
+  for (const r of rows.rows) {
+    out.set(r.key, {
+      grade: r.grade,
+      sessions: Number(r.sessions),
+      avgScore: r.avg_score == null ? null : Number(r.avg_score),
+    });
+  }
+  return out;
+}
