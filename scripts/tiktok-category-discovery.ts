@@ -7,10 +7,11 @@
  * Why a browser: the category feed (webcast.tiktok.com/webcast/feed/)
  * rejects unsigned requests (status_code 10011), and the signature stack
  * (msToken / X-Gnarly / X-Dynosaur) exists only inside a real session.
- * So we open tiktok.com/live/<category>, let TikTok's own JS sign the
- * feed call, replay that signed URL a few times for more pages (replay
- * is accepted for a short window — verified 2026-08), and relay the
- * rooms to the server. The server's discovery pipeline does the rest.
+ * So we open the tiktok.com/live/category/<category> GRID page, let
+ * TikTok's own JS sign its category feed call, then cursor-paginate
+ * that signed URL (replay is accepted for a short window — verified
+ * 2026-08) and relay the rooms to the server. The server's discovery
+ * pipeline does the rest.
  *
  * Usage:
  *   npx tsx scripts/tiktok-category-discovery.ts          # one pass
@@ -46,8 +47,8 @@ const RELAY_URL = process.env.RELAY_URL || 'https://tracker.clutch.game';
 const RELAY_SECRET = process.env.RELAY_SECRET || '';
 const CDP_PORT = 9224;
 const LOOP_MODE = process.argv.includes('--loop');
-/** Extra replays of the signed feed URL per category (each ≈ a page). */
-const FEED_REPLAYS = 3;
+/** Cursor-paginate the category feed up to this many pages per pass. */
+const MAX_FEED_PAGES = 12;
 const PAGE_SETTLE_MS = 8_000;
 
 function log(msg: string) {
@@ -115,28 +116,51 @@ class CDP {
 
 // ── Category capture ─────────────────────────────────────────────────────
 
-/** Runs inside the page: replay the signed feed URL, return raw feed JSONs. */
-const CAPTURE_EXPR = (replays: number) => `
+/**
+ * Runs inside the page: replay the signed CATEGORY-GRID feed URL and
+ * cursor-paginate it. Two feed surfaces exist — the /live/<cat> player
+ * fires req_from=pc_web_game_sub_feed_refresh and samples ~a dozen
+ * rooms, while the /live/category/<cat> grid fires
+ * req_from=pc_web_game_category_feed_refresh and pages through the
+ * real category listing (verified 2026-08-05: 36+ broadcasters and
+ * still has_more after 6 pages, vs ~11 total on the player feed).
+ * Only the grid feed is worth capturing; channel_id=86 requests on the
+ * same page are the "suggested hosts" rail — never touch those.
+ */
+const CAPTURE_EXPR = (maxPages: number) => `
 (async () => {
   const out = [];
   const signed = performance.getEntriesByType('resource')
     .map(e => e.name)
-    .filter(u => u.includes('webcast.tiktok.com/webcast/feed/'));
-  const url = signed[signed.length - 1];
-  if (!url) return { error: 'no signed feed URL on page', feeds: [] };
-  for (let i = 0; i < ${replays}; i++) {
+    .filter(u => u.includes('webcast.tiktok.com/webcast/feed/')
+              && u.includes('pc_web_game_category_feed'));
+  const base = signed[signed.length - 1];
+  if (!base) return { error: 'no signed category-grid feed URL on page', feeds: [] };
+  let cursor = null;
+  for (let i = 0; i < ${maxPages}; i++) {
     try {
-      const r = await fetch(url, { credentials: 'include' });
-      out.push(await r.json());
-      await new Promise(res => setTimeout(res, 1200));
-    } catch (e) { out.push({ error: String(e) }); }
+      let u = base;
+      if (cursor != null) {
+        u = u.includes('max_time=')
+          ? u.replace(/([?&])max_time=\\d*/, '$1max_time=' + cursor)
+          : u + '&max_time=' + cursor;
+      }
+      const r = await fetch(u, { credentials: 'include' });
+      const j = await r.json();
+      out.push(j);
+      if (j.status_code !== 0 || !j.extra || !j.extra.has_more) break;
+      cursor = j.extra.max_time;
+      await new Promise(res => setTimeout(res, 900));
+    } catch (e) { out.push({ error: String(e) }); break; }
   }
   return { feeds: out };
 })()
 `;
 
 async function captureCategory(cdp: CDP, category: string): Promise<TikTokFeedRoom[]> {
-  const pageUrl = `https://www.tiktok.com/live/${category}`;
+  // The /live/category/ GRID page — not the /live/ player, whose feed
+  // only samples a handful of rooms (see CAPTURE_EXPR).
+  const pageUrl = `https://www.tiktok.com/live/category/${category}`;
   const { targetId } = await cdp.send<{ targetId: string }>('Target.createTarget', {
     url: 'about:blank',
   });
@@ -151,7 +175,7 @@ async function captureCategory(cdp: CDP, category: string): Promise<TikTokFeedRo
 
     const evalRes = await cdp.send<{ result?: { value?: { error?: string; feeds?: unknown[] } } }>(
       'Runtime.evaluate',
-      { expression: CAPTURE_EXPR(FEED_REPLAYS), awaitPromise: true, returnByValue: true },
+      { expression: CAPTURE_EXPR(MAX_FEED_PAGES), awaitPromise: true, returnByValue: true },
       sessionId,
     );
     const value = evalRes.result?.value;
