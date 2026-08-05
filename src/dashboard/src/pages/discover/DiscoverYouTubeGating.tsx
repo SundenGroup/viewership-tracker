@@ -15,7 +15,7 @@
  * review costs nothing, and the queue can be worked at leisure.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as api from '@/services/api';
 import {
   Row,
@@ -37,6 +37,83 @@ const fmtHeldMinutes = (min: number): string =>
 
 type Tab = api.YouTubeGatingDecision;
 
+// ── Sorting ─────────────────────────────────────────────────────────────
+// Client-side: the endpoint returns the tracker's whole queue in one go,
+// so re-ordering here costs nothing and keeps every tab instant.
+
+type SortCol = 'channel' | 'ccv' | 'seen';
+interface SortState {
+  col: SortCol;
+  dir: 'asc' | 'desc';
+}
+/** Server order is CCV-desc; start there so the first render is unchanged. */
+const DEFAULT_SORT: SortState = { col: 'ccv', dir: 'desc' };
+
+/** Text sorts A→Z first; numbers and dates sort biggest/newest first. */
+const defaultDirFor = (col: SortCol): 'asc' | 'desc' => (col === 'channel' ? 'asc' : 'desc');
+
+function compareRows(a: api.YouTubeGatingRow, b: api.YouTubeGatingRow, sort: SortState): number {
+  const sign = sort.dir === 'asc' ? 1 : -1;
+  if (sort.col === 'channel') {
+    const an = (a.display_name ?? a.channel_identifier ?? '').toLowerCase();
+    const bn = (b.display_name ?? b.channel_identifier ?? '').toLowerCase();
+    return an.localeCompare(bn) * sign;
+  }
+  // Missing values always sink to the bottom, whichever way the column
+  // is pointing — a channel with no CCV or no sighting is never "the top".
+  const av = sort.col === 'ccv' ? a.sample_ccv : a.last_seen_at ? Date.parse(a.last_seen_at) : null;
+  const bv = sort.col === 'ccv' ? b.sample_ccv : b.last_seen_at ? Date.parse(b.last_seen_at) : null;
+  const aMissing = av == null || Number.isNaN(av);
+  const bMissing = bv == null || Number.isNaN(bv);
+  if (aMissing && bMissing) return 0;
+  if (aMissing) return 1;
+  if (bMissing) return -1;
+  return ((av as number) - (bv as number)) * sign;
+}
+
+function SortTh({
+  col,
+  sort,
+  onSort,
+  children,
+  align = 'left',
+  width,
+}: {
+  col: SortCol;
+  sort: SortState;
+  onSort: (col: SortCol) => void;
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+  width?: number;
+}) {
+  const active = sort.col === col;
+  return (
+    <th style={{ ...thStyle, textAlign: align, ...(width ? { width } : {}) }}>
+      <button
+        type="button"
+        onClick={() => onSort(col)}
+        title={`Sort by ${typeof children === 'string' ? children.toLowerCase() : 'this column'}`}
+        style={{
+          all: 'unset',
+          cursor: 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          color: active ? 'var(--fg)' : 'inherit',
+          font: 'inherit',
+          letterSpacing: 'inherit',
+          textTransform: 'inherit',
+        }}
+      >
+        {children}
+        <span aria-hidden style={{ fontSize: 9, opacity: active ? 1 : 0.35 }}>
+          {active ? (sort.dir === 'asc' ? '▲' : '▼') : '▾'}
+        </span>
+      </button>
+    </th>
+  );
+}
+
 export function DiscoverYouTubeGating({
   slug,
   expanded = true,
@@ -52,6 +129,7 @@ export function DiscoverYouTubeGating({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<api.YouTubeTrackerConfig>({});
   const [saving, setSaving] = useState(false);
@@ -106,6 +184,15 @@ export function DiscoverYouTubeGating({
       setBusy(null);
     }
   };
+
+  /** First click on a column picks its natural direction, then flips. */
+  const toggleSort = (col: SortCol) =>
+    setSort((s) => (s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: defaultDirFor(col) }));
+
+  const sortedRows = useMemo(
+    () => (data ? [...data.rows].sort((a, b) => compareRows(a, b, sort)) : []),
+    [data, sort],
+  );
 
   const counts = data?.counts ?? { allow: 0, deny: 0, pending: 0 };
   const cfg = data?.config ?? {};
@@ -314,15 +401,19 @@ export function DiscoverYouTubeGating({
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 720 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <th style={thStyle}>Channel</th>
+                <SortTh col="channel" sort={sort} onSort={toggleSort}>Channel</SortTh>
                 <th style={thStyle}>Sample stream</th>
-                <th style={{ ...thStyle, textAlign: 'right', width: 90 }}>Peak seen</th>
-                <th style={{ ...thStyle, width: 96 }}>Last seen</th>
+                <SortTh col="ccv" sort={sort} onSort={toggleSort} align="right" width={90}>
+                  Peak seen
+                </SortTh>
+                <SortTh col="seen" sort={sort} onSort={toggleSort} width={104}>
+                  Last seen
+                </SortTh>
                 <th style={{ ...thStyle, textAlign: 'right', width: 240 }}>Decision</th>
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((r) => (
+              {sortedRows.map((r) => (
                 <tr key={r.id} style={{ borderBottom: '1px solid var(--border-faint)' }}>
                   <td style={tdStyle}>
                     <Col gap={2} style={{ minWidth: 0 }}>
