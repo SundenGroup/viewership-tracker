@@ -21,6 +21,11 @@ export interface GameTracker {
   /** YouTube branch (Discover) — off until a roster + rules are configured. */
   soop_category_id: string | null;
   soop_category_name: string | null;
+  /** tiktok.com/live/<slug>, e.g. 'gaming/PUBG:_BATTLEGROUNDS' — also the
+   *  join key into the relay-fed tiktok_discovered_streams buffer.
+   *  Sampled feed, not an authoritative category list. */
+  tiktok_category_slug: string | null;
+  tiktok_category_name: string | null;
   youtube_enabled: boolean;
   /** { queries, include, exclude, maxRoster } — see YouTubeTrackerConfig. */
   youtube_config: Record<string, unknown>;
@@ -45,6 +50,8 @@ export interface CreateGameTracker {
   retain_raw_days?: number | null;
   soop_category_id?: string | null;
   soop_category_name?: string | null;
+  tiktok_category_slug?: string | null;
+  tiktok_category_name?: string | null;
   youtube_enabled?: boolean;
   youtube_config?: Record<string, unknown>;
   metadata?: Record<string, unknown>;

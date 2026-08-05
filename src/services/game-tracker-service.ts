@@ -26,7 +26,7 @@ import type { YouTubeAdapter } from '../adapters/youtube';
 import type { DiscoveredStream } from '../adapters/types';
 import { YouTubeGameTracker } from './youtube-game-tracker';
 
-type TrackedPlatform = 'twitch' | 'kick' | 'youtube' | 'soop';
+type TrackedPlatform = 'twitch' | 'kick' | 'youtube' | 'soop' | 'tiktok';
 
 interface PlatformStream {
   platform: TrackedPlatform;
@@ -35,6 +35,7 @@ interface PlatformStream {
 import * as GameTrackerModel from '../models/game-tracker';
 import * as GameTrackerChannelModel from '../models/game-tracker-channel';
 import * as GameTrackerSnapshotModel from '../models/game-tracker-snapshot';
+import * as TikTokDiscoveredModel from '../models/tiktok-discovered-stream';
 import * as StreamSessionModel from '../models/stream-session';
 import * as ChannelFollowerSnapshotModel from '../models/channel-follower-snapshot';
 import type { Channel } from '../models/channel';
@@ -227,6 +228,41 @@ export class GameTrackerService {
         }
       })());
     }
+    // TikTok reads the relay-fed staging buffer instead of calling any
+    // API: the category feed only answers signed browser requests, so the
+    // residential box captures it every ~5 min (tiktok-category-discovery)
+    // and this branch serves the latest capture. NOTE this feed is
+    // region-personalized SAMPLING — treat the column as best-effort,
+    // never as the full category. No keyword filter here: Discover wants
+    // the whole category; only event auto-discovery filters by keywords.
+    if (tracker.tiktok_category_slug) {
+      fetches.push((async () => {
+        try {
+          const rows = await TikTokDiscoveredModel.freshStreamsForCategory(
+            tracker.tiktok_category_slug!,
+          );
+          for (const r of rows) {
+            liveStreams.push({
+              platform: 'tiktok',
+              stream: {
+                channelIdentifier: r.username,
+                displayName: r.nickname || r.username,
+                concurrentViewers: r.viewer_count,
+                language: r.language,
+                title: r.title ?? '',
+                gameName: tracker.tiktok_category_name ?? null,
+                startedAt: null,
+                streamId: r.room_id,
+              },
+            });
+          }
+        } catch (err) {
+          logger.warn(`[GameTracker:${tracker.slug}] TikTok buffer read failed`, {
+            error: (err as Error).message,
+          });
+        }
+      })());
+    }
     // YouTube runs in the same parallel wave. Unlike Twitch/Kick there is
     // no authoritative category listing, so this branch builds its own
     // roster and gates membership itself (see youtube-game-tracker.ts).
@@ -387,6 +423,8 @@ export class GameTrackerService {
               ? tracker.kick_category_slug ?? tracker.name
               : platform === 'soop'
                 ? tracker.soop_category_name
+              : platform === 'tiktok'
+                ? tracker.tiktok_category_name
               : tracker.name) ??
           null,
         started_at: stream.startedAt ? new Date(stream.startedAt) : null,

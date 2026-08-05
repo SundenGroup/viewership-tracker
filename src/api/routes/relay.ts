@@ -633,13 +633,24 @@ router.get('/tiktok/channels', requireRelayToken, async (_req: Request, res: Res
 
 /**
  * GET /api/relay/tiktok/discover-config
- * Category pages the relay box should capture. Env-overridable so new
- * games don't need a deploy: TIKTOK_DISCOVER_CATEGORIES="slug|slug".
+ * Category pages the relay box should capture: every active game
+ * tracker's tiktok_category_slug (so enabling TikTok on a tracker
+ * starts capture automatically), plus any env extras
+ * (TIKTOK_DISCOVER_CATEGORIES="slug|slug").
  */
-router.get('/tiktok/discover-config', requireRelayToken, async (_req: Request, res: Response) => {
-  const raw = process.env.TIKTOK_DISCOVER_CATEGORIES ?? 'gaming/PUBG:_BATTLEGROUNDS';
-  const categories = raw.split('|').map((s) => s.trim()).filter(Boolean);
-  res.json({ categories, intervalSeconds: 300 });
+router.get('/tiktok/discover-config', requireRelayToken, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const rows = await db('game_trackers')
+      .where('status', 'active')
+      .whereNotNull('tiktok_category_slug')
+      .pluck('tiktok_category_slug');
+    const extra = (process.env.TIKTOK_DISCOVER_CATEGORIES ?? '')
+      .split('|').map((s) => s.trim()).filter(Boolean);
+    const categories = [...new Set([...rows, ...extra])];
+    res.json({ categories, intervalSeconds: 300 });
+  } catch (err) {
+    next(err);
+  }
 });
 
 /**

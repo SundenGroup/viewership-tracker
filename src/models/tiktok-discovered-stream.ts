@@ -54,6 +54,23 @@ export async function freshStreams(maxAgeMinutes = FRESH_WINDOW_MINUTES): Promis
     .select('*');
 }
 
+/**
+ * One category's fresh rooms, for the Discover live tracker. Tighter
+ * window than event discovery: one relay interval (5 min) plus slack,
+ * so a stream that ended stops being served within ~2 poll cycles
+ * instead of lingering for 15 minutes.
+ */
+export async function freshStreamsForCategory(
+  category: string,
+  maxAgeMinutes = 7,
+): Promise<TikTokDiscoveredStream[]> {
+  return db<TikTokDiscoveredStream>(TABLE)
+    .where('category', category)
+    .where('captured_at', '>', new Date(Date.now() - maxAgeMinutes * 60_000))
+    .orderBy('viewer_count', 'desc')
+    .select('*');
+}
+
 export async function sweep(): Promise<number> {
   return db(TABLE)
     .where('captured_at', '<', new Date(Date.now() - SWEEP_AFTER_HOURS * 3_600_000))
