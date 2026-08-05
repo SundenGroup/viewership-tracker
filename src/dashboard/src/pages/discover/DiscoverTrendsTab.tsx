@@ -189,7 +189,7 @@ export function DiscoverTrendsTab({
     let cancelled = false;
     const from = new Date(Date.now() - range.hours * 3600_000);
     const to = new Date();
-    const plats = ['twitch', 'kick', 'youtube', 'soop'];
+    const plats = ['twitch', 'kick', 'youtube', 'soop', 'tiktok'];
     Promise.all(
       plats.map((pf) =>
         api

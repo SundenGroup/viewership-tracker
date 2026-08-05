@@ -31,6 +31,8 @@ export function DiscoverAdminNew() {
   const [twitchPick, setTwitchPick] = useState<{ id: string; name: string } | null>(null);
   const [kickPick, setKickPick] = useState<{ id: string; name: string } | null>(null);
   const [soopPick, setSoopPick] = useState<{ id: string; name: string } | null>(null);
+  const [tiktokSlug, setTiktokSlug] = useState('');
+  const [tiktokName, setTiktokName] = useState('');
   const [minCcv, setMinCcv] = useState(10);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(isEdit);
@@ -60,6 +62,8 @@ export function DiscoverAdminNew() {
         setSoopPick(
           t.soop_category_id ? { id: t.soop_category_id, name: t.soop_category_name ?? t.soop_category_id } : null,
         );
+        setTiktokSlug(t.tiktok_category_slug ?? '');
+        setTiktokName(t.tiktok_category_name ?? '');
         setLoading(false);
       })
       .catch((err: Error) => {
@@ -116,7 +120,7 @@ export function DiscoverAdminNew() {
       setError('Name and slug are required');
       return;
     }
-    if (!twitchPick && !kickPick && !soopPick) {
+    if (!twitchPick && !kickPick && !soopPick && !tiktokSlug.trim()) {
       setError('Pick at least one platform mapping');
       return;
     }
@@ -133,6 +137,10 @@ export function DiscoverAdminNew() {
       // SOOP ids are zero-padded strings — never Number() them.
       soop_category_id: soopPick?.id ?? null,
       soop_category_name: soopPick?.name ?? null,
+      // Accept a pasted URL — store only the path after /live/.
+      tiktok_category_slug:
+        tiktokSlug.trim().replace(/^https?:\/\/(www\.)?tiktok\.com\/live\//i, '').replace(/\/+$/, '') || null,
+      tiktok_category_name: tiktokName.trim() || (tiktokSlug.trim() ? name.trim() : null),
       min_ccv_threshold: minCcv,
     };
     try {
@@ -270,6 +278,34 @@ export function DiscoverAdminNew() {
             />
           </div>
         )}
+
+        <div style={{ marginTop: 16 }}>
+          <label style={lbl}>TikTok live category (optional)</label>
+          <input
+            type="text"
+            value={tiktokSlug}
+            onChange={(e) => setTiktokSlug(e.target.value)}
+            placeholder="gaming/PUBG:_BATTLEGROUNDS"
+            style={inp}
+          />
+          <p style={{ fontSize: 11, color: 'var(--fg-dim)', marginTop: 4 }}>
+            The path after tiktok.com/live/ (pasting the full URL works too). TikTok has no
+            category search API and its feed is region-personalized sampling — the column is
+            best-effort, not the full category. Captured by the residential relay.
+          </p>
+          {tiktokSlug.trim() && (
+            <div style={{ marginTop: 8 }}>
+              <label style={lbl}>TikTok category display name</label>
+              <input
+                type="text"
+                value={tiktokName}
+                onChange={(e) => setTiktokName(e.target.value)}
+                placeholder={name || 'PUBG: BATTLEGROUNDS'}
+                style={inp}
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="card" style={{ padding: 20, marginBottom: 24 }}>
@@ -328,7 +364,7 @@ export function DiscoverAdminNew() {
           type="button"
           className="btn btn-primary"
           onClick={handleSubmit}
-          disabled={submitting || (!twitchPick && !kickPick && !soopPick) || !name.trim() || !slug.trim()}
+          disabled={submitting || (!twitchPick && !kickPick && !soopPick && !tiktokSlug.trim()) || !name.trim() || !slug.trim()}
         >
           {submitting
             ? isEdit

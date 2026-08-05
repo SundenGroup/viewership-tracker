@@ -244,6 +244,12 @@ export function DiscoverListPage() {
                     <span>reviewed channels</span>
                   </Row>
                 )}
+                {t.tiktok_category_slug && (
+                  <Row gap={6} align="center">
+                    <PlatformPip id="tiktok" size={12} />
+                    <span>{t.tiktok_category_name ?? 'TikTok'}</span>
+                  </Row>
+                )}
                 {t.soop_category_id && (
                   <Row gap={6} align="center">
                     <PlatformPip id="soop" size={11} />

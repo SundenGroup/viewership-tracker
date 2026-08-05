@@ -1119,6 +1119,9 @@ export interface GameTracker {
   updated_at: string;
   soop_category_id: string | null;
   soop_category_name: string | null;
+  /** tiktok.com/live/<slug> — relay-fed, region-sampled feed. */
+  tiktok_category_slug: string | null;
+  tiktok_category_name: string | null;
 }
 
 export interface GameTrackerDetail extends GameTracker {
@@ -1271,6 +1274,8 @@ export interface CreateGameTracker {
   youtube_config?: YouTubeTrackerConfig;
   soop_category_id?: string | null;
   soop_category_name?: string | null;
+  tiktok_category_slug?: string | null;
+  tiktok_category_name?: string | null;
 }
 
 export interface GameTrackerLeaderboardRow {

@@ -154,8 +154,10 @@ export function DiscoverDetailPage() {
     if (detail?.kick_category_id) out.push('kick');
     if (detail?.youtube_enabled) out.push('youtube');
     if (detail?.soop_category_id) out.push('soop');
+    if (detail?.tiktok_category_slug) out.push('tiktok');
     return out;
-  }, [detail?.twitch_game_id, detail?.kick_category_id, detail?.youtube_enabled, detail?.soop_category_id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail?.twitch_game_id, detail?.kick_category_id, detail?.youtube_enabled, detail?.soop_category_id, detail?.tiktok_category_slug]);
 
   // A search takeover replaces the body — clear any lingering Ask card so
   // the two result surfaces never stack.
@@ -250,6 +252,14 @@ export function DiscoverDetailPage() {
               <Row gap={6} align="center">
                 <PlatformPip id="soop" size={12} />
                 <span>{detail.soop_category_name ?? detail.soop_category_id}</span>
+              </Row>
+            )}
+            {detail.tiktok_category_slug && (
+              <Row gap={6} align="center">
+                <PlatformPip id="tiktok" size={12} />
+                <span title="TikTok's category feed is region-personalized sampling — best-effort coverage, not the full category">
+                  {detail.tiktok_category_name ?? detail.tiktok_category_slug} · sampled
+                </span>
               </Row>
             )}
             {/* Polling config is operator detail — admins only */}
@@ -782,6 +792,12 @@ function LiveTab({
         }
       >
         <LeaderboardTable rows={shown} trackerSlug={slug} showLastGrade />
+        {platform === 'tiktok' && (shown?.length ?? 0) > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--fg-dim)', padding: '8px 0 0' }}>
+            TikTok's category feed is region-personalized sampling — this column shows the
+            streams it surfaces to us, not the full category.
+          </div>
+        )}
         {activeChannelCount > (leaderboard?.length ?? 0) && (
           <button
             type="button"
