@@ -1,6 +1,27 @@
 import logger from '../utils/logger';
 import type { PlatformAdapter, ChannelSnapshot, DiscoveredStream } from './types';
 import * as TikTokDiscoveredModel from '../models/tiktok-discovered-stream';
+import type { TikTokDiscoveredStream } from '../models/tiktok-discovered-stream';
+import { keywordMatches } from '../utils/keyword-match';
+
+/**
+ * The staged buffer is a whole CATEGORY (every live PUBG room on
+ * TikTok), so unlike Twitch — whose adapter searches by game AND
+ * keywords upstream — the event scoping has to happen here. Without a
+ * keyword hit on title/nickname/username the room is dropped; with no
+ * keywords configured at all, nothing is returned, because "every PUBG
+ * stream on TikTok" is never what an event series wants to discover.
+ * Exported for tests.
+ */
+export function selectDiscoverable(
+  rows: TikTokDiscoveredStream[],
+  keywords: string[] | undefined,
+): TikTokDiscoveredStream[] {
+  if (!keywords || keywords.length === 0) return [];
+  return rows.filter((r) =>
+    keywordMatches(keywords, r.title, `${r.nickname ?? ''} ${r.username}`),
+  );
+}
 
 /**
  * TikTok adapter.
@@ -28,10 +49,11 @@ export class TikTokAdapter implements PlatformAdapter {
 
   async searchLiveStreams(
     _gameId?: string,
-    _keywords?: string[],
+    keywords?: string[],
   ): Promise<DiscoveredStream[]> {
     try {
-      const rows = await TikTokDiscoveredModel.freshStreams();
+      const fresh = await TikTokDiscoveredModel.freshStreams();
+      const rows = selectDiscoverable(fresh, keywords);
       if (rows.length === 0) return [];
       // The buffer can hold several categories; category name doubles as
       // the game name so downstream logs/UI say what the room was playing.
@@ -47,7 +69,9 @@ export class TikTokAdapter implements PlatformAdapter {
         startedAt: null,
         streamId: r.room_id ?? undefined,
       }));
-      logger.debug(`TikTok discovery: serving ${streams.length} staged room(s)`);
+      logger.debug(
+        `TikTok discovery: ${streams.length}/${fresh.length} staged room(s) match keywords`,
+      );
       return streams;
     } catch (err) {
       logger.warn(`TikTok discovery buffer read failed: ${(err as Error).message}`);

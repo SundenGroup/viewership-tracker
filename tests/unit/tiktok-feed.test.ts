@@ -70,3 +70,45 @@ describe('parseFeedRooms', () => {
     expect(rooms[0]).toMatchObject({ viewerCount: 0, title: null, roomId: '42' });
   });
 });
+
+// ── Adapter-side event scoping ─────────────────────────────────────────
+
+import { selectDiscoverable } from '../../src/adapters/tiktok';
+import type { TikTokDiscoveredStream } from '../../src/models/tiktok-discovered-stream';
+
+const staged = (over: Partial<TikTokDiscoveredStream>): TikTokDiscoveredStream => ({
+  id: 'x',
+  category: 'gaming/PUBG:_BATTLEGROUNDS',
+  username: 'someone',
+  nickname: null,
+  room_id: null,
+  title: null,
+  viewer_count: 100,
+  language: null,
+  captured_at: new Date(),
+  ...over,
+});
+
+describe('selectDiscoverable', () => {
+  const rows = [
+    staged({ username: 'costream1', title: 'PGS7 WATCH PARTY DAY 1' }),
+    staged({ username: 'ranked_guy', title: 'pubg duos 18+' }),
+    staged({ username: 'pgs7_fanpage', title: 'chill games', nickname: 'PGS7 Clips' }),
+    staged({ username: 'krtitles', title: 'PGS7 배틀그라운드 중계' }),
+  ];
+
+  it('keeps only keyword-matching rooms (title, nickname or username)', () => {
+    const picked = selectDiscoverable(rows, ['pgs7']);
+    expect(picked.map((r) => r.username)).toEqual(['costream1', 'pgs7_fanpage', 'krtitles']);
+  });
+
+  it('Hangul keywords work against Korean titles', () => {
+    const picked = selectDiscoverable(rows, ['배틀그라운드']);
+    expect(picked.map((r) => r.username)).toEqual(['krtitles']);
+  });
+
+  it('no keywords → nothing, never the whole category', () => {
+    expect(selectDiscoverable(rows, undefined)).toEqual([]);
+    expect(selectDiscoverable(rows, [])).toEqual([]);
+  });
+});
