@@ -32,10 +32,18 @@ const QUOTA_COST = {
   videosList: 1,
 } as const;
 
-// Multi-stream API path: how long to trust a search.list result before refreshing.
-// 5 min picks up newly added simultaneous streams within one broadcast quarter
-// while keeping search.list cost bounded (~100 units / 5 min / channel).
-const API_MULTISTREAM_SEARCH_TTL_MS = 5 * 60_000;
+// Multi-stream API path: how long to trust a search.list result before
+// refreshing. This TTL governs ONLY the discovery of which videos a
+// multi-stream channel has live (search.list, 100 units per refresh per
+// channel) — viewer counts for the already-known videos come from
+// videos.list every poll cycle (1 unit/50 ids) and are unaffected.
+// 15 min default: a newly added simultaneous stream appears within ≤15
+// min, at a third of the 5-min cost that once burned 40k units in half
+// a PGS broadcast day. Tune via YT_MULTISTREAM_SEARCH_TTL_S (min 60).
+const API_MULTISTREAM_SEARCH_TTL_MS = Math.max(
+  60_000,
+  (Number(process.env.YT_MULTISTREAM_SEARCH_TTL_S) || 900) * 1000,
+);
 
 // ── YouTube API response types ──────────────────────────────────────────
 

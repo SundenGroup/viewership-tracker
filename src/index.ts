@@ -158,6 +158,12 @@ async function bootstrap(): Promise<void> {
         .catch((err: Error) => logger.warn('[Push] broadcast_started fan-out failed', { error: err.message }));
     }
   });
+  // Resume any discovery the operator left running before the restart —
+  // discovery START stays user-initiated; this only restores that choice.
+  discoveryService.resumeFlagged()
+    .then((n) => { if (n > 0) logger.info(`[CVT] Resumed discovery for ${n} series after restart`); })
+    .catch((err: Error) => logger.warn('[CVT] discovery resume failed', { error: err.message }));
+
   discoveryService.setDiscoveryBroadcast((result) => {
     wsServer.broadcastDiscoveryUpdate(result);
 

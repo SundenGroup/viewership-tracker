@@ -77,6 +77,19 @@ export class DiscoveryService {
       return;
     }
 
+    // Persist the operator's choice so a deploy/restart resumes it (boot
+    // calls resumeFlagged). Discovery START stays user-initiated — this
+    // flag only survives restarts, it never decides on its own.
+    try {
+      await this.db('tournament_series').where('id', seriesId).update({
+        metadata: this.db.raw(`COALESCE(metadata,'{}'::jsonb) || '{"discovery_active": true}'::jsonb`),
+      });
+    } catch (err) {
+      logger.warn(`[Discovery] could not persist discovery_active for ${seriesId}`, {
+        error: (err as Error).message,
+      });
+    }
+
     // Read per-series interval, fall back to global config
     let intervalMs = config.polling.discoveryIntervalMs;
     try {
@@ -120,6 +133,35 @@ export class DiscoveryService {
       this.intervals.delete(seriesId);
       logger.info(`[Discovery] Stopped discovery for series ${seriesId}`);
     }
+    // Clear the resume flag regardless — an explicit stop (user or
+    // series-complete) must not come back after the next restart.
+    this.db('tournament_series').where('id', seriesId).update({
+      metadata: this.db.raw(`COALESCE(metadata,'{}'::jsonb) || '{"discovery_active": false}'::jsonb`),
+    }).catch((err: Error) => {
+      logger.warn(`[Discovery] could not clear discovery_active for ${seriesId}`, { error: err.message });
+    });
+  }
+
+  /**
+   * Boot-time resume: restart discovery for every series the operator
+   * left running (discovery_active flag) that still has a live
+   * broadcast day. Restores state across deploys — pressing Start once
+   * now survives restarts instead of dying with the process.
+   */
+  async resumeFlagged(): Promise<number> {
+    const rows = await this.db('tournament_series as ts')
+      .whereRaw(`ts.metadata->>'discovery_active' = 'true'`)
+      .whereExists(function () {
+        this.select(1).from('broadcast_days')
+          .whereRaw('broadcast_days.series_id = ts.id')
+          .where('status', 'live');
+      })
+      .select('ts.id', 'ts.name');
+    for (const row of rows) {
+      logger.info(`[Discovery] Resuming discovery for "${row.name}" (flagged active before restart)`);
+      await this.startDiscovery(row.id as string);
+    }
+    return rows.length;
   }
 
   /**
