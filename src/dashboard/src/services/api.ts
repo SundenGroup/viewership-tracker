@@ -1366,6 +1366,12 @@ export interface GameTrackerSearchRow {
 
 export interface GameTrackerRangeLeaderboardRow {
   channel_id: string;
+  /** Title as it stood at this row's peak minute — the stream that earned the rank. */
+  peak_title: string | null;
+  /** Median health grade across sessions INSIDE the range (not "last grade"). */
+  range_grade: string | null;
+  range_grade_sessions: number;
+  range_grade_score: number | null;
   peak_ccv: number;
   avg_ccv: number;
   minutes_live: number;

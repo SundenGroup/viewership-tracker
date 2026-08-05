@@ -906,6 +906,8 @@ export type LeaderboardRow = GameTrackerLeaderboardRow & {
   days_streamed?: number;
   /** Range mode only — carried through for CSV export. */
   avg_ccv?: number;
+  /** Range mode: how many completed sessions the median grade covers. */
+  grade_sessions?: number;
 };
 
 /**
@@ -1005,6 +1007,7 @@ export function LeaderboardTable({
   filterHint = null,
   rankOffset = 0,
   showLastGrade = false,
+  showRangeGrade = false,
 }: {
   rows: LeaderboardRow[] | null;
   trackerSlug: string;
@@ -1018,9 +1021,11 @@ export function LeaderboardTable({
   rankOffset?: number;
   /** Live boards: show each channel's last completed-broadcast grade. */
   showLastGrade?: boolean;
+  /** Range mode: median grade over the window (no uptime column). */
+  showRangeGrade?: boolean;
 }) {
   const navigate = useNavigate();
-  const colCount = (showRangeStats ? 8 : 5) + (showLastGrade ? 2 : 0);
+  const colCount = (showRangeStats ? 8 : 5) + (showLastGrade ? 2 : 0) + (showRangeGrade ? 1 : 0);
   const platformFilterHint = filterHint ? `(${filterHint})` : '';
   return (
     <TableScroll>
@@ -1047,12 +1052,16 @@ export function LeaderboardTable({
               Uptime
             </th>
           )}
-          {showLastGrade && (
+          {(showLastGrade || showRangeGrade) && (
             <th
               style={{ ...thStyle, textAlign: 'center', width: 82 }}
-              title="Grades score completed broadcasts, never the live session"
+              title={
+                showRangeGrade
+                  ? 'Median grade across the completed broadcasts inside this range'
+                  : 'Grades score completed broadcasts, never the live session'
+              }
             >
-              Last grade
+              {showRangeGrade ? 'Grade' : 'Last grade'}
             </th>
           )}
           <th style={{ ...thStyle, textAlign: 'right', width: 110 }}>{metricLabel}</th>
@@ -1189,8 +1198,15 @@ export function LeaderboardTable({
                   {row.live_started_at ? fmtUptime(row.live_started_at) : '—'}
                 </td>
               )}
-              {showLastGrade && (
-                <td style={{ ...tdStyle, textAlign: 'center' }}>
+              {(showLastGrade || showRangeGrade) && (
+                <td
+                  style={{ ...tdStyle, textAlign: 'center' }}
+                  title={
+                    showRangeGrade && row.grade_sessions
+                      ? `Median of ${row.grade_sessions} completed broadcast${row.grade_sessions === 1 ? '' : 's'} in range`
+                      : undefined
+                  }
+                >
                   <GradeBadge grade={row.last_grade} score={row.last_score} />
                 </td>
               )}

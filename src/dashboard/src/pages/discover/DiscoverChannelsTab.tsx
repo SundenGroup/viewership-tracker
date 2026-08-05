@@ -164,7 +164,7 @@ export function DiscoverChannelsTab({
           res.rows.map((r) => ({
             channel_id: r.channel_id,
             concurrent_viewers: r.peak_ccv,
-            stream_title: null,
+            stream_title: r.peak_title,
             platform: r.platform,
             language: r.language,
             timestamp: '',
@@ -172,6 +172,10 @@ export function DiscoverChannelsTab({
             minutes_live: r.minutes_live,
             days_streamed: r.days_streamed,
             avg_ccv: r.avg_ccv,
+            // Period grade, not "last grade" — see rangeGradesFor().
+            last_grade: r.range_grade,
+            last_score: r.range_grade_score,
+            grade_sessions: r.range_grade_sessions,
           })),
         );
       })
@@ -349,6 +353,7 @@ export function DiscoverChannelsTab({
           trackerSlug={slug}
           metricLabel={range ? 'Peak viewers' : 'Viewers'}
           showRangeStats={!!range}
+          showRangeGrade={!!range}
           rankOffset={range ? page * PAGE_SIZE : 0}
         />
       )}
