@@ -26,6 +26,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import db from '../../utils/db';
 import logger from '../../utils/logger';
+import { detectClockShift, suggestTimezone } from '../../utils/clock-shift';
 
 const router = Router();
 
@@ -346,6 +347,8 @@ interface ImportBody {
   /** Alternative anchor: YouTube VOD URL / video id — start time is scraped. */
   videoUrl?: string;
   dryRun?: boolean;
+  /** Override the clock-shift guard and import a suspicious CSV anyway. */
+  acceptTimeshift?: boolean;
 }
 
 /**
@@ -377,6 +380,7 @@ router.post('/csv', async (req: Request, res: Response, next: NextFunction) => {
       streamStart,
       videoUrl,
       dryRun = true,
+      acceptTimeshift = false,
     } = (req.body ?? {}) as ImportBody;
 
     if (!channelId || !broadcastDayId || !csvText) {
@@ -523,6 +527,50 @@ router.post('/csv', async (req: Request, res: Response, next: NextFunction) => {
     const fromUtc = new Date(points[0].ts);
     const toUtc = new Date(points[points.length - 1].ts);
 
+    // ── Clock-shift guard ──
+    // The CSV's bare clock times are only as correct as the `timezone`
+    // guess. For channels the game tracker also polls live we hold an
+    // independent minute curve of the same broadcast — slide the CSV
+    // against it and a mis-zoned import shows up as a best fit at a
+    // non-zero lag (PGS7 Day 1 landed +1h exactly this way: the export
+    // clock was UTC+3, the import assumed Berlin).
+    let clockShift: ReturnType<typeof detectClockShift> | null = null;
+    try {
+      const refRows = await db.raw<{
+        rows: Array<{ minute: Date; ccv: string }>;
+      }>(
+        `
+        SELECT date_trunc('minute', s."timestamp") AS minute,
+               MAX(s.concurrent_viewers) AS ccv
+        FROM game_tracker_snapshots s
+        JOIN channels c ON c.id = s.channel_id
+        WHERE c.platform = ?
+          AND LOWER(c.channel_identifier) = LOWER(?)
+          AND s."timestamp" BETWEEN ?::timestamptz - interval '5 hours'
+                                AND ?::timestamptz + interval '5 hours'
+        GROUP BY 1
+        `,
+        [channel.platform, channel.channel_identifier, fromUtc.toISOString(), toUtc.toISOString()],
+      );
+      const referenceByMinute = new Map<number, number>(
+        refRows.rows.map((r) => [new Date(r.minute).getTime(), Number(r.ccv)]),
+      );
+      clockShift = detectClockShift(points, referenceByMinute);
+      if (clockShift.checked && clockShift.suspicious) {
+        warnings.push(
+          `CSV curve fits live tracking ${Math.abs(clockShift.bestLagMinutes)} min ` +
+            `${clockShift.bestLagMinutes > 0 ? 'earlier' : 'later'} than imported ` +
+            `(r ${clockShift.bestR} vs ${clockShift.zeroLagR} at zero) — the export's clock ` +
+            `looks like ${suggestTimezone(tzOffsetMinutes(timezone, points[0].ts), clockShift.bestLagMinutes)}, ` +
+            `not ${timezone}.`,
+        );
+      }
+    } catch (err) {
+      logger.warn('[Import] clock-shift check failed (import continues unguarded)', {
+        error: (err as Error).message,
+      });
+    }
+
     // Existing rows the commit would replace — SAME predicate as the delete.
     const existing = await db('viewership_snapshots')
       .where('channel_id', channel.id)
@@ -559,6 +607,7 @@ router.post('/csv', async (req: Request, res: Response, next: NextFunction) => {
         toLocal: fmtLocal(toUtc),
       },
       existingRowsInRange: existingRows,
+      clockShift,
       sample: {
         first: points.slice(0, 3).map((p) => ({ t: new Date(p.ts).toISOString(), v: p.viewers })),
         last: points.slice(-3).map((p) => ({ t: new Date(p.ts).toISOString(), v: p.viewers })),
@@ -567,6 +616,20 @@ router.post('/csv', async (req: Request, res: Response, next: NextFunction) => {
 
     if (dryRun) {
       res.json({ dryRun: true, ...summary });
+      return;
+    }
+
+    // A suspicious shift blocks the commit unless the operator explicitly
+    // overrides — importing a slid curve poisons every comparison silently.
+    if (clockShift?.suspicious && !acceptTimeshift) {
+      res.status(409).json({
+        error:
+          `Import blocked: the CSV appears time-shifted ${Math.abs(clockShift.bestLagMinutes)} min ` +
+          `versus this channel's live tracking. Re-run with the exporter's real timezone ` +
+          `(${suggestTimezone(tzOffsetMinutes(timezone, points[0].ts), clockShift.bestLagMinutes)}), ` +
+          `or pass acceptTimeshift=true to import anyway.`,
+        ...summary,
+      });
       return;
     }
 
