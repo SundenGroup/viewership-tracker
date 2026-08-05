@@ -326,12 +326,24 @@ export class GameTrackerService {
     const existingChannels = new Map<string, Channel>();
     for (const [platform, idents] of identifiersByPlatform) {
       if (idents.length === 0) continue;
-      const rows = await this.db<Channel>('channels')
-        .where('platform', platform)
-        .whereRaw('LOWER(channel_identifier) = ANY(?)', [idents])
-        .select('*');
+      // The same streamer can exist as a channels row in SEVERAL tournament
+      // series (rosters are series-scoped by design). The tracker must bind
+      // to ONE canonical row per identifier or its snapshots scatter across
+      // rows as new series discover the streamer (two "POKAMOLODOY"s on the
+      // Discover page, history split between them). Preference: the row
+      // already assigned to THIS tracker, then the oldest — and first-wins
+      // below, so a roster row created today can never hijack the history.
+      const rows = await this.db<Channel>('channels as c')
+        .leftJoin('game_tracker_channels as gtc', function () {
+          this.on('gtc.channel_id', 'c.id').andOnVal('gtc.game_tracker_id', tracker.id);
+        })
+        .where('c.platform', platform)
+        .whereRaw('LOWER(c.channel_identifier) = ANY(?)', [idents])
+        .select('c.*')
+        .orderByRaw('(gtc.id IS NULL), c.added_at asc');
       for (const r of rows) {
-        existingChannels.set(this.channelKey(platform, r.channel_identifier), r);
+        const key = this.channelKey(platform, r.channel_identifier);
+        if (!existingChannels.has(key)) existingChannels.set(key, r);
       }
     }
 
