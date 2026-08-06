@@ -28,6 +28,15 @@ import { YouTubeGameTracker } from './youtube-game-tracker';
 
 type TrackedPlatform = 'twitch' | 'kick' | 'youtube' | 'soop' | 'tiktok';
 
+/** SOOP's "this user has no picture" placeholder — a fixed-size asset. */
+export const SOOP_DEFAULT_AVATAR_BYTES = 2948;
+
+/** SOOP avatars are addressable from the station id alone — no API call. */
+export function soopAvatarUrl(stationId: string): string {
+  const id = stationId.toLowerCase();
+  return `https://profile.img.sooplive.co.kr/LOGO/${id.slice(0, 2)}/${id}/${id}.jpg`;
+}
+
 interface PlatformStream {
   platform: TrackedPlatform;
   stream: DiscoveredStream;
@@ -499,6 +508,7 @@ export class GameTrackerService {
     const kickNeed: Array<{ slug: string; channel: Ch }> = [];
     const youtubeNeed: Array<{ channelId: string; channel: Ch }> = [];
     const tiktokNeed: Array<{ username: string; channel: Ch }> = [];
+    const soopNeed: Array<{ stationId: string; channel: Ch }> = [];
     for (const { platform, stream } of streams) {
       const ch = channelMap.get(this.channelKey(platform, stream.channelIdentifier));
       if (!ch) continue;
@@ -508,6 +518,7 @@ export class GameTrackerService {
       else if (platform === 'kick') kickNeed.push({ slug: stream.channelIdentifier, channel: ch });
       else if (platform === 'youtube') youtubeNeed.push({ channelId: stream.channelIdentifier, channel: ch });
       else if (platform === 'tiktok') tiktokNeed.push({ username: stream.channelIdentifier, channel: ch });
+      else if (platform === 'soop') soopNeed.push({ stationId: stream.channelIdentifier, channel: ch });
     }
 
     const persist = async (channel: Ch, patch: Record<string, unknown>) => {
@@ -601,6 +612,31 @@ export class GameTrackerService {
         logger.debug(`[GameTracker] tiktok avatar fetch failed for ${username}: ${(err as Error).message}`);
       }
       await new Promise((r) => setTimeout(r, 300));
+    }
+
+    // SOOP — the avatar URL is DERIVED from the station id, no API at all:
+    //   profile.img.sooplive.co.kr/LOGO/<first 2 chars>/<id>/<id>.jpg
+    // Every id returns 200, so a HEAD is needed to tell a real picture
+    // from SOOP's generic placeholder — the placeholder is a fixed
+    // 2,948-byte asset. Storing it would replace a legible monogram with
+    // an identical grey silhouette on every Korean channel, so skip it.
+    for (const { stationId, channel } of soopNeed.slice(0, 10)) {
+      try {
+        const id = stationId.toLowerCase();
+        const url = soopAvatarUrl(id);
+        const head = await axios.head(url, {
+          timeout: 6_000,
+          headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' },
+          validateStatus: (st) => st === 200,
+        });
+        const bytes = Number(head.headers['content-length'] ?? 0);
+        if (bytes > 0 && bytes !== SOOP_DEFAULT_AVATAR_BYTES) {
+          await persist(channel, { profile_image_url: url });
+        }
+      } catch (err) {
+        logger.debug(`[GameTracker] soop avatar check failed for ${stationId}: ${(err as Error).message}`);
+      }
+      await new Promise((r) => setTimeout(r, 150));
     }
   }
 
