@@ -1004,16 +1004,6 @@ function DetailedReport({
       ? (model.peakTotal / model.avgTotal).toFixed(2) + '×'
       : '—';
 
-  const avgPerChannel =
-    model.avgTotal && model.trackedChannelCount > 0
-      ? Math.round(model.avgTotal / model.trackedChannelCount)
-      : 0;
-
-  const hoursPerChannel =
-    model.viewedHours && model.trackedChannelCount > 0
-      ? Math.round(model.viewedHours / model.trackedChannelCount)
-      : 0;
-
   const hoursPerDay =
     model.viewedHours && totalDayCount > 0
       ? Math.round(model.viewedHours / totalDayCount)
@@ -1023,6 +1013,23 @@ function DetailedReport({
     model.trackedChannelCount > 0
       ? Math.round((model.liveChannelCount / model.trackedChannelCount) * 100)
       : 0;
+
+  // Distribution, not averages. Viewership here is a power-law: on a
+  // typical day the mean CCV/channel sits ABOVE the 90th percentile, so
+  // it describes no channel that exists. These two say what the mean
+  // hides — where the audience actually concentrated, and how many
+  // channels carried a real one.
+  const MEANINGFUL_CCV = 100;
+  const audienceShape = useMemo(() => {
+    const hours = model.leaderboard.map((c) => c.hours ?? 0).filter((h) => h > 0);
+    const total = hours.reduce((a, b) => a + b, 0);
+    const top3 = [...hours].sort((a, b) => b - a).slice(0, 3).reduce((a, b) => a + b, 0);
+    return {
+      top3Pct: total > 0 ? Math.round((top3 / total) * 100) : 0,
+      meaningful: model.leaderboard.filter((c) => (c.avg ?? 0) >= MEANINGFUL_CCV).length,
+      totalChannels: model.leaderboard.length,
+    };
+  }, [model.leaderboard]);
 
   const palette = [
     'var(--red)', 'var(--info)', 'var(--warn)', 'var(--live)',
@@ -1591,8 +1598,16 @@ function DetailedReport({
         // about how bursty viewership was over the event.
         const hasLive = model.liveChannelCount > 0;
         const cells: Array<[string, string, string]> = [
-          ['Avg CCV / channel', fmtCompact(avgPerChannel), 'across tracked streams'],
-          ['Hours / channel', fmtCompact(hoursPerChannel), 'mean airtime watched'],
+          [
+            'Top 3 share',
+            audienceShape.top3Pct + '%',
+            'of viewed hours, top 3 channels',
+          ],
+          [
+            `Channels over ${MEANINGFUL_CCV}`,
+            `${audienceShape.meaningful}`,
+            `of ${audienceShape.totalChannels} carried real audience`,
+          ],
           hasLive
             ? [
                 'Live coverage',
@@ -1608,8 +1623,8 @@ function DetailedReport({
         ];
         return (
           <Section
-            eyebrow="Operational breakdown"
-            title="Per-channel & airtime stats"
+            eyebrow="Audience distribution"
+            title="Where the audience concentrated"
           >
             <div
               style={{
