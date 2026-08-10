@@ -142,6 +142,7 @@ function AuthGate() {
         <Route path="/discover/:slug" element={<AppContent />} />
         <Route path="/discover" element={<AppContent />} />
         <Route path="/guide/admin" element={<AppContent />} />
+        <Route path="/guide/editor" element={<AppContent />} />
         <Route path="/guide" element={<AppContent />} />
         <Route path="/:seriesId/edit" element={<AppContent />} />
         <Route path="/:seriesId" element={<AppContent />} />
@@ -178,7 +179,8 @@ function AppContent() {
   const isDiscoverChannel = /^\/discover\/[^/]+\/channel\/[^/]+$/.test(pathname);
   const isDiscoverDetail = /^\/discover\/[^/]+$/.test(pathname) && !isDiscoverNew;
   const isDiscoverList = pathname === '/discover';
-  const isGuidePage = pathname === '/guide' || pathname === '/guide/admin';
+  const isGuidePage =
+    pathname === '/guide' || pathname === '/guide/editor' || pathname === '/guide/admin';
 
   // ── Data fetching ─────────────────────────────────────────────────────
 

@@ -26,7 +26,7 @@ export function EventTreeView({
   onExtendBroadcast,
   statusLoading,
 }: EventTreeViewProps) {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isEditor } = useAuth();
   const [expandedStages, setExpandedStages] = useLocalStorage<Record<string, boolean>>('cvt:expandedStages', {});
   const [extendMenuOpen, setExtendMenuOpen] = useState<string | null>(null);
   const extendMenuRef = useRef<HTMLDivElement>(null);
@@ -137,7 +137,9 @@ export function EventTreeView({
                     </span>
                   </div>
 
-                  {/* Action buttons — status changes are admin only */}
+                  {/* Action buttons — status changes are admin only;
+                      extending a live day is editor+ (it edits the end
+                      time, not the status) */}
                   <div className="flex flex-shrink-0 items-center gap-1">
                     {isAdmin && day.status === 'scheduled' && (
                       <Button
@@ -150,7 +152,7 @@ export function EventTreeView({
                         Go Live
                       </Button>
                     )}
-                    {isAdmin && day.status === 'live' && (
+                    {isEditor && day.status === 'live' && (
                       <>
                         {/* Extend dropdown */}
                         <div className="relative" ref={extendMenuOpen === day.id ? extendMenuRef : undefined}>
@@ -184,15 +186,17 @@ export function EventTreeView({
                           )}
                         </div>
 
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => onStatusChange(day.id, 'completed')}
-                          loading={statusLoading === day.id}
-                          className="!px-2 !py-0.5 !text-[10px]"
-                        >
-                          Complete
-                        </Button>
+                        {isAdmin && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onStatusChange(day.id, 'completed')}
+                            loading={statusLoading === day.id}
+                            className="!px-2 !py-0.5 !text-[10px]"
+                          >
+                            Complete
+                          </Button>
+                        )}
                       </>
                     )}
                     {day.status === 'completed' && (

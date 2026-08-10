@@ -1,8 +1,9 @@
 /**
- * GuidePage — renders the User Guide (everyone) and Admin Guide (admins)
- * from the markdown the repo already versions in docs/. The backend hands
- * us raw markdown; we render it here so the guides live where people
- * actually are, not in the repo.
+ * GuidePage — renders the User Guide (everyone), Editor Guide (editors
+ * and admins) and Admin Guide (admins) from the markdown the repo
+ * already versions in docs/. The backend hands us raw markdown; we
+ * render it here so the guides live where people actually are, not in
+ * the repo.
  *
  * Rendering notes:
  *  - `marked` output goes through two deterministic post-passes: heading
@@ -38,6 +39,7 @@ function postProcess(html: string): string {
       return `<h${level} id="${slugify(inner)}">${inner}</h${level}>`;
     })
     .replace(/<a href="user-guide\.md">([\s\S]*?)<\/a>/g, '<a href="/guide">$1</a>')
+    .replace(/<a href="editor-guide\.md">([\s\S]*?)<\/a>/g, '<a href="/guide/editor">$1</a>')
     .replace(/<a href="admin-guide\.md">([\s\S]*?)<\/a>/g, '<a href="/guide/admin">$1</a>')
     // Repo-only docs (permissions.md, setup-relay-pc.md, …) aren't served
     // in-app; keep the words, drop the dead link.
@@ -57,19 +59,23 @@ interface TocEntry {
 export function GuidePage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isAdmin } = useAuth();
+  const { isAdmin, isEditor } = useAuth();
 
   const wantsAdmin = location.pathname === '/guide/admin';
-  const slug: 'user' | 'admin' = wantsAdmin && isAdmin ? 'admin' : 'user';
+  const wantsEditor = location.pathname === '/guide/editor';
+  const slug: 'user' | 'editor' | 'admin' =
+    wantsAdmin && isAdmin ? 'admin' : wantsEditor && isEditor ? 'editor' : 'user';
 
   const [doc, setDoc] = useState<api.DocPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Non-admins deep-linking to /guide/admin land on the user guide.
+  // Deep links to a guide the role can't read land on the user guide.
   useEffect(() => {
-    if (wantsAdmin && !isAdmin) navigate('/guide', { replace: true });
-  }, [wantsAdmin, isAdmin, navigate]);
+    if ((wantsAdmin && !isAdmin) || (wantsEditor && !isEditor)) {
+      navigate('/guide', { replace: true });
+    }
+  }, [wantsAdmin, isAdmin, wantsEditor, isEditor, navigate]);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,6 +157,11 @@ export function GuidePage() {
         <Tab active={slug === 'user'} onClick={() => navigate('/guide')}>
           User guide
         </Tab>
+        {isEditor && (
+          <Tab active={slug === 'editor'} onClick={() => navigate('/guide/editor')}>
+            Editor guide
+          </Tab>
+        )}
         {isAdmin && (
           <Tab active={slug === 'admin'} onClick={() => navigate('/guide/admin')}>
             Admin guide

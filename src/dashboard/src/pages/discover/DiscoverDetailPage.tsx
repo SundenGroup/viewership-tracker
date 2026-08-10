@@ -80,7 +80,7 @@ export function DiscoverDetailPage() {
     [searchParams],
   );
   const ask = useDiscoverAsk({ slug: slug ?? '', getViewState: getAskViewState });
-  const isAdmin = useAuth().user?.role === 'admin';
+  const { isAdmin, isEditor } = useAuth();
 
   // Platform filter lives at PAGE level so Live, Trends and Channels all
   // answer to one control (and one shareable ?platform= URL) instead of
@@ -365,7 +365,7 @@ export function DiscoverDetailPage() {
           {tab === 'trends' && <DiscoverTrendsTab slug={slug} platform={platform} />}
           {tab === 'channels' && (
             <Col gap={16}>
-              {isAdmin && detail.youtube_enabled && (
+              {isEditor && detail.youtube_enabled && (
                 <DiscoverYouTubeGating
                   slug={slug}
                   // Single-platform YouTube trackers have no platform pills,

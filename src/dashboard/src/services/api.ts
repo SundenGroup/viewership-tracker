@@ -1248,13 +1248,14 @@ export function getGameTrackerEvents(slug: string, from: Date, to: Date) {
 // ── In-app guides ─────────────────────────────────────────────────────
 
 export interface DocPayload {
-  slug: 'user' | 'admin';
+  slug: 'user' | 'editor' | 'admin';
   content: string;
   updatedAt: string | null;
 }
 
-/** Raw markdown for a guide; the GuidePage renders it. Admin slug 403s for non-admins. */
-export function getDoc(slug: 'user' | 'admin') {
+/** Raw markdown for a guide; the GuidePage renders it. The editor slug
+ *  403s for viewers, the admin slug for everyone but admins. */
+export function getDoc(slug: 'user' | 'editor' | 'admin') {
   return request<DocPayload>(`/api/docs/${slug}`);
 }
 
