@@ -344,7 +344,7 @@ export function ChannelsSection({
 
                 {/* Source */}
                 <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
-                  {c.source === 'manual' ? 'Manual' : 'Scout'}
+                  {c.source === 'manual' ? 'Manual' : 'Scouted'}
                 </div>
 
                 {/* Status */}

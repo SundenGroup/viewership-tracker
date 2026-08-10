@@ -1572,8 +1572,8 @@ export function EditorDesktop({
                   </span>
                 </Row>
                 <div style={{ fontSize: 11, color: 'var(--fg-muted)', lineHeight: 1.4 }}>
-                  Auto-searches live streams matching this series' keywords. New channels
-                  appear in the Discovery Feed.
+                  Scout watches each platform for live streams matching this series'
+                  keywords. New finds land in the Scout feed for review.
                 </div>
                 {discoveryStatus?.lastResults?.[seriesId] && (
                   <Col gap={4} style={{ fontSize: 12 }}>

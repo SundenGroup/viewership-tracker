@@ -48,8 +48,8 @@ const EVENT_DESCRIPTORS: EventDescriptor[] = [
   },
   {
     key: 'discovery_candidate',
-    label: 'New discovery candidate',
-    description: 'Auto-discovery found a channel waiting for approval.',
+    label: 'New Scout candidate',
+    description: 'Scout found a channel waiting for approval.',
   },
   {
     key: 'data_anomaly',
@@ -229,7 +229,7 @@ export function NotificationsSettingsPage() {
     <SettingsShell
       breadcrumb="Settings · Notifications"
       title="Push notifications"
-      description="OS-level notifications for live operations: broadcasts going live or ending, polling problems, YouTube quota exhaustion, new discovery candidates. Each device configures independently."
+      description="OS-level notifications for live operations: broadcasts going live or ending, polling problems, YouTube quota exhaustion, new Scout candidates. Each device configures independently."
     >
       <div>
 

@@ -819,7 +819,7 @@ export function EditorMobile({
           [
             { id: 'live', label: 'Live', icon: <IconDot size={18} /> },
             { id: 'channels', label: 'Channels', icon: <IconList size={18} /> },
-            { id: 'discovery', label: 'Discover', icon: <IconSparkle size={18} /> },
+            { id: 'discovery', label: 'Scout', icon: <IconSparkle size={18} /> },
             { id: 'ops', label: 'Ops', icon: <IconSettings size={18} /> },
           ] as Array<{ id: MobileTab; label: string; icon: React.ReactNode }>
         ).map((t) => (
@@ -1065,7 +1065,7 @@ function DiscoveryMobileTab({
             <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
               {isDiscoveryRunning ? (
                 <>
-                  Auto-discovery <strong style={{ color: 'var(--live)' }}>running</strong>
+                  Scout <strong style={{ color: 'var(--live)' }}>running</strong>
                   {lastResult
                     ? ` · last ${fmtRelative(lastResult.timestamp)}`
                     : ''}

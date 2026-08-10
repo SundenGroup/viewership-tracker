@@ -267,7 +267,7 @@ export function DiscoveryFeedSection({
     <CollapsibleSection
       storageKey="ct-discovery"
       eyebrow="Scout feed"
-      title={`${rows.length} auto-discovered channels`}
+      title={`${rows.length} scouted channels`}
       right={
         <button
           type="button"
@@ -474,7 +474,7 @@ export function DiscoveryFeedSection({
         })}
         {sorted.length === 0 && (
           <div className="placeholder" style={{ margin: 12, height: 80 }}>
-            No auto-discovered channels
+            No scouted channels
           </div>
         )}
       </ExpandableScroll>

@@ -50,7 +50,7 @@ export function DiscoveryFeedPanel({
 
   if (!seriesId) {
     return (
-      <Card title="Discovery Feed">
+      <Card title="Scout Feed">
         <p className="py-8 text-center text-sm text-gray-500">
           Select a series to view discovered streams.
         </p>
@@ -160,8 +160,8 @@ export function DiscoveryFeedPanel({
 
   return (
     <Card
-      title="Discovery Feed"
-      subtitle={`${sorted.length} auto-discovered channels`}
+      title="Scout Feed"
+      subtitle={`${sorted.length} scouted channels`}
       action={action}
       collapsible
       storageKey="cvt:panel:discovery"
