@@ -476,6 +476,10 @@ const LANGUAGE_FULL_NAMES: Record<string, string> = {
   ja: 'Japanese',
   ko: 'Korean',
   zh: 'Chinese',
+  // 'tw' is our house code for Taiwanese-Mandarin channels (mirrors SOOP's
+  // pubgtw). It's NOT ISO-639 (that 'tw' is Twi) — display-mapped here so
+  // reports read "Taiwanese" instead of a bare "TW".
+  tw: 'Taiwanese',
   th: 'Thai',
   vi: 'Vietnamese',
   hi: 'Hindi',
