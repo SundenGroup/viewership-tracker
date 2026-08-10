@@ -1539,7 +1539,7 @@ export function EditorDesktop({
             </RailCollapse>
 
             {/* Discovery control (v6) */}
-            <RailCollapse eyebrow="Discovery" storageKey="ct-rail-discovery">
+            <RailCollapse eyebrow="Scout" storageKey="ct-rail-discovery">
               {discoveryError && (
                 <div role="alert" style={{ fontSize: 11, color: 'var(--danger)', marginBottom: 6 }}>
                   {discoveryError}
@@ -1578,7 +1578,7 @@ export function EditorDesktop({
                 {discoveryStatus?.lastResults?.[seriesId] && (
                   <Col gap={4} style={{ fontSize: 12 }}>
                     <Row justify="space-between">
-                      <span style={{ color: 'var(--fg-dim)' }}>Discovered</span>
+                      <span style={{ color: 'var(--fg-dim)' }}>Scouted</span>
                       <span className="tabular" style={{ fontWeight: 500 }}>
                         {fmtN(discoveryStatus.lastResults[seriesId]!.discovered)}
                       </span>

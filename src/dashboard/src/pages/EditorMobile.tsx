@@ -700,7 +700,7 @@ export function EditorMobile({
                 : null;
               return (
                 <Section
-                  eyebrow="Discovery"
+                  eyebrow="Scout"
                   title={
                     isDiscoveryActive
                       ? `Running${
@@ -1071,9 +1071,9 @@ function DiscoveryMobileTab({
                     : ''}
                 </>
               ) : lastResult ? (
-                <>Auto-discovery stopped · last {fmtRelative(lastResult.timestamp)}</>
+                <>Scout stopped · last {fmtRelative(lastResult.timestamp)}</>
               ) : (
-                <>Auto-discovery stopped</>
+                <>Scout stopped</>
               )}
             </span>
           </Col>

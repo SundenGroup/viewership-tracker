@@ -12,6 +12,7 @@ import {
   IconBolt,
 } from '@/components/design';
 import { fmtCompact } from '@/design/format';
+import { GameArtTile } from '@/components/discover/GameArtTile';
 import { getPlatform } from '@/design/platforms';
 import { Avatar } from './DiscoverDetailPage';
 
@@ -193,17 +194,20 @@ export function DiscoverListPage() {
                 }}
               />
               <Row justify="space-between" align="flex-start" style={{ marginBottom: 12 }}>
-                <div
-                  style={{
-                    fontFamily: 'var(--font-display, var(--font-sans))',
-                    fontSize: 18,
-                    fontWeight: 600,
-                    color: 'var(--fg)',
-                    letterSpacing: '-0.01em',
-                  }}
-                >
-                  {t.name}
-                </div>
+                <Row gap={10} align="center" style={{ minWidth: 0 }}>
+                  <GameArtTile name={t.name} twitchGameId={t.twitch_game_id} size={40} />
+                  <div
+                    style={{
+                      fontFamily: 'var(--font-display, var(--font-sans))',
+                      fontSize: 18,
+                      fontWeight: 600,
+                      color: 'var(--fg)',
+                      letterSpacing: '-0.01em',
+                    }}
+                  >
+                    {t.name}
+                  </div>
+                </Row>
                 <Row gap={6} align="center">
                   <Pill tone={t.status === 'active' ? 'live' : 'default'}>
                     {t.status === 'active' ? '● Tracking' : t.status.charAt(0).toUpperCase() + t.status.slice(1)}

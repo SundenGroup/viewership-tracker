@@ -980,10 +980,10 @@ export function SeriesFormPage({
 
           {/* ── Discovery ────────────────────────────────────────── */}
           <Card>
-            <div className="eyebrow">Discovery</div>
+            <div className="eyebrow">Scout</div>
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
               <Field
-                label="Discovery Keywords"
+                label="Scout Keywords"
                 hint="comma-separated. Used to match new streams on Twitch/YouTube/Kick search"
               >
                 <textarea
@@ -994,7 +994,7 @@ export function SeriesFormPage({
                   style={{ ...inputStyle, resize: 'vertical', fontFamily: 'var(--font-mono)' }}
                 />
               </Field>
-              <Field label="Default Category for Discovered Channels">
+              <Field label="Default Category for Scouted Channels">
                 <select
                   value={form.discovery_default_tier}
                   onChange={(e) => updateField('discovery_default_tier', e.target.value)}
@@ -1007,7 +1007,7 @@ export function SeriesFormPage({
                   ))}
                 </select>
               </Field>
-              <Field label="Discovery Interval">
+              <Field label="Scout Interval">
                 <select
                   value={form.discovery_interval_ms}
                   onChange={(e) => updateField('discovery_interval_ms', e.target.value)}
@@ -1024,7 +1024,7 @@ export function SeriesFormPage({
 
             {/* Discovery Game IDs section */}
             <Row justify="space-between" style={{ marginTop: 4 }}>
-              <span className="eyebrow">Discovery Game IDs (Platform-specific)</span>
+              <span className="eyebrow">Scout Game IDs (Platform-specific)</span>
               <button
                 type="button"
                 className="btn btn-xs"

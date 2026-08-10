@@ -266,7 +266,7 @@ export function DiscoveryFeedSection({
   return (
     <CollapsibleSection
       storageKey="ct-discovery"
-      eyebrow="Discovery feed"
+      eyebrow="Scout feed"
       title={`${rows.length} auto-discovered channels`}
       right={
         <button
