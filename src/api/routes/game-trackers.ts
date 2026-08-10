@@ -182,7 +182,7 @@ router.get('/:slug/events', async (req: Request, res: Response, next: NextFuncti
 
 router.get(
   '/:slug/youtube/gating',
-  requireRole('admin'),
+  requireRole('admin', 'editor'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
@@ -241,7 +241,7 @@ const NUMERIC_KEYS: Record<string, { min: number; max: number }> = {
 
 router.put(
   '/:slug/youtube/config',
-  requireRole('admin'),
+  requireRole('admin', 'editor'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
@@ -287,7 +287,7 @@ router.put(
 
 router.post(
   '/:slug/youtube/gating/:channelIdentifier',
-  requireRole('admin'),
+  requireRole('admin', 'editor'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);

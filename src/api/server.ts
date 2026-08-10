@@ -126,8 +126,11 @@ export function createApp() {
   app.use('/api/reports', requireRole('admin', 'editor'), reportsRouter);
   app.use('/api/push', requireRole('admin', 'editor'), pushRouter);
 
+  // Polling: roles are per-route inside the router — status reads are
+  // editor+, every control (start/stop/trigger/quota/probes) is admin.
+  app.use('/api/polling', pollingRouter);
+
   // Admin-only routes
-  app.use('/api/polling', requireRole('admin'), pollingRouter);
   app.use('/api/youtube-keys', requireRole('admin'), youtubeKeysRouter);
 
   // ── 404 handler ───────────────────────────────────────────────────────

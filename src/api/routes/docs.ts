@@ -6,8 +6,9 @@
  * server, so the dashboard renders them at /guide. This route just hands
  * the raw markdown to the frontend.
  *
- * The user guide is for every authenticated role; the admin guide
- * describes operations (server access, deploys, review queues) and is
+ * The user guide is for every authenticated role; the editor guide
+ * covers roster and review work and is editor+; the admin guide
+ * describes operations (server access, deploys, keys) and is
  * admin-only. Slugs are a fixed whitelist — nothing here ever touches a
  * path derived from user input.
  */
@@ -21,6 +22,7 @@ const router = Router();
 const DOCS_DIR = path.join(process.cwd(), 'docs');
 const FILES = {
   user: 'user-guide.md',
+  editor: 'editor-guide.md',
   admin: 'admin-guide.md',
 } as const;
 
@@ -40,6 +42,10 @@ async function sendDoc(slug: keyof typeof FILES, res: Response, next: NextFuncti
 
 router.get('/user', (_req: Request, res: Response, next: NextFunction) => {
   void sendDoc('user', res, next);
+});
+
+router.get('/editor', requireRole('admin', 'editor'), (_req: Request, res: Response, next: NextFunction) => {
+  void sendDoc('editor', res, next);
 });
 
 router.get('/admin', requireRole('admin'), (_req: Request, res: Response, next: NextFunction) => {

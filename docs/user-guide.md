@@ -3,8 +3,10 @@
 For anyone reading the numbers: analysts, partner managers, tournament staff,
 stakeholders. No admin rights needed for anything in this guide.
 
-If you run the tracker — adding games, approving channels, importing data,
-deploying — read the [Admin Guide](admin-guide.md) instead.
+If you manage rosters — adding channels, approving discoveries, working
+review queues — read the [Editor Guide](editor-guide.md). If you run the
+tracker itself — deploys, keys, accounts — read the
+[Admin Guide](admin-guide.md).
 
 ---
 

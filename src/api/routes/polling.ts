@@ -41,9 +41,14 @@ function ensureDiscovery(res: Response): DiscoveryService | null {
 }
 
 // ── Polling routes ────────────────────────────────────────────────────
+//
+// Roles are declared per route (the mount in server.ts adds none): the
+// two status GETs are editor+ because the editor UI polls them for its
+// indicators, the discovery-feed actions are editor+ by design, and
+// every control that starts/stops/spends quota stays admin.
 
-// GET /api/polling/status — Get orchestrator status
-router.get('/status', (_req: Request, res: Response, next: NextFunction) => {
+// GET /api/polling/status — Get orchestrator status (editor+)
+router.get('/status', requireRole('admin', 'editor'), (_req: Request, res: Response, next: NextFunction) => {
   try {
     const orch = ensureOrchestrator(res);
     if (!orch) return;
@@ -53,8 +58,8 @@ router.get('/status', (_req: Request, res: Response, next: NextFunction) => {
   }
 });
 
-// POST /api/polling/trigger — Manually trigger one poll cycle
-router.post('/trigger', async (_req: Request, res: Response, next: NextFunction) => {
+// POST /api/polling/trigger — Manually trigger one poll cycle (admin only)
+router.post('/trigger', requireRole('admin'), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const orch = ensureOrchestrator(res);
     if (!orch) return;
@@ -65,8 +70,8 @@ router.post('/trigger', async (_req: Request, res: Response, next: NextFunction)
   }
 });
 
-// POST /api/polling/start — Start the polling orchestrator
-router.post('/start', (_req: Request, res: Response, next: NextFunction) => {
+// POST /api/polling/start — Start the polling orchestrator (admin only)
+router.post('/start', requireRole('admin'), (_req: Request, res: Response, next: NextFunction) => {
   try {
     const orch = ensureOrchestrator(res);
     if (!orch) return;
@@ -77,8 +82,8 @@ router.post('/start', (_req: Request, res: Response, next: NextFunction) => {
   }
 });
 
-// POST /api/polling/stop — Stop the polling orchestrator
-router.post('/stop', (_req: Request, res: Response, next: NextFunction) => {
+// POST /api/polling/stop — Stop the polling orchestrator (admin only)
+router.post('/stop', requireRole('admin'), (_req: Request, res: Response, next: NextFunction) => {
   try {
     const orch = ensureOrchestrator(res);
     if (!orch) return;
@@ -90,7 +95,7 @@ router.post('/stop', (_req: Request, res: Response, next: NextFunction) => {
 });
 
 // GET /api/polling/youtube-quota — Get YouTube API quota usage (admin only)
-router.get('/youtube-quota', async (_req: Request, res: Response, next: NextFunction) => {
+router.get('/youtube-quota', requireRole('admin'), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const orch = ensureOrchestrator(res);
     if (!orch) return;
@@ -148,8 +153,8 @@ router.get('/youtube-quota', async (_req: Request, res: Response, next: NextFunc
 
 // ── Discovery routes ──────────────────────────────────────────────────
 
-// GET /api/polling/discovery/status — Get discovery status
-router.get('/discovery/status', (_req: Request, res: Response, next: NextFunction) => {
+// GET /api/polling/discovery/status — Get discovery status (editor+)
+router.get('/discovery/status', requireRole('admin', 'editor'), (_req: Request, res: Response, next: NextFunction) => {
   try {
     const svc = ensureDiscovery(res);
     if (!svc) return;
@@ -159,8 +164,8 @@ router.get('/discovery/status', (_req: Request, res: Response, next: NextFunctio
   }
 });
 
-// POST /api/polling/discovery/trigger/:seriesId — Manually trigger one discovery cycle
-router.post('/discovery/trigger/:seriesId', async (req: Request, res: Response, next: NextFunction) => {
+// POST /api/polling/discovery/trigger/:seriesId — Manually trigger one discovery cycle (admin only)
+router.post('/discovery/trigger/:seriesId', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const svc = ensureDiscovery(res);
     if (!svc) return;
@@ -172,8 +177,8 @@ router.post('/discovery/trigger/:seriesId', async (req: Request, res: Response, 
   }
 });
 
-// POST /api/polling/discovery/start/:seriesId — Start discovery for a series
-router.post('/discovery/start/:seriesId', (_req: Request, res: Response, next: NextFunction) => {
+// POST /api/polling/discovery/start/:seriesId — Start discovery for a series (admin only)
+router.post('/discovery/start/:seriesId', requireRole('admin'), (_req: Request, res: Response, next: NextFunction) => {
   try {
     const svc = ensureDiscovery(res);
     if (!svc) return;
@@ -187,8 +192,8 @@ router.post('/discovery/start/:seriesId', (_req: Request, res: Response, next: N
   }
 });
 
-// POST /api/polling/discovery/stop/:seriesId — Stop discovery for a series
-router.post('/discovery/stop/:seriesId', (_req: Request, res: Response, next: NextFunction) => {
+// POST /api/polling/discovery/stop/:seriesId — Stop discovery for a series (admin only)
+router.post('/discovery/stop/:seriesId', requireRole('admin'), (_req: Request, res: Response, next: NextFunction) => {
   try {
     const svc = ensureDiscovery(res);
     if (!svc) return;
@@ -266,10 +271,11 @@ router.post('/discovery/promote', requireRole('admin', 'editor'), async (req: Re
  * PNC2026 six GeoGuessr casters silently lost a day of data this way.
  * This is the API version of scripts/check-roster-liveness.ts --pinned.
  *
- * POST (not GET): it performs real platform polls (incl. YouTube quota).
- * Body: { seriesId?: string } — defaults to all series with a live day.
+ * POST (not GET): it performs real platform polls (incl. YouTube quota),
+ * so it is admin-only. Body: { seriesId?: string } — defaults to all
+ * series with a live day.
  */
-router.post('/roster-liveness', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/roster-liveness', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const orch = ensureOrchestrator(res);
     if (!orch) return;

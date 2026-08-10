@@ -157,7 +157,8 @@ accumulating channel index**, never enumeration.
 
 ### Working the review queue
 
-Discover → Channels → YouTube filter (admin only). Three actions:
+Discover → Channels → YouTube filter (editors can work this queue too —
+see the [Editor Guide](editor-guide.md)). Three actions:
 
 | Action | Effect |
 |---|---|
