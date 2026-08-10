@@ -103,7 +103,7 @@ it to specific days.
 all-days, and a bulk edit silently pins them.
 
 Watch-party rosters are the exception: pin them to confirmed days *and* keep
-them active, because keyword-gated discovery can't guarantee it will re-find
+them active, because keyword-gated Scout can't guarantee it will re-find
 them.
 
 ### CSV import

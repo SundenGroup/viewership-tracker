@@ -18,10 +18,10 @@ accounts — live in the [Admin Guide](admin-guide.md).
 | Create, edit and delete stages and broadcast days | Switch a day between scheduled / live / completed |
 | **Extend a live day's end time** | End a broadcast early |
 | Add, edit, day-pin, re-tier and deactivate channels | Hard-delete a channel and its data |
-| Approve, block and clear the auto-discovery feed | Start or stop discovery and polling |
+| Approve, block and clear the Scout feed | Start or stop Scout and polling |
 | Work the YouTube review queue and its matching vocabulary | Create or delete a game tracker; tracker polling config |
 | Import CSVs, export per-minute data, build reports | Deeper export grains (minute totals, channel summary, raw polls) |
-| Read polling and discovery status | YouTube API keys and quota pages; user accounts |
+| Read polling and Scout status | YouTube API keys and quota pages; user accounts |
 
 ---
 
@@ -74,9 +74,9 @@ keep the data clean:
 - A **day-pinned** channel counts only on its pinned days. Rosters that
   stream on specific days (player streams, watch parties confirmed for
   certain days) should be pinned to those days.
-- **Watch parties** should stay auto-discovered and day-pinned rather than
-  being converted to all-days manual channels — that way auto-discovery can
-  pick them up again on their next appearance.
+- **Watch parties** should stay Scout-sourced and day-pinned rather than
+  being converted to all-days manual channels — that way Scout can pick
+  them up again on their next appearance.
 
 ### Deactivate vs delete
 
@@ -86,11 +86,12 @@ If a channel was added by mistake, deactivate it and tell an admin.
 
 ---
 
-## 4. The auto-discovery feed
+## 4. The Scout feed
 
-While a day is live, discovery searches each platform for streams matching
-the series' keywords. Hits land in the **Discovery Feed** as auto-discovered
-channels: already being recorded, but flagged for a human look.
+While a day is live, Scout (formerly "auto-discovery") searches each
+platform for streams matching the series' keywords. Hits land in the
+**Scout feed** as scouted channels: already being recorded, but flagged
+for a human look.
 
 Three actions, all yours:
 
@@ -103,7 +104,7 @@ Three actions, all yours:
 The feed also purges itself automatically whenever a broadcast day goes
 live, so stale finds from yesterday don't linger into today.
 
-If a channel you know should be tracked was discovered late (or slipped
+If a channel you know should be tracked was scouted late (or slipped
 through), an admin can usually backfill the missing hours from Discover —
 say so early, while the day is still fresh.
 
@@ -162,7 +163,7 @@ game go uncounted.
 - Create or delete a series; mark it active/completed
 - Take a day **live**, **complete** it, or end it early
 - Hard-delete a channel or any recorded data
-- Start/stop polling or discovery; trigger manual cycles
+- Start/stop polling or Scout; trigger manual cycles
 - Backfill missed hours from Discover
 - YouTube API keys and quota
 - New game trackers or tracker polling settings

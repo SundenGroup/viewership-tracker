@@ -223,8 +223,43 @@ export class SoopAdapter implements PlatformAdapter {
     return [...byId.values()];
   }
 
-  /** Category directory search — feeds the admin "pick a category" list. */
+  /** English → Korean aliases for categories SOOP names in Hangul only.
+   *  The directory API matches szKeyword against the Korean name, so
+   *  "Overwatch" finds nothing while 오버워치 does. Extend as needed. */
+  private static readonly CATEGORY_ALIASES: Record<string, string> = {
+    overwatch: '오버워치',
+    'league of legends': '리그 오브 레전드',
+    lol: '리그 오브 레전드',
+    valorant: '발로란트',
+    'lost ark': '로스트아크',
+    starcraft: '스타크래프트',
+    tekken: '철권',
+    minecraft: '마인크래프트',
+    pubg: '배틀그라운드',
+    battlegrounds: '배틀그라운드',
+  };
+
+  /** Category directory search — feeds the admin "pick a category" list.
+   *
+   * SOOP matches szKeyword against the KOREAN category name, and the old
+   * client-side re-filter then also required the full English query to
+   * appear in that name — "Apex Legends" lost to "Apex 레전드" twice
+   * over. Now: try the query as typed, then its first word, then a known
+   * alias, and trust the upstream match instead of re-filtering.
+   */
   async searchCategories(query: string): Promise<Array<{ id: string; name: string }>> {
+    const q = query.trim();
+    const firstWord = q.split(/\s+/)[0] ?? '';
+    const alias = SoopAdapter.CATEGORY_ALIASES[q.toLowerCase()];
+    const attempts = [...new Set([q, firstWord, alias].filter((s): s is string => !!s))];
+    for (const keyword of attempts) {
+      const list = await this.fetchCategoryList(keyword);
+      if (list.length > 0) return list;
+    }
+    return [];
+  }
+
+  private async fetchCategoryList(keyword: string): Promise<Array<{ id: string; name: string }>> {
     try {
       const res = await this.requestWithRetry(
         () =>
@@ -234,7 +269,7 @@ export class SoopAdapter implements PlatformAdapter {
           }>(SOOP_SEARCH_API, {
             params: {
               m: 'categoryList',
-              szKeyword: query,
+              szKeyword: keyword,
               szOrder: 'view_cnt',
               nPageNo: 1,
               nListCnt: 60,
@@ -242,17 +277,15 @@ export class SoopAdapter implements PlatformAdapter {
               szPlatform: 'pc',
             },
           }),
-        `categorySearch(${query})`,
+        `categorySearch(${keyword})`,
       );
       const list = res?.data?.data?.list;
       if (!Array.isArray(list)) return [];
-      const q = query.toLowerCase();
       return list
         .filter((c) => c.category_no && c.category_name)
-        .filter((c) => !q || c.category_name!.toLowerCase().includes(q) || /pubg|배틀그라운드/i.test(c.category_name!))
         .map((c) => ({ id: c.category_no!, name: c.category_name! }));
     } catch (err) {
-      logger.warn('[Soop] category search failed', { query, error: (err as Error).message });
+      logger.warn('[Soop] category search failed', { keyword, error: (err as Error).message });
       return [];
     }
   }
