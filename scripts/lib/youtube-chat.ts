@@ -141,6 +141,15 @@ export class YouTubeChatPool {
     return this.sessions.size;
   }
 
+  /** channel_ids with a running chat loop — feeds the watch-interval log. */
+  activeChannelIds(): string[] {
+    const ids = new Set<string>();
+    for (const s of this.sessions.values()) {
+      if (!s.stopped) ids.add(s.channelId);
+    }
+    return [...ids];
+  }
+
   /** Reconcile to the desired set — start new loops, stop departed ones. */
   setDesired(next: Map<string, string>): void {
     this.desired.clear();

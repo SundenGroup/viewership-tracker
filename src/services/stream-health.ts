@@ -11,9 +11,18 @@
  *
  * Eligibility (a session is scored only when ALL hold):
  *   - status = 'ended', avg_ccv ≥ 50, minutes_live ≥ 30
- *   - chat coverage: ≥ 50% of the session's snapshot minutes have a
- *     chat_minute_rollup row (the collector covers the top ~150 live
- *     channels, so most sessions legitimately have no chat data)
+ *   - chat evidence: ≥ 50% of the session's snapshot minutes have either
+ *     a chat_minute_rollup row (a message arrived) or a chat_watch_intervals
+ *     overlap (the collector was subscribed — a watched-silent minute is a
+ *     real zero, not missing data). The collector selects the top ~600
+ *     live channels across trackers, so smaller sessions can still
+ *     legitimately lack coverage.
+ *
+ * Transitional note (2026-08-10): sessions ended before watch intervals
+ * existed contribute cohort engagement ratios computed over message-minutes
+ * only, which are biased high vs the watched basis. The bias fades as the
+ * 30-day cohort refills; it can only make quiet targets look worse, never
+ * better, which is the safe direction for a suspicion score.
  *
  * Cohort = scored-eligible sessions of the same tracker AND avg_ccv size
  * band (50-200 / 200-1k / 1k-5k / 5k+) that ended in the last 30 days.
@@ -289,12 +298,21 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
           AND s.minutes_live >= ?
           AND (s.ended_at >= now() - interval '${COHORT_DAYS} days' OR s.id = ANY(?::uuid[]))
           -- Cheap prefilter: skip the snapshots join entirely for sessions
-          -- with zero chat rows (most channels — the collector covers ~150).
-          AND EXISTS (
-            SELECT 1 FROM chat_minute_rollup r
-            WHERE r.channel_id = s.channel_id
-              AND r.minute >= date_trunc('minute', s.started_at)
-              AND r.minute <= s.ended_at
+          -- with no chat evidence at all — neither a message-minute nor a
+          -- watch interval (most channels sit outside the collector's set).
+          AND (
+            EXISTS (
+              SELECT 1 FROM chat_minute_rollup r
+              WHERE r.channel_id = s.channel_id
+                AND r.minute >= date_trunc('minute', s.started_at)
+                AND r.minute <= s.ended_at
+            )
+            OR EXISTS (
+              SELECT 1 FROM chat_watch_intervals wi
+              WHERE wi.channel_id = s.channel_id
+                AND wi.started_at <= s.ended_at
+                AND COALESCE(wi.ended_at, wi.last_seen_at) >= s.started_at
+            )
           )
       ),
       per_minute AS (
@@ -310,16 +328,26 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
         GROUP BY se.id, se.channel_id, date_trunc('minute', g."timestamp")
       ),
       minute_stats AS (
+        -- A minute counts as chat evidence when a message arrived (rollup
+        -- row) OR the collector was verifiably watching (interval overlap)
+        -- — in the latter case silence is a real zero, not missing data.
         SELECT pm.session_id,
                COUNT(*)::int AS snap_minutes,
-               COUNT(r.chatters)::int AS chat_minutes,
+               COUNT(*) FILTER (WHERE r.chatters IS NOT NULL OR w.w IS NOT NULL)::int AS chat_minutes,
                AVG(pm.ccv)::numeric AS mean_ccv,
                stddev_samp(pm.ccv)::numeric AS sd_ccv,
-               AVG(r.chatters::numeric / pm.ccv)
-                 FILTER (WHERE r.chatters IS NOT NULL AND pm.ccv > 0) AS eng_ratio
+               AVG(COALESCE(r.chatters, CASE WHEN w.w IS NOT NULL THEN 0 END)::numeric / pm.ccv)
+                 FILTER (WHERE (r.chatters IS NOT NULL OR w.w IS NOT NULL) AND pm.ccv > 0) AS eng_ratio
         FROM per_minute pm
         LEFT JOIN chat_minute_rollup r
           ON r.channel_id = pm.channel_id AND r.minute = pm.minute
+        LEFT JOIN LATERAL (
+          SELECT 1 AS w FROM chat_watch_intervals wi
+          WHERE wi.channel_id = pm.channel_id
+            AND wi.started_at <= pm.minute
+            AND COALESCE(wi.ended_at, wi.last_seen_at) >= pm.minute
+          LIMIT 1
+        ) w ON true
         GROUP BY pm.session_id
       ),
       eligible AS (
@@ -480,7 +508,8 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
 
 /**
  * Per-minute (ccv, chatters) arrays for a chunk of sessions, one query.
- * chatters is null on minutes without a chat row.
+ * chatters is 0 on watched-but-silent minutes (interval overlap, no
+ * rollup row) and null only where the collector wasn't watching at all.
  */
 async function fetchMinuteArrays(sessionIds: string[]): Promise<Map<string, MinutePoint[]>> {
   const result = await db.transaction(async (trx) => {
@@ -506,10 +535,18 @@ async function fetchMinuteArrays(sessionIds: string[]): Promise<Map<string, Minu
          AND g."timestamp" <= t.ended_at
         GROUP BY t.id, t.channel_id, date_trunc('minute', g."timestamp")
       )
-      SELECT pm.session_id, pm.minute, pm.ccv, r.chatters::int AS chatters
+      SELECT pm.session_id, pm.minute, pm.ccv,
+             COALESCE(r.chatters, CASE WHEN w.w IS NOT NULL THEN 0 END)::int AS chatters
       FROM pm
       LEFT JOIN chat_minute_rollup r
         ON r.channel_id = pm.channel_id AND r.minute = pm.minute
+      LEFT JOIN LATERAL (
+        SELECT 1 AS w FROM chat_watch_intervals wi
+        WHERE wi.channel_id = pm.channel_id
+          AND wi.started_at <= pm.minute
+          AND COALESCE(wi.ended_at, wi.last_seen_at) >= pm.minute
+        LIMIT 1
+      ) w ON true
       ORDER BY pm.session_id, pm.minute
       `,
       [sessionIds],

@@ -247,6 +247,11 @@ class TwitchIrc {
     return { joined: this.joined.size, desired: this.desired.size, connected: this.ready };
   }
 
+  /** Logins actually JOINed right now — feeds the watch-interval snapshot. */
+  joinedLogins(): string[] {
+    return [...this.joined];
+  }
+
   /** Sync the JOINed set to `logins`: queue JOINs for new ones, PART removed ones. */
   setDesired(logins: Set<string>): void {
     for (const login of logins) {
@@ -434,6 +439,11 @@ class KickPusher {
 
   stats(): { subscribed: number; desired: number; connected: boolean } {
     return { subscribed: this.subscribed.size, desired: this.desired.size, connected: this.open };
+  }
+
+  /** Chatroom ids actually subscribed right now — feeds the watch-interval snapshot. */
+  subscribedIds(): number[] {
+    return [...this.subscribed];
   }
 
   /** Sync subscriptions to `chatroomIds`: subscribe new, unsubscribe removed. */
@@ -936,6 +946,103 @@ async function flushRollup(finalFlush = false): Promise<void> {
   }
 }
 
+// ── Watch intervals ───────────────────────────────────────────────────────
+//
+// The rollup only records minutes WITH messages, so on its own it can't
+// distinguish "watched but silent" from "not watched" — and the health
+// scorer must. Once per flush we snapshot the channels whose chat we are
+// ACTUALLY subscribed to (twitch JOINed, kick subscribed, youtube loop
+// running — not merely desired) and reconcile chat_watch_intervals:
+// open new stretches, heartbeat continuing ones, close departed ones.
+// ±60s edge accuracy is plenty for the scorer's 50% coverage gate.
+
+/** channel_id → open interval row id. */
+const openWatch = new Map<string, number>();
+
+function watchedChannelIdsNow(): Set<string> {
+  const ids = new Set<string>();
+  for (const login of twitchIrc.joinedLogins()) {
+    const channelId = twitchIndex.get(login);
+    if (channelId) ids.add(channelId);
+  }
+  for (const room of kickPusher.subscribedIds()) {
+    const channelId = kickIndex.get(room);
+    if (channelId) ids.add(channelId);
+  }
+  for (const channelId of youtubeChat.activeChannelIds()) ids.add(channelId);
+  return ids;
+}
+
+async function reconcileWatchIntervals(): Promise<void> {
+  const now = new Date().toISOString();
+  const watched = watchedChannelIdsNow();
+
+  const toOpen = [...watched].filter((id) => !openWatch.has(id));
+  const toClose = [...openWatch.keys()].filter((id) => !watched.has(id));
+  const toBeat = [...openWatch.entries()]
+    .filter(([channelId]) => watched.has(channelId))
+    .map(([, rowId]) => rowId);
+
+  // Failure handling is per-statement: an open that fails is simply retried
+  // next flush (channel still missing from openWatch); a close that fails
+  // keeps its map entry so the close retries; heartbeat loss is harmless
+  // (effective end drifts back ≤60s).
+  if (toClose.length > 0) {
+    const rowIds = toClose.map((id) => openWatch.get(id)!);
+    try {
+      await db.raw(
+        `UPDATE chat_watch_intervals SET ended_at = ?, last_seen_at = ? WHERE id = ANY(?::bigint[])`,
+        [now, now, rowIds],
+      );
+      for (const id of toClose) openWatch.delete(id);
+    } catch (err) {
+      log(`watch close FAILED (${toClose.length}): ${errMsg(err)}`);
+    }
+  }
+  if (toBeat.length > 0) {
+    try {
+      await db.raw(`UPDATE chat_watch_intervals SET last_seen_at = ? WHERE id = ANY(?::bigint[])`, [
+        now,
+        toBeat,
+      ]);
+    } catch (err) {
+      log(`watch heartbeat FAILED (${toBeat.length}): ${errMsg(err)}`);
+    }
+  }
+  if (toOpen.length > 0) {
+    try {
+      const res = await db.raw(
+        `INSERT INTO chat_watch_intervals (channel_id, started_at, last_seen_at)
+         SELECT c.id, ?, ? FROM unnest(?::uuid[]) AS c(id)
+         RETURNING id, channel_id`,
+        [now, now, toOpen],
+      );
+      for (const row of (res as { rows: Array<{ id: number; channel_id: string }> }).rows) {
+        openWatch.set(row.channel_id, Number(row.id));
+      }
+    } catch (err) {
+      log(`watch open FAILED (${toOpen.length}): ${errMsg(err)}`);
+    }
+  }
+  if (toOpen.length > 0 || toClose.length > 0) {
+    log(`watch: ${openWatch.size} open (+${toOpen.length} −${toClose.length})`);
+  }
+}
+
+/** Close every open interval — shutdown path. */
+async function closeAllWatchIntervals(): Promise<void> {
+  if (openWatch.size === 0) return;
+  try {
+    await db.raw(
+      `UPDATE chat_watch_intervals SET ended_at = now(), last_seen_at = now() WHERE id = ANY(?::bigint[])`,
+      [[...openWatch.values()]],
+    );
+    openWatch.clear();
+  } catch (err) {
+    log(`watch shutdown close FAILED: ${errMsg(err)}`);
+  }
+}
+
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Self-rescheduling so every flush stays aligned just after the minute boundary. */
@@ -948,6 +1055,11 @@ function scheduleNextFlush(): void {
       await flushRollup();
     } catch (err) {
       log(`flush loop error: ${errMsg(err)}`);
+    }
+    try {
+      await reconcileWatchIntervals();
+    } catch (err) {
+      log(`watch reconcile error: ${errMsg(err)}`);
     }
     scheduleNextFlush();
   }, nextBoundary - now + FLUSH_LAG_MS);
@@ -974,6 +1086,7 @@ async function shutdown(signal: string): Promise<void> {
   } catch (err) {
     log(`final flush error: ${errMsg(err)}`);
   }
+  await closeAllWatchIntervals();
   try {
     await db.destroy();
   } catch {
@@ -998,7 +1111,7 @@ async function main(): Promise<void> {
   }
 
   log(
-    `chat collector starting — top ${CHAT_MAX_CHANNELS} live channels (twitch|kick), ` +
+    `chat collector starting — top ${CHAT_MAX_CHANNELS} live channels (twitch|kick|youtube), ` +
       `ccv floor ${CHAT_MIN_CCV}, ${CHAT_TRACKER_QUOTA} guaranteed slots/tracker, ` +
       `selection every ${SELECTION_INTERVAL_MS / 1000}s, flush every 60s` +
       (process.env.KICK_PUSHER_KEY ? ', KICK_PUSHER_KEY overridden from env' : ''),
@@ -1006,6 +1119,14 @@ async function main(): Promise<void> {
 
   // Fail fast if the DB is unreachable/misconfigured.
   await db.raw('SELECT 1');
+
+  // A crash can strand open watch intervals; their heartbeat already marks
+  // the honest end, so seal them before this run opens fresh ones.
+  const orphans = await db.raw(
+    `UPDATE chat_watch_intervals SET ended_at = last_seen_at WHERE ended_at IS NULL`,
+  );
+  const orphanCount = (orphans as { rowCount?: number }).rowCount ?? 0;
+  if (orphanCount > 0) log(`watch: sealed ${orphanCount} orphaned interval(s) from a previous run`);
 
   twitchIrc.start();
   kickPusher.start();
