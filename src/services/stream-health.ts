@@ -24,10 +24,17 @@
  * 30-day cohort refills; it can only make quiet targets look worse, never
  * better, which is the safe direction for a suspicion score.
  *
- * Cohort = scored-eligible sessions of the same tracker AND avg_ccv size
- * band (50-200 / 200-1k / 1k-5k / 5k+) that ended in the last 30 days.
+ * Cohort = scored-eligible sessions of the same tracker, avg_ccv size
+ * band (50-200 / 200-1k / 1k-5k / 5k-20k / 20k+) AND platform when that
+ * slice has ≥ MIN_COHORT_N sessions (chat culture differs — YouTube
+ * chats far less per viewer than Twitch), falling back to the mixed
+ * tracker+band cohort otherwise; ended in the last 30 days.
  * Cohort-relative baselines are the whole point: 3% chat ratio is normal
  * at 50k CCV and damning at 300.
+ *
+ * YouTube follower conversion is always neutral: YouTube reports rounded
+ * subscriber counts (11.0k stays 11.0k through real growth), so its
+ * deltas are false zeros, not data.
  *
  * Grades are a SUSPICION verdict, not a class rank (the percentile
  * subscores are zero-sum — half of all streams are below median by
@@ -110,7 +117,7 @@ const EXTREME_ENG_RATIO = 1 / 3;
 /** How many target sessions to fetch per-minute arrays for at a time. */
 const CURVE_CHUNK = 200;
 
-export type SizeBand = '50-200' | '200-1k' | '1k-5k' | '5k+';
+export type SizeBand = '50-200' | '200-1k' | '1k-5k' | '5k-20k' | '20k+';
 
 export type HealthGrade = 'A' | 'B' | 'C' | 'D' | 'F';
 
@@ -154,13 +161,15 @@ export interface ScoreRunResult {
 const BAND_SQL = `CASE WHEN avg_ccv < 200 THEN '50-200'
                        WHEN avg_ccv < 1000 THEN '200-1k'
                        WHEN avg_ccv < 5000 THEN '1k-5k'
-                       ELSE '5k+' END`;
+                       WHEN avg_ccv < 20000 THEN '5k-20k'
+                       ELSE '20k+' END`;
 
 function bandFor(avgCcv: number): SizeBand {
   if (avgCcv < 200) return '50-200';
   if (avgCcv < 1000) return '200-1k';
   if (avgCcv < 5000) return '1k-5k';
-  return '5k+';
+  if (avgCcv < 20000) return '5k-20k';
+  return '20k+';
 }
 
 // ── Internal shapes ────────────────────────────────────────────────────
@@ -170,6 +179,7 @@ interface Candidate {
   game_tracker_id: string;
   tracker_slug: string;
   channel_id: string;
+  platform: string;
   started_at: Date;
   ended_at: Date;
   avg_ccv: number;
@@ -240,8 +250,10 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
     .whereNotNull('s.ended_at')
     .where('s.avg_ccv', '>=', MIN_AVG_CCV)
     .where('s.minutes_live', '>=', MIN_MINUTES)
+    .join('channels as c', 'c.id', 's.channel_id')
     .select(
       's.id', 's.game_tracker_id', 'gt.slug as tracker_slug', 's.channel_id',
+      db.raw('c.platform::text as platform'),
       's.started_at', 's.ended_at', 's.avg_ccv', 's.ccv_minutes',
       's.followers_start', 's.followers_end', 's.titles',
     );
@@ -260,11 +272,11 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
   const byId = new Map(candidates.map((c) => [c.id, c]));
 
   // (tracker, band) combos we need cohort baselines for.
-  const comboKeys = new Set(candidates.map((c) => `${c.game_tracker_id} ${bandFor(c.avg_ccv)}`));
+  const comboKeys = new Set(candidates.map((c) => `${c.game_tracker_id}|${bandFor(c.avg_ccv)}`));
   const comboTrackers: string[] = [];
   const comboBands: string[] = [];
   for (const key of comboKeys) {
-    const [trackerId, band] = key.split(' ');
+    const [trackerId, band] = key.split('|');
     comboTrackers.push(trackerId as string);
     comboBands.push(band as string);
   }
@@ -283,12 +295,14 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
         FROM unnest(?::uuid[], ?::text[]) AS t(tracker_id, band)
       ),
       sess AS (
-        SELECT s.id, s.game_tracker_id, s.channel_id, s.started_at, s.ended_at,
+        SELECT s.id, s.game_tracker_id, s.channel_id, ch.platform::text AS platform,
+               s.started_at, s.ended_at,
                s.avg_ccv, s.ccv_minutes, s.followers_start, s.followers_end,
                (${BAND_SQL}) AS band,
                (s.id = ANY(?::uuid[])) AS is_target,
                (s.ended_at >= now() - interval '${COHORT_DAYS} days') AS in_cohort
         FROM stream_sessions s
+        JOIN channels ch ON ch.id = s.channel_id
         JOIN combo c
           ON c.tracker_id = s.game_tracker_id
          AND c.band = (${BAND_SQL})
@@ -351,11 +365,14 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
         GROUP BY pm.session_id
       ),
       eligible AS (
-        SELECT se.id, se.game_tracker_id, se.band, se.is_target, se.in_cohort,
+        SELECT se.id, se.game_tracker_id, se.band, se.platform, se.is_target, se.in_cohort,
                ms.snap_minutes, ms.chat_minutes, ms.eng_ratio,
                CASE WHEN ms.mean_ccv > 0 THEN ms.sd_ccv / ms.mean_ccv END AS cv,
+               -- YouTube reports subscriber counts rounded (11.0k stays
+               -- 11.0k through real growth), so its "conversion" would be
+               -- a false zero — treat as no data, score neutral.
                CASE WHEN se.followers_start IS NOT NULL AND se.followers_end IS NOT NULL
-                         AND se.ccv_minutes > 0
+                         AND se.ccv_minutes > 0 AND se.platform <> 'youtube'
                     THEN (se.followers_end - se.followers_start)::numeric * 1000 / se.ccv_minutes
                END AS conv_per_1k
         FROM sess se
@@ -372,27 +389,32 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
         ) x
         WHERE x.prev_ccv >= ? AND x.ccv > x.prev_ccv
       ),
+      -- GROUPING SETS emit each cohort twice: once per platform slice
+      -- (chat culture differs — YouTube chats far less per viewer than
+      -- Twitch) and once mixed. The scorer prefers the platform slice
+      -- when it has enough sessions, else falls back to the mixed one.
       cohort_rise AS (
-        SELECT e.game_tracker_id, e.band,
+        SELECT e.game_tracker_id, e.band, e.platform,
                percentile_cont(0.99) WITHIN GROUP (ORDER BY rv.rise) AS p99_rise
         FROM rise_vals rv
         JOIN eligible e ON e.id = rv.session_id
         WHERE e.in_cohort
-        GROUP BY e.game_tracker_id, e.band
+        GROUP BY GROUPING SETS ((e.game_tracker_id, e.band, e.platform), (e.game_tracker_id, e.band))
       ),
       cohort_agg AS (
-        SELECT e.game_tracker_id, e.band,
+        SELECT e.game_tracker_id, e.band, e.platform,
                COUNT(*)::int AS n,
                percentile_cont(0.5) WITHIN GROUP (ORDER BY e.cv) AS median_cv,
                array_agg(e.eng_ratio) AS engs,
                array_agg(e.conv_per_1k) FILTER (WHERE e.conv_per_1k IS NOT NULL) AS convs
         FROM eligible e
         WHERE e.in_cohort
-        GROUP BY e.game_tracker_id, e.band
+        GROUP BY GROUPING SETS ((e.game_tracker_id, e.band, e.platform), (e.game_tracker_id, e.band))
       )
       SELECT 'cohort' AS kind, ca.game_tracker_id::text AS tracker_id, ca.band,
              jsonb_build_object(
                'n', ca.n,
+               'platform', ca.platform,
                'medianCv', ca.median_cv,
                'p99Rise', cr.p99_rise,
                'engs', to_jsonb(ca.engs),
@@ -401,10 +423,12 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
       FROM cohort_agg ca
       LEFT JOIN cohort_rise cr
         ON cr.game_tracker_id = ca.game_tracker_id AND cr.band = ca.band
+       AND cr.platform IS NOT DISTINCT FROM ca.platform
       UNION ALL
       SELECT 'target', e.game_tracker_id::text, e.band,
              jsonb_build_object(
                'id', e.id,
+               'platform', e.platform,
                'engRatio', e.eng_ratio,
                'cv', e.cv,
                'convPer1k', e.conv_per_1k,
@@ -426,13 +450,15 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
     return result.rows;
   });
 
+  // Cohorts are keyed tracker|band|platform, with '*' for the mixed
+  // (all-platform) slice the GROUPING SETS also emit.
   const cohorts = new Map<string, CohortStats>();
   const targets = new Map<string, TargetStats>();
   const targetBand = new Map<string, SizeBand>();
   for (const row of statsRows) {
     const p = row.payload;
     if (row.kind === 'cohort') {
-      cohorts.set(`${row.tracker_id} ${row.band}`, {
+      cohorts.set(`${row.tracker_id}|${row.band}|${(p.platform as string | null) ?? '*'}`, {
         n: Number(p.n),
         medianCv: p.medianCv != null ? Number(p.medianCv) : null,
         p99Rise: p.p99Rise != null ? Number(p.p99Rise) : null,
@@ -474,8 +500,15 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
       const stats = targets.get(id);
       const minutes = minutesBySession.get(id) ?? [];
       if (!candidate || !stats || minutes.length < 3) continue;
-      const cohort = cohorts.get(`${candidate.game_tracker_id} ${targetBand.get(id)}`) ?? null;
-      const { score, evidence } = scoreOne(candidate, stats, cohort, targetBand.get(id) as SizeBand, minutes);
+      const band = targetBand.get(id) as SizeBand;
+      // Platform slice when it can carry a percentile, mixed otherwise.
+      const platCohort =
+        cohorts.get(`${candidate.game_tracker_id}|${band}|${candidate.platform}`) ?? null;
+      const mixedCohort = cohorts.get(`${candidate.game_tracker_id}|${band}|*`) ?? null;
+      const usePlatform = platCohort != null && platCohort.n >= MIN_COHORT_N;
+      const cohort = usePlatform ? platCohort : mixedCohort;
+      const cohortPlatform = usePlatform ? candidate.platform : 'all';
+      const { score, evidence } = scoreOne(candidate, stats, cohort, cohortPlatform, band, minutes);
       const gated = applyGradeGates(score, evidence.flags);
       if (gated !== score) evidence.rawScore = score;
       ids.push(id);
@@ -574,6 +607,8 @@ function scoreOne(
   candidate: Candidate,
   stats: TargetStats,
   cohort: CohortStats | null,
+  /** 'all' when the mixed tracker+band cohort was used. */
+  cohortPlatform: string,
   band: SizeBand,
   minutes: MinutePoint[],
 ): { score: number; evidence: HealthEvidence } {
@@ -747,7 +782,7 @@ function scoreOne(
   const score = clamp(engagementPts + curvePts + followerPts + responsePts, 0, 100);
   const evidence: HealthEvidence = {
     engagementPct,
-    cohort: { tracker, band, n: cohort?.n ?? 0 },
+    cohort: { tracker, band, n: cohort?.n ?? 0, platform: cohortPlatform },
     flags,
     subscores: {
       engagement: engagementPts,

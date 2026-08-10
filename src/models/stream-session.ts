@@ -33,7 +33,9 @@ export interface HealthFlag {
 export interface HealthEvidence {
   /** Engagement percentile within the cohort (null when cohort too small). */
   engagementPct: number | null;
-  cohort: { tracker: string; band: string; n: number };
+  /** platform is present when a platform-specific cohort was used;
+   *  'all' means the mixed tracker+band cohort (platform slice too small). */
+  cohort: { tracker: string; band: string; n: number; platform?: string };
   /** Plain-language findings — "signals, not proof". */
   flags: HealthFlag[];
   /** Out of engagement 40 / curve 30 / followers 15 / spikeResponse 15. */
