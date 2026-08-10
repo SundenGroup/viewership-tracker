@@ -116,7 +116,7 @@ async function findCandidates(): Promise<CandidateRow[]> {
         WHERE r.channel_id = s.channel_id
           AND r.minute >= date_trunc('minute', s.started_at)
           AND r.minute <= s.ended_at
-      ) < ? * s.minutes_live
+      ) < ?::numeric * s.minutes_live
       AND COALESCE((
         SELECT SUM(EXTRACT(epoch FROM (
           LEAST(COALESCE(wi.ended_at, wi.last_seen_at), s.ended_at)
@@ -126,7 +126,7 @@ async function findCandidates(): Promise<CandidateRow[]> {
         WHERE wi.channel_id = s.channel_id
           AND wi.started_at <= s.ended_at
           AND COALESCE(wi.ended_at, wi.last_seen_at) >= s.started_at
-      ), 0) < ? * s.minutes_live
+      ), 0) < ?::numeric * s.minutes_live
     ORDER BY s.peak_ccv DESC
     LIMIT ?
     `,
