@@ -16,6 +16,10 @@ import db from '../../utils/db';
 import logger from '../../utils/logger';
 import { getPushNotifier } from '../../services/push-notifier';
 import * as TikTokDiscoveredModel from '../../models/tiktok-discovered-stream';
+import { TikTokIngestGuard } from '../../services/tiktok-ingest-guard';
+
+/** One guard for the process — state must persist across pushes. */
+const tiktokGuard = new TikTokIngestGuard();
 
 const router = Router();
 
@@ -238,34 +242,57 @@ router.post('/tiktok', requireRelayToken, async (req: Request, res: Response, ne
       channelDayMap.set(a.channel_id, set);
     }
 
-    for (const input of channels) {
-      const key = (input.identifier || '').toLowerCase().replace(/^@/, '');
+    let deferred = 0;
+    let released = 0;
+    const buildRows = (key: string, viewers: number, title: string | null, ts: Date) => {
       const matches = channelMap.get(key);
-      if (!matches) continue;
-
+      if (!matches) return false;
       for (const ch of matches) {
         const days = seriesToDays.get(ch.series_id) ?? [];
         const assignedDays = channelDayMap.get(ch.id);
-
         for (const day of days) {
           if (assignedDays && assignedDays.size > 0 && !assignedDays.has(day.id)) continue;
-
           insertRows.push({
             channel_id: ch.id,
             broadcast_day_id: day.id,
             stage_id: day.stage_id,
             series_id: day.series_id,
-            timestamp,
-            concurrent_viewers: input.viewers ?? 0,
+            timestamp: ts,
+            concurrent_viewers: viewers,
             platform: 'tiktok',
             language: ch.language,
             region: ch.region,
             stream_id: null,
-            stream_title: input.title ?? null,
+            stream_title: title,
           });
         }
         matched++;
       }
+      return true;
+    };
+
+    for (const input of channels) {
+      const key = (input.identifier || '').toLowerCase().replace(/^@/, '');
+      if (!channelMap.has(key)) continue;
+
+      // Ingest guard: a sudden plunge (stale relay re-emit / disconnect
+      // zero) is held one cycle for a second opinion — see the guard's
+      // header for the exact semantics.
+      const verdict = tiktokGuard.assess(key, input.viewers ?? 0, timestamp);
+      if (verdict.action === 'defer') {
+        deferred++;
+        continue;
+      }
+      if (verdict.release) {
+        // Confirmed real decline: backfill the held reading at its
+        // original timestamp so the record has no hole.
+        buildRows(key, verdict.release.viewers, input.title ?? null, verdict.release.timestamp);
+        released++;
+      }
+      buildRows(key, input.viewers ?? 0, input.title ?? null, timestamp);
+    }
+    if (deferred > 0 || released > 0) {
+      logger.info(`[Relay] TikTok guard: ${deferred} plunge(s) held, ${released} released as real`);
     }
 
     // Insert or update snapshots — one per channel per minute.
