@@ -433,6 +433,34 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     { intervalMs: 60_000, enabled: !!previousScope && !!shortName },
   );
 
+  // Baseline language peaks for the active comparison (custom or auto) —
+  // same endpoint and semantics as the table itself, so the per-language
+  // deltas compare true peak against true peak.
+  const { data: prevLanguagePeaksData } = usePollingApi<{ languages: api.PublicLanguagePeak[] }>(
+    () =>
+      previousScope && shortName
+        ? api.getPublicLanguagePeaks(
+            customCompare && vsShortName ? vsShortName : shortName,
+            previousScope.level,
+            previousScope.id,
+            viewFilter.languages,
+            viewFilter.platforms,
+            excludeChannelIds,
+          )
+        : Promise.resolve(null as unknown as { languages: api.PublicLanguagePeak[] }),
+    [shortName, vsShortName ?? '', previousScope?.id ?? '', filterKey],
+    { intervalMs: 300_000, enabled: !!previousScope && !!shortName },
+  );
+  const prevLanguagePeaks = useMemo(() => {
+    const rows = prevLanguagePeaksData?.languages;
+    if (!rows) return null;
+    const map = new Map<string, number>();
+    for (const r of rows) {
+      if (r.language && r.peakCCV > 0) map.set(r.language.toLowerCase(), r.peakCCV);
+    }
+    return map.size > 0 ? map : null;
+  }, [prevLanguagePeaksData]);
+
   // (trend deltas computed below, after model is defined)
 
   const model = useDashboardModel({
@@ -658,6 +686,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       dayBoundaries={dayBoundaries}
       viewLabel={viewLabel}
       languagePeaks={filteredLanguagePeaks}
+      prevLanguagePeaks={trend ? prevLanguagePeaks : null}
     />
   );
 }
@@ -919,6 +948,7 @@ function DetailedReport({
   dayBoundaries,
   viewLabel,
   languagePeaks,
+  prevLanguagePeaks,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
@@ -932,6 +962,8 @@ function DetailedReport({
   dayBoundaries: Array<{ index: number; label: string }>;
   viewLabel: string | null;
   languagePeaks: api.PublicLanguagePeak[] | null;
+  /** lang(lower) → baseline peak, present only when a comparison is active. */
+  prevLanguagePeaks: Map<string, number> | null;
 }) {
   const totalDayCount = useMemo(() => {
     if (scopeLevel === 'day') return 1;
@@ -1523,7 +1555,7 @@ function DetailedReport({
       {languagePeaks && languagePeaks.filter((l) => l.peakCCV > 0).length > 1 && (
         <>
           <Section
-            eyebrow="04b · Language peaks"
+            eyebrow="Language peaks"
             title="Peak viewership per language"
             right={<Pill>{languagePeaks.filter((l) => l.peakCCV > 0).length} languages</Pill>}
           >
@@ -1571,6 +1603,28 @@ function DetailedReport({
                       <div>{languageFullName(l.language)}</div>
                       <div className="tabular" style={{ textAlign: 'right', fontWeight: 600 }}>
                         {fmtN(l.peakCCV)}
+                        {(() => {
+                          const base = l.language
+                            ? prevLanguagePeaks?.get(l.language.toLowerCase())
+                            : undefined;
+                          if (!base) return null;
+                          const pct = Math.round(((l.peakCCV - base) / base) * 100);
+                          if (pct === 0) return null;
+                          return (
+                            <span
+                              className="tabular"
+                              title={`vs comparison: ${fmtN(base)} peak`}
+                              style={{
+                                marginLeft: 6,
+                                fontSize: 10,
+                                fontWeight: 500,
+                                color: pct > 0 ? 'var(--live)' : 'var(--danger)',
+                              }}
+                            >
+                              {pct > 0 ? '+' : ''}{pct}%
+                            </span>
+                          );
+                        })()}
                       </div>
                       <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
                         {peakTime}
