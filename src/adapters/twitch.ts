@@ -53,6 +53,20 @@ interface TwitchUserData {
   created_at: string;
 }
 
+export interface TwitchArchiveVideo {
+  id: string;
+  createdAt: Date;
+  durationSeconds: number;
+  title: string;
+}
+
+/** "3h20m18s" / "58m1s" / "45s" → seconds. Unparseable → 0. */
+export function parseTwitchDuration(duration: string): number {
+  const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(duration.trim());
+  if (!m) return 0;
+  return Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0);
+}
+
 export interface TwitchUserProfile {
   id: string;
   login: string;
@@ -425,6 +439,27 @@ export class TwitchAdapter implements PlatformAdapter {
       }
     }
     return out;
+  }
+
+  /**
+   * Recent past-broadcast VODs for a user (Helix GET /videos?type=archive).
+   * Used by the VOD chat-replay backfill to locate the recording that
+   * covers a stream session. Empty when the channel keeps no VODs.
+   */
+  async getArchiveVideos(userId: string, first = 20): Promise<TwitchArchiveVideo[]> {
+    const result = await this.requestWithRetry(async () => {
+      const { data } = await this.client.get<
+        TwitchPaginatedResponse<{ id: string; created_at: string; duration: string; title: string }>
+      >('/videos', { params: { user_id: userId, type: 'archive', first } });
+      return data.data;
+    }, 'getArchiveVideos');
+    if (!result) return [];
+    return result.map((v) => ({
+      id: v.id,
+      createdAt: new Date(v.created_at),
+      durationSeconds: parseTwitchDuration(v.duration),
+      title: v.title,
+    }));
   }
 
   /**
