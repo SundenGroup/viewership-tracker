@@ -34,6 +34,7 @@ import {
   Breadcrumbs,
   StatBlock,
   GradeBadge,
+  noGradeReason,
 } from '@/components/design';
 import { fmtN, fmtCompact, fmtDuration } from '@/design/format';
 import { downloadCsv, csvStamp } from '@/utils/csv';
@@ -396,6 +397,23 @@ export function DiscoverStreamPage() {
         >
           {collectingHealthCopy(detail.healthPending.scored, detail.healthPending.required)}.
           Grades appear once enough streams have been measured to be fair.
+        </div>
+      )}
+
+      {/* Ended without a grade and not cohort-gated: say which scoring
+          rule the session missed instead of leaving a silent blank. */}
+      {session.health_grade == null && !detail?.healthPending && session.status === 'ended' && (
+        <div
+          style={{
+            padding: '8px 12px',
+            marginBottom: 16,
+            fontSize: 11,
+            color: 'var(--fg-dim)',
+            background: 'var(--bg-sunken)',
+            borderRadius: 6,
+          }}
+        >
+          {noGradeReason(session.avg_ccv, session.minutes_live)}
         </div>
       )}
 

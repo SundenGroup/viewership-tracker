@@ -1186,7 +1186,15 @@ export function LeaderboardTable({
                       : undefined
                   }
                 >
-                  <GradeBadge grade={row.last_grade} score={row.last_score} />
+                  <GradeBadge
+                    grade={row.last_grade}
+                    score={row.last_score}
+                    noGradeTitle={
+                      row.avg_ccv != null && row.avg_ccv < 50
+                        ? `Not scored — averages ${Math.round(row.avg_ccv)} viewers here (scoring starts at 50)`
+                        : 'No scored broadcast in this range — a session is scored when it ends with 50+ avg viewers, 30+ minutes, and chat watched for half the stream'
+                    }
+                  />
                 </td>
               )}
               <td

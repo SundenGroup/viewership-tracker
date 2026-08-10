@@ -39,6 +39,7 @@ import {
   IconList,
   Breadcrumbs,
   GradeBadge,
+  noGradeReason,
   StatBlock,
 } from '@/components/design';
 import { fmtN, fmtCompact, fmtDuration, fmtRelative } from '@/design/format';
@@ -788,7 +789,16 @@ function SessionsTable({
                   {s.health_grade != null ? (
                     <HealthGradeChip grade={s.health_grade} score={s.health_score} />
                   ) : (
-                    <span style={{ color: 'var(--fg-faint)' }}>—</span>
+                    <span
+                      title={
+                        s.status === 'live'
+                          ? 'Health is computed after the broadcast ends'
+                          : noGradeReason(Number(s.avg_ccv), Number(s.minutes_live))
+                      }
+                      style={{ color: 'var(--fg-faint)', cursor: 'help' }}
+                    >
+                      —
+                    </span>
                   )}
                 </td>
               )}

@@ -14,19 +14,40 @@ export const GRADE_COLORS: Record<string, string> = {
   F: 'var(--danger)',
 };
 
+/**
+ * Why an ENDED session carries no grade, from its own numbers. The rules
+ * mirror the scorer's eligibility gates (stream-health.ts): 50+ avg CCV,
+ * 30+ minutes, chat watched for at least half the stream.
+ */
+export function noGradeReason(
+  avgCcv?: number | null,
+  minutesLive?: number | null,
+): string {
+  if (avgCcv != null && avgCcv < 50) {
+    return `Not scored — averaged ${Math.round(avgCcv)} viewers (scoring starts at 50)`;
+  }
+  if (minutesLive != null && minutesLive < 30) {
+    return `Not scored — ${Math.round(minutesLive)} min live (scoring starts at 30)`;
+  }
+  return 'Not scored — chat was not watched for enough of this stream (the collector follows the top ~600 live channels)';
+}
+
 export function GradeBadge({
   grade,
   score,
   size = 20,
+  noGradeTitle,
 }: {
   grade: string | null | undefined;
   score?: number | null;
   size?: number;
+  /** Overrides the default "not scored yet" tooltip with a precise reason. */
+  noGradeTitle?: string;
 }) {
   if (!grade) {
     return (
       <span
-        title="Not scored yet — health is computed after each broadcast"
+        title={noGradeTitle ?? 'Not scored yet — health is computed after each broadcast'}
         style={{ fontSize: 11, color: 'var(--fg-dim)' }}
       >
         —
