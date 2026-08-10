@@ -253,7 +253,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
   }
 
   // Scope label for title
-  const groupSuffix = data.groupName ? ` — ${data.groupName}` : '';
+  const groupSuffix = data.groupName ? ` · ${data.groupName}` : '';
   const scopeTitle = (scope === 'day' ? 'Day Report' :
     scope === 'stage' ? 'Stage Report' :
     scope === 'series' ? 'Series Report' : 'Report') + groupSuffix;
@@ -412,7 +412,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${seriesName} — ${esc(scopeTitle)}</title>
+<title>${seriesName} · ${esc(scopeTitle)}</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <!-- Umami Analytics (cookie-free, GDPR compliant) -->
@@ -866,7 +866,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
 
   <header>
     <img src="/assets/clutch-logo-white.png" alt="Clutch" style="height:40px;margin-bottom:16px;opacity:0.9;">
-    <h1>${seriesName} \u2014 ${esc(scopeTitle)}</h1>
+    <h1>${seriesName} · ${esc(scopeTitle)}</h1>
     <p>${subtitle}</p>
   </header>
 
@@ -889,7 +889,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
     </div>
   </div>
   ${trend ? `<div style="text-align:center;margin-top:-14px;margin-bottom:18px;">
-    <span title="Baseline — peak ${trend.peakCCV.toLocaleString('en-US')} &middot; avg ${Math.round(trend.avgCCV).toLocaleString('en-US')} &middot; ${Math.round(trend.totalViewedHours).toLocaleString('en-US')} hours watched" style="display:inline-flex;align-items:center;gap:6px;padding:3px 12px;border-radius:999px;font-size:10.5px;letter-spacing:0.06em;text-transform:uppercase;font-weight:600;${trend.custom ? 'color:#2563EB;background:rgba(37,99,235,0.09);border:1px solid rgba(37,99,235,0.28);' : 'color:#6b7280;background:#f4f4f2;border:1px solid #e5e3de;'}">
+    <span title="Baseline · peak ${trend.peakCCV.toLocaleString('en-US')} &middot; avg ${Math.round(trend.avgCCV).toLocaleString('en-US')} &middot; ${Math.round(trend.totalViewedHours).toLocaleString('en-US')} hours watched" style="display:inline-flex;align-items:center;gap:6px;padding:3px 12px;border-radius:999px;font-size:10.5px;letter-spacing:0.06em;text-transform:uppercase;font-weight:600;${trend.custom ? 'color:#2563EB;background:rgba(37,99,235,0.09);border:1px solid rgba(37,99,235,0.28);' : 'color:#6b7280;background:#f4f4f2;border:1px solid #e5e3de;'}">
       &#8644; ${trend.custom ? 'Compared to' : 'vs previous day'} &middot; <strong>${esc(trend.previousDayLabel)}</strong>
     </span>
     ${trend.lengthNote ? `<div style="font-size:10.5px;color:#9ca3af;font-style:italic;margin-top:5px;">${esc(trend.lengthNote)}</div>` : ''}
@@ -1004,7 +1004,7 @@ ${narratives.viewership_timeline ? `
 ` : ''}
 
   <!-- Streamer Table -->
-  <div class="section-title">${isDetailed ? `All Streamers \u2014 Detailed Breakdown (${aggregated.channelLeaderboard.length})` : 'Streamer Breakdown'}</div>
+  <div class="section-title">${isDetailed ? `All Streamers · Detailed Breakdown (${aggregated.channelLeaderboard.length})` : 'Streamer Breakdown'}</div>
   <div class="table-card">
     <table>
       <thead>
