@@ -193,7 +193,10 @@ export function DiscoverListPage() {
                   background: 'var(--red)',
                 }}
               />
-              <Row justify="space-between" align="flex-start" style={{ marginBottom: 12 }}>
+              {/* Wrapping header: tile + name keep one line where they fit;
+                  the pill/Edit group drops below (still right-pinned via
+                  auto margin) instead of squeezing the name into a wrap. */}
+              <Row align="center" wrap gap={8} style={{ marginBottom: 12 }}>
                 <Row gap={10} align="center" style={{ minWidth: 0 }}>
                   <GameArtTile name={t.name} twitchGameId={t.twitch_game_id} size={40} />
                   <div
@@ -203,12 +206,14 @@ export function DiscoverListPage() {
                       fontWeight: 600,
                       color: 'var(--fg)',
                       letterSpacing: '-0.01em',
+                      lineHeight: 1.2,
+                      minWidth: 0,
                     }}
                   >
                     {t.name}
                   </div>
                 </Row>
-                <Row gap={6} align="center">
+                <Row gap={6} align="center" style={{ flexShrink: 0, marginLeft: 'auto' }}>
                   <Pill tone={t.status === 'active' ? 'live' : 'default'}>
                     {t.status === 'active' ? '● Tracking' : t.status.charAt(0).toUpperCase() + t.status.slice(1)}
                   </Pill>
