@@ -11,6 +11,10 @@ import type { Knex } from 'knex';
  *   no VOD (or a failed replay) isn't refetched forever.
  */
 export async function up(knex: Knex): Promise<void> {
+  // The hourly health scorer holds minutes-long statements that join
+  // chat_watch_intervals; the ALTER must queue for its lock rather than
+  // die on the server's statement timeout.
+  await knex.raw('SET LOCAL statement_timeout = 0');
   await knex.schema.alterTable('chat_watch_intervals', (t) => {
     t.string('source', 16).notNullable().defaultTo('live');
   });
