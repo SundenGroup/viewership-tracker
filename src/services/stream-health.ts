@@ -212,14 +212,43 @@ interface TargetStats {
   chatMinutes: number;
 }
 
+interface CohortSession {
+  ch: string;
+  eng: number;
+  conv: number | null;
+  cv: number | null;
+}
+
 interface CohortStats {
-  n: number;
-  /** Distinct channels behind the sessions — one channel is not a cohort. */
-  nChannels: number;
-  medianCv: number | null;
   p99Rise: number | null;
+  sessions: CohortSession[];
+}
+
+/** A target channel's view of a cohort: everyone else's sessions. */
+interface CohortView {
+  n: number;
   engs: number[];
   convs: number[];
+  medianCv: number | null;
+}
+
+/**
+ * Baselines a channel may be judged against: the cohort MINUS its own
+ * sessions, and only when what remains spans enough sessions and enough
+ * distinct channels to be a real peer group.
+ */
+function viewFor(cohort: CohortStats | undefined, channelId: string): CohortView | null {
+  if (!cohort) return null;
+  const others = cohort.sessions.filter((s) => s.ch !== channelId);
+  const channels = new Set(others.map((s) => s.ch));
+  if (others.length < MIN_COHORT_N || channels.size < MIN_COHORT_CHANNELS) return null;
+  const cvs = others.map((s) => s.cv).filter((v): v is number => v != null);
+  return {
+    n: others.length,
+    engs: others.map((s) => s.eng),
+    convs: others.map((s) => s.conv).filter((v): v is number => v != null),
+    medianCv: cvs.length > 0 ? median(cvs) : null,
+  };
 }
 
 interface MinutePoint {
@@ -428,25 +457,22 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
         GROUP BY GROUPING SETS ((e.game_tracker_id, e.band, e.platform), (e.game_tracker_id, e.band))
       ),
       cohort_agg AS (
+        -- Per-session rows (not pre-aggregated arrays) so the scorer can
+        -- exclude a target channel's OWN sessions from its baselines — a
+        -- channel dominating its cohort must not be its own alibi.
         SELECT e.game_tracker_id, e.band, e.platform,
-               COUNT(*)::int AS n,
-               COUNT(DISTINCT e.channel_id)::int AS n_channels,
-               percentile_cont(0.5) WITHIN GROUP (ORDER BY e.cv) AS median_cv,
-               array_agg(e.eng_ratio) AS engs,
-               array_agg(e.conv_per_1k) FILTER (WHERE e.conv_per_1k IS NOT NULL) AS convs
+               jsonb_agg(jsonb_build_object(
+                 'ch', e.channel_id, 'eng', e.eng_ratio, 'conv', e.conv_per_1k, 'cv', e.cv
+               )) AS sessions
         FROM eligible e
         WHERE e.in_cohort
         GROUP BY GROUPING SETS ((e.game_tracker_id, e.band, e.platform), (e.game_tracker_id, e.band))
       )
       SELECT 'cohort' AS kind, ca.game_tracker_id::text AS tracker_id, ca.band,
              jsonb_build_object(
-               'n', ca.n,
-               'nChannels', ca.n_channels,
                'platform', ca.platform,
-               'medianCv', ca.median_cv,
                'p99Rise', cr.p99_rise,
-               'engs', to_jsonb(ca.engs),
-               'convs', to_jsonb(COALESCE(ca.convs, ARRAY[]::numeric[]))
+               'sessions', ca.sessions
              ) AS payload
       FROM cohort_agg ca
       LEFT JOIN cohort_rise cr
@@ -487,12 +513,13 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
     const p = row.payload;
     if (row.kind === 'cohort') {
       cohorts.set(`${row.tracker_id}|${row.band}|${(p.platform as string | null) ?? '*'}`, {
-        n: Number(p.n),
-        nChannels: Number(p.nChannels ?? 0),
-        medianCv: p.medianCv != null ? Number(p.medianCv) : null,
         p99Rise: p.p99Rise != null ? Number(p.p99Rise) : null,
-        engs: (p.engs as number[]) ?? [],
-        convs: (p.convs as number[]) ?? [],
+        sessions: ((p.sessions as Array<Record<string, unknown>>) ?? []).map((s) => ({
+          ch: String(s.ch),
+          eng: Number(s.eng),
+          conv: s.conv != null ? Number(s.conv) : null,
+          cv: s.cv != null ? Number(s.cv) : null,
+        })),
       });
     } else {
       targets.set(String(p.id), {
@@ -530,28 +557,32 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
       const minutes = minutesBySession.get(id) ?? [];
       if (!candidate || !stats || minutes.length < 3) continue;
       const band = targetBand.get(id) as SizeBand;
-      const usable = (c: CohortStats | null | undefined): c is CohortStats =>
-        c != null && c.n >= MIN_COHORT_N && c.nChannels >= MIN_COHORT_CHANNELS;
       const trackerId = candidate.game_tracker_id;
       const lower = bandDown(band);
-      const platCohort = cohorts.get(`${trackerId}|${band}|${candidate.platform}`);
-      const mixedCohort = cohorts.get(`${trackerId}|${band}|*`);
-      const lowerCohort = lower ? cohorts.get(`${trackerId}|${lower}|*`) : undefined;
+      const platC = cohorts.get(`${trackerId}|${band}|${candidate.platform}`);
+      const mixedC = cohorts.get(`${trackerId}|${band}|*`);
+      const lowerC = lower ? cohorts.get(`${trackerId}|${lower}|*`) : undefined;
+      // Every baseline excludes the target channel's OWN sessions — a
+      // channel dominating its band must not be its own alibi.
+      const platView = viewFor(platC, candidate.channel_id);
+      const mixedView = viewFor(mixedC, candidate.channel_id);
+      const lowerView = lower ? viewFor(lowerC, candidate.channel_id) : null;
       // Engagement/followers: platform slice → mixed band → borrowed lower
       // band (chat culture is platform-specific, and a lone giant still
       // deserves the nearest honest peers). The borrow shows in evidence
       // via the cohort's band name.
-      let eng: { cohort: CohortStats | null; platform: string; band: SizeBand };
-      if (usable(platCohort)) eng = { cohort: platCohort, platform: candidate.platform, band };
-      else if (usable(mixedCohort)) eng = { cohort: mixedCohort, platform: 'all', band };
-      else if (lower && usable(lowerCohort)) eng = { cohort: lowerCohort, platform: 'all', band: lower };
-      else eng = { cohort: null, platform: 'all', band };
+      let eng: { view: CohortView | null; platform: string; band: SizeBand };
+      if (platView) eng = { view: platView, platform: candidate.platform, band };
+      else if (mixedView) eng = { view: mixedView, platform: 'all', band };
+      else if (lowerView) eng = { view: lowerView, platform: 'all', band: lower as SizeBand };
+      else eng = { view: null, platform: 'all', band };
       // Curve shape is not platform-cultural — its baselines always come
       // from the mixed chain so a tiny platform slice can't dilute them.
-      let shape: { cohort: CohortStats | null; band: SizeBand };
-      if (usable(mixedCohort)) shape = { cohort: mixedCohort, band };
-      else if (lower && usable(lowerCohort)) shape = { cohort: lowerCohort, band: lower };
-      else shape = { cohort: null, band };
+      let shape: { medianCv: number | null; p99Rise: number | null; band: SizeBand };
+      if (mixedView) shape = { medianCv: mixedView.medianCv, p99Rise: mixedC?.p99Rise ?? null, band };
+      else if (lowerView) {
+        shape = { medianCv: lowerView.medianCv, p99Rise: lowerC?.p99Rise ?? null, band: lower as SizeBand };
+      } else shape = { medianCv: null, p99Rise: null, band };
       const { score, evidence } = scoreOne(candidate, stats, eng, shape, minutes);
       const gated = applyGradeGates(score, evidence.flags);
       if (gated !== score) evidence.rawScore = score;
@@ -651,16 +682,16 @@ function scoreOne(
   candidate: Candidate,
   stats: TargetStats,
   /** Engagement/followers baseline — platform-preferred, possibly a
-   *  borrowed lower band (its band name says which). */
-  eng: { cohort: CohortStats | null; platform: string; band: SizeBand },
+   *  borrowed lower band (its band name says which), always excluding
+   *  the target channel's own sessions. */
+  eng: { view: CohortView | null; platform: string; band: SizeBand },
   /** Curve/spike baseline — always the mixed chain; shape is not
    *  platform-cultural and must not be diluted by a tiny slice. */
-  shape: { cohort: CohortStats | null; band: SizeBand },
+  shape: { medianCv: number | null; p99Rise: number | null; band: SizeBand },
   minutes: MinutePoint[],
 ): { score: number; evidence: HealthEvidence } {
   const flags: HealthFlag[] = [];
-  const engCohort = eng.cohort; // selection chain already enforced usability
-  const shapeCohort = shape.cohort;
+  const engView = eng.view; // selection chain already enforced usability
   const tracker = candidate.tracker_slug;
   const engCohortName =
     `${eng.platform === 'all' ? '' : `${eng.platform} `}${eng.band}-CCV ${tracker}`;
@@ -668,12 +699,12 @@ function scoreOne(
   // ── Engagement (40): percentile of mean(chatters/ccv) vs cohort ──────
   let engagementPct: number | null = null;
   let engagementPts: number;
-  if (engCohort) {
-    engagementPct = percentile(engCohort.engs, stats.engRatio);
+  if (engView) {
+    engagementPct = percentile(engView.engs, stats.engRatio);
     engagementPts = Math.round((engagementPct / 100) * ENGAGEMENT_MAX);
     if (engagementPct <= 10) {
       const per1k = Math.round(stats.engRatio * 1000);
-      const cohortMedian = median(engCohort.engs);
+      const cohortMedian = median(engView.engs);
       const medianPer1k = Math.round(cohortMedian * 1000);
       const critical =
         engagementPct <= EXTREME_ENG_PCT && stats.engRatio < EXTREME_ENG_RATIO * cohortMedian;
@@ -698,11 +729,10 @@ function scoreOne(
 
   // (a) unnaturally flat: CV far below what organic curves in this cohort do.
   if (
-    shapeCohort != null &&
     stats.cv != null &&
-    shapeCohort.medianCv != null &&
-    shapeCohort.medianCv > 0 &&
-    stats.cv < FLAT_CV_RATIO * shapeCohort.medianCv
+    shape.medianCv != null &&
+    shape.medianCv > 0 &&
+    stats.cv < FLAT_CV_RATIO * shape.medianCv
   ) {
     curvePts -= 15;
     flags.push({
@@ -710,7 +740,7 @@ function scoreOne(
       detail:
         `Viewer count is unnaturally flat: minute-to-minute variation ` +
         `±${(stats.cv * 100).toFixed(1)}% while organic ${shape.band}-CCV ${tracker} streams ` +
-        `vary ±${(shapeCohort.medianCv * 100).toFixed(1)}%.`,
+        `vary ±${(shape.medianCv * 100).toFixed(1)}%.`,
     });
   }
 
@@ -752,9 +782,7 @@ function scoreOne(
   // within ±3 min is treated as the cause (raids/hosts we cannot see are
   // exactly why this deducts only 5).
   const spikeThreshold =
-    shapeCohort != null && shapeCohort.p99Rise != null && shapeCohort.p99Rise > 0
-      ? shapeCohort.p99Rise
-      : FALLBACK_SPIKE_RISE;
+    shape.p99Rise != null && shape.p99Rise > 0 ? shape.p99Rise : FALLBACK_SPIKE_RISE;
   const spikes: Array<{ from: number; to: number; t: number; rise: number }> = [];
   for (let i = 1; i < minutes.length; i++) {
     const prev = minutes[i - 1] as MinutePoint;
@@ -787,10 +815,10 @@ function scoreOne(
 
   // ── Follower conversion (15) ──────────────────────────────────────────
   let followerPts: number;
-  if (stats.convPer1k == null || engCohort == null || engCohort.convs.length < MIN_COHORT_N) {
+  if (stats.convPer1k == null || engView == null || engView.convs.length < MIN_COHORT_N) {
     followerPts = 10; // no follower data (or nothing to rank against) → neutral
   } else {
-    const pct = percentile(engCohort.convs, stats.convPer1k);
+    const pct = percentile(engView.convs, stats.convPer1k);
     followerPts = Math.round((pct / 100) * FOLLOWERS_MAX);
     if (pct <= 10) {
       const delta = (candidate.followers_end as number) - (candidate.followers_start as number);
@@ -831,7 +859,7 @@ function scoreOne(
   const score = clamp(engagementPts + curvePts + followerPts + responsePts, 0, 100);
   const evidence: HealthEvidence = {
     engagementPct,
-    cohort: { tracker, band: eng.band, n: engCohort?.n ?? 0, platform: eng.platform },
+    cohort: { tracker, band: eng.band, n: engView?.n ?? 0, platform: eng.platform },
     flags,
     subscores: {
       engagement: engagementPts,
