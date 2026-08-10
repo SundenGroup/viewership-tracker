@@ -546,17 +546,146 @@ class KickPusher {
   }
 }
 
+// ── Connection pools ──────────────────────────────────────────────────────
+//
+// One IRC connection tolerates a few hundred channels and 15 JOINs/10s;
+// past ~1k watched channels a single socket becomes the ceiling. The
+// pools shard channels across N independent connections by a stable hash
+// of the identifier, so a channel keeps its shard (no part/rejoin churn
+// on re-selection) and each shard brings its own JOIN budget. Shard
+// counts derive from CHAT_MAX_CHANNELS at boot (~300 twitch channels per
+// connection) and can be pinned via env.
+
+/** FNV-1a — stable, cheap, good spread for shard assignment. */
+function shardIndex(key: string, shards: number): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0) % shards;
+}
+
+const TWITCH_SHARDS = clampInt(
+  process.env.CHAT_TWITCH_SHARDS, Math.ceil(CHAT_MAX_CHANNELS / 300), 1, 16,
+);
+const KICK_SHARDS = clampInt(
+  process.env.CHAT_KICK_SHARDS, Math.ceil(CHAT_MAX_CHANNELS / 800), 1, 4,
+);
+/** Boot stagger between shard connections — avoids a thundering herd. */
+const SHARD_START_STAGGER_MS = 400;
+
+class TwitchIrcPool {
+  private readonly shards: TwitchIrc[];
+  private startTimers: Array<ReturnType<typeof setTimeout>> = [];
+
+  constructor(count: number, onChat: (login: string, nick: string) => void) {
+    this.shards = Array.from({ length: count }, () => new TwitchIrc(onChat));
+  }
+
+  get shardCount(): number {
+    return this.shards.length;
+  }
+
+  start(): void {
+    this.shards.forEach((shard, i) => {
+      if (i === 0) shard.start();
+      else this.startTimers.push(setTimeout(() => shard.start(), i * SHARD_START_STAGGER_MS));
+    });
+  }
+
+  stop(): void {
+    for (const t of this.startTimers) clearTimeout(t);
+    for (const shard of this.shards) shard.stop();
+  }
+
+  setDesired(logins: Set<string>): void {
+    const parts: Array<Set<string>> = this.shards.map(() => new Set());
+    for (const login of logins) parts[shardIndex(login, this.shards.length)]!.add(login);
+    this.shards.forEach((shard, i) => shard.setDesired(parts[i]!));
+  }
+
+  stats(): { joined: number; desired: number; shardsReady: number; shards: number } {
+    let joined = 0;
+    let desired = 0;
+    let shardsReady = 0;
+    for (const shard of this.shards) {
+      const s = shard.stats();
+      joined += s.joined;
+      desired += s.desired;
+      if (s.connected) shardsReady++;
+    }
+    return { joined, desired, shardsReady, shards: this.shards.length };
+  }
+
+  joinedLogins(): string[] {
+    const out: string[] = [];
+    for (const shard of this.shards) out.push(...shard.joinedLogins());
+    return out;
+  }
+}
+
+class KickPusherPool {
+  private readonly shards: KickPusher[];
+  private startTimers: Array<ReturnType<typeof setTimeout>> = [];
+
+  constructor(count: number, appKey: string, onChat: (chatroomId: number, sender: string) => void) {
+    this.shards = Array.from({ length: count }, () => new KickPusher(appKey, onChat));
+  }
+
+  get shardCount(): number {
+    return this.shards.length;
+  }
+
+  start(): void {
+    this.shards.forEach((shard, i) => {
+      if (i === 0) shard.start();
+      else this.startTimers.push(setTimeout(() => shard.start(), i * SHARD_START_STAGGER_MS));
+    });
+  }
+
+  stop(): void {
+    for (const t of this.startTimers) clearTimeout(t);
+    for (const shard of this.shards) shard.stop();
+  }
+
+  setDesired(chatroomIds: Set<number>): void {
+    const parts: Array<Set<number>> = this.shards.map(() => new Set());
+    for (const id of chatroomIds) parts[shardIndex(String(id), this.shards.length)]!.add(id);
+    this.shards.forEach((shard, i) => shard.setDesired(parts[i]!));
+  }
+
+  stats(): { subscribed: number; desired: number; shardsReady: number; shards: number } {
+    let subscribed = 0;
+    let desired = 0;
+    let shardsReady = 0;
+    for (const shard of this.shards) {
+      const s = shard.stats();
+      subscribed += s.subscribed;
+      desired += s.desired;
+      if (s.connected) shardsReady++;
+    }
+    return { subscribed, desired, shardsReady, shards: this.shards.length };
+  }
+
+  subscribedIds(): number[] {
+    const out: number[] = [];
+    for (const shard of this.shards) out.push(...shard.subscribedIds());
+    return out;
+  }
+}
+
 // ── Routing indexes + manager instances ───────────────────────────────────
 
 const twitchIndex = new Map<string, string>(); // twitch login → channel_id
 const kickIndex = new Map<number, string>();   // kick chatroom id → channel_id
 
-const twitchIrc = new TwitchIrc((login, nick) => {
+const twitchIrc = new TwitchIrcPool(TWITCH_SHARDS, (login, nick) => {
   const channelId = twitchIndex.get(login);
   if (channelId) recordMessage(channelId, nick);
 });
 
-const kickPusher = new KickPusher(KICK_PUSHER_KEY, (chatroomId, sender) => {
+const kickPusher = new KickPusherPool(KICK_SHARDS, KICK_PUSHER_KEY, (chatroomId, sender) => {
   const channelId = kickIndex.get(chatroomId);
   if (channelId) recordMessage(channelId, sender);
 });
@@ -891,7 +1020,9 @@ async function flushRollup(finalFlush = false): Promise<void> {
 
   const tw = twitchIrc.stats();
   const kk = kickPusher.stats();
-  const subs = `subscribed ${tw.joined}/${tw.desired} twitch / ${kk.subscribed}/${kk.desired} kick`;
+  const subs =
+    `subscribed ${tw.joined}/${tw.desired} twitch (${tw.shardsReady}/${tw.shards} conns) / ` +
+    `${kk.subscribed}/${kk.desired} kick (${kk.shardsReady}/${kk.shards} conns)`;
 
   if (rows.length === 0) {
     log(`flushed 0 rows — ${subs}`);
@@ -1112,6 +1243,7 @@ async function main(): Promise<void> {
 
   log(
     `chat collector starting — top ${CHAT_MAX_CHANNELS} live channels (twitch|kick|youtube), ` +
+      `${TWITCH_SHARDS} twitch + ${KICK_SHARDS} kick connection(s), ` +
       `ccv floor ${CHAT_MIN_CCV}, ${CHAT_TRACKER_QUOTA} guaranteed slots/tracker, ` +
       `selection every ${SELECTION_INTERVAL_MS / 1000}s, flush every 60s` +
       (process.env.KICK_PUSHER_KEY ? ', KICK_PUSHER_KEY overridden from env' : ''),
