@@ -151,36 +151,41 @@ async function resolveUserId(row: CandidateRow): Promise<string | null> {
 }
 
 interface ReplayPage {
-  comments: Array<{ offsetSeconds: number; commenterId: string | null }>;
-  nextCursor: string | null;
+  comments: Array<{ id: string; offsetSeconds: number; commenterId: string | null }>;
+  hasNextPage: boolean;
 }
 
-async function fetchReplayPage(videoId: string, opts: { offset?: number; cursor?: string }): Promise<ReplayPage | null> {
-  const variables = opts.cursor
-    ? { videoID: videoId, cursor: opts.cursor }
-    : { videoID: videoId, contentOffsetSeconds: Math.max(0, opts.offset ?? 0) };
+/**
+ * One replay page at a content offset. Cursor-based pagination is gated
+ * by Twitch's client-integrity check for this client, but offset seeking
+ * is not — so we page by offset and dedupe boundary comments by node id.
+ * GQL-level errors are thrown (they'd otherwise read as "end of chat").
+ */
+async function fetchReplayPage(videoId: string, offsetSeconds: number): Promise<ReplayPage | null> {
   const { data } = await axios.post(
     GQL_URL,
     {
       operationName: 'VideoCommentsByOffsetOrCursor',
-      variables,
+      variables: { videoID: videoId, contentOffsetSeconds: Math.max(0, offsetSeconds) },
       extensions: { persistedQuery: { version: 1, sha256Hash: COMMENTS_QUERY_HASH } },
     },
     { headers: { 'Client-ID': GQL_CLIENT_ID, 'Content-Type': 'application/json' }, timeout: 20_000 },
   );
+  if (Array.isArray(data?.errors) && data.errors.length > 0) {
+    throw new Error(`gql: ${data.errors.map((e: { message?: string }) => e.message).join('; ')}`);
+  }
   const comments = data?.data?.video?.comments;
   if (!comments || !Array.isArray(comments.edges)) return null;
-  const out: ReplayPage = { comments: [], nextCursor: null };
+  const out: ReplayPage = { comments: [], hasNextPage: comments.pageInfo?.hasNextPage === true };
   for (const edge of comments.edges) {
     const node = edge?.node;
-    if (!node || typeof node.contentOffsetSeconds !== 'number') continue;
+    if (!node || typeof node.contentOffsetSeconds !== 'number' || !node.id) continue;
     out.comments.push({
+      id: String(node.id),
       offsetSeconds: node.contentOffsetSeconds,
       commenterId: node.commenter?.id ?? null,
     });
-    if (edge.cursor) out.nextCursor = edge.cursor;
   }
-  if (!comments.pageInfo?.hasNextPage) out.nextCursor = null;
   return out;
 }
 
@@ -210,30 +215,32 @@ async function processSession(row: CandidateRow, budget: { pages: number }): Pro
   const endOffset = Math.ceil((endMs - vodStartMs) / 1000) + 60;
 
   const perMinute = new Map<number, MinuteAgg>();
+  const seenIds = new Set<string>();
   let totalMessages = 0;
-  let cursor: string | null = null;
   let pages = 0;
-  let lastOffset = startOffset;
+  let nextOffset = startOffset;
 
   for (;;) {
     if (pages >= MAX_PAGES_PER_SESSION || budget.pages <= 0) {
-      return { status: 'error', detail: `page budget exhausted at offset ${lastOffset}s of ${endOffset}s` };
+      return { status: 'error', detail: `page budget exhausted at offset ${nextOffset}s of ${endOffset}s` };
     }
     let page: ReplayPage | null;
     try {
-      page = await fetchReplayPage(vod.id, cursor ? { cursor } : { offset: startOffset });
+      page = await fetchReplayPage(vod.id, nextOffset);
     } catch (err) {
       return { status: 'replay_unavailable', detail: (err as Error).message };
     }
     pages++;
     budget.pages--;
     if (page === null) {
-      // First page null = replay disabled/expired; mid-stream null = done.
       if (pages === 1) return { status: 'replay_unavailable', detail: 'no comments payload' };
       break;
     }
+    let pageLastOffset = nextOffset;
     for (const c of page.comments) {
-      lastOffset = c.offsetSeconds;
+      pageLastOffset = Math.max(pageLastOffset, c.offsetSeconds);
+      if (seenIds.has(c.id)) continue; // offset-seek re-serves boundary comments
+      seenIds.add(c.id);
       if (c.offsetSeconds < startOffset || c.offsetSeconds > endOffset) continue;
       const ts = vodStartMs + c.offsetSeconds * 1000;
       if (ts < startMs - 60_000 || ts > endMs + 60_000) continue;
@@ -247,8 +254,11 @@ async function processSession(row: CandidateRow, budget: { pages: number }): Pro
       totalMessages++;
       if (c.commenterId) agg.chatters.add(c.commenterId);
     }
-    if (!page.nextCursor || lastOffset > endOffset) break;
-    cursor = page.nextCursor;
+    if (!page.hasNextPage || pageLastOffset > endOffset) break;
+    // Seek to the last offset seen; when a full page shares one second
+    // (chat storm), step past it rather than loop — the boundary dedupe
+    // keeps counts honest either way.
+    nextOffset = pageLastOffset > nextOffset ? pageLastOffset : nextOffset + 1;
     await sleep(PAGE_DELAY_MS);
   }
 
