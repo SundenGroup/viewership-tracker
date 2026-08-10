@@ -409,7 +409,7 @@ export function HeroKPIs({
         <span
           title={
             baseline
-              ? `Baseline — peak ${baseline.peak?.toLocaleString('en-US') ?? '—'} · avg ${baseline.avg?.toLocaleString('en-US') ?? '—'} · ${baseline.hours != null ? Math.round(baseline.hours).toLocaleString('en-US') : '—'} hours watched`
+              ? `Baseline · peak ${baseline.peak?.toLocaleString('en-US') ?? '—'} · avg ${baseline.avg?.toLocaleString('en-US') ?? '—'} · ${baseline.hours != null ? Math.round(baseline.hours).toLocaleString('en-US') : '—'} hours watched`
               : undefined
           }
           style={{
