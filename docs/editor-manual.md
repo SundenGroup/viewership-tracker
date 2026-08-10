@@ -22,8 +22,8 @@ After logging in you'll see the main dashboard. The top bar shows the currently 
 - **Channel Leaderboard** — Top channels ranked by peak/average CCV. Click the expand button to see detailed stats including tier, language, viewed hours, and live CCV.
 - **Language Distribution** — Viewer breakdown by stream language
 - **Region Distribution** — Viewer breakdown by region
-- **Channel List** — All tracked channels with status and metadata. Click the expand button for more vertical space when managing 100+ channels. Defaults to showing active channels only — use the filter buttons to see all or inactive channels. Includes "Promote to Manual" button for auto-discovered channels.
-- **Discovery Feed** — Auto-discovered channels awaiting review. Shows stream title, viewer count, and discovery time. Displays "+N new" and "+N updated" counts. The feed is automatically purged when a broadcast day goes live.
+- **Channel List** — All tracked channels with status and metadata. Click the expand button for more vertical space when managing 100+ channels. Defaults to showing active channels only — use the filter buttons to see all or inactive channels. Includes "Promote to Manual" button for scouted channels.
+- **Scout Feed** — Scouted channels awaiting review. Shows stream title, viewer count, and time scouted. Displays "+N new" and "+N updated" counts. The feed is automatically purged when a broadcast day goes live.
 - **Export** — Download data as CSV, XLSX, JSON, or interactive HTML reports. Supports exclusion filters for categories, languages, and specific channels.
 
 ### View Groups
@@ -86,10 +86,10 @@ Can run on multiple machines for redundancy — the server keeps only one snapsh
    - Game title and partner name
    - Timezone (used for report time display and DST-aware abbreviations)
    - Start and end dates
-   - Discovery keywords (word-boundary matched, comma-separated)
-   - Discovery Game IDs (platform-specific game identifiers for Twitch, YouTube, Kick)
+   - Scout keywords (word-boundary matched, comma-separated)
+   - Scout Game IDs (platform-specific game identifiers for Twitch, YouTube, Kick)
    - YouTube Categories (optional, defaults to Gaming + Entertainment)
-   - Discovery default tier (assigned to approved channels)
+   - Scout default tier (assigned to approved channels)
 3. Add stages and broadcast days
 4. Click **Create** to save
 
@@ -125,24 +125,24 @@ Channels can be assigned to specific broadcast days ("Some Days") or left unassi
 
 The auto-pause system only affects channels with specific day assignments. "All Days" channels are immune to auto-pause.
 
-### Auto-Pause & Re-Discovery
+### Auto-Pause & Re-Scouting
 
 When a broadcast day completes:
-1. Auto-discovered channels with specific day assignments are paused if no remaining scheduled/live days
+1. Scouted channels with specific day assignments are paused if no remaining scheduled/live days
 2. A periodic sweep (every 10 minutes) catches orphaned channels that missed the transition
 3. Paused channels can be re-discovered when they stream again — metadata (title, viewers, last_seen_at) is updated
 
 ### Promote to Manual
 
-Auto-discovered channels can be promoted to "Manual" source via the "Promote" button in the channel list. This prevents them from being auto-paused when broadcast days complete.
+Scouted channels can be promoted to "Manual" source via the "Promote" button in the channel list. This prevents them from being auto-paused when broadcast days complete.
 
 ---
 
-## Discovery Feed
+## Scout Feed
 
-The Discovery Feed shows channels automatically found by the system based on discovery keywords and game IDs. Searches across all eight platforms.
+The Scout feed shows channels automatically found by the system based on Scout keywords and game IDs. Searches across all eight platforms.
 
-### How Discovery Works
+### How Scout Works
 
 1. Searches platform APIs for live streams matching keywords/game IDs
 2. Filters by minimum viewer threshold
@@ -150,7 +150,7 @@ The Discovery Feed shows channels automatically found by the system based on dis
 4. For YouTube multi-stream channels: only stores metadata from the relevant stream (not unrelated concurrent streams)
 5. Re-surfaces disabled channels when they stream again — updates title, viewers, and last_seen_at
 
-### Discovery Feed Display
+### Scout Feed Display
 
 - Channels sorted by last_seen_at (most recently active first)
 - Shows stream title, viewer count, and relative time ("X min ago")
@@ -208,11 +208,11 @@ When a series is public, its HTML reports are accessible at:
 
 ```
 SCHEDULED → LIVE (when broadcast_start time reached, or manual "Go Live")
-  └─ Auto-purges unapproved discovery feed
-  └─ Discovery starts (if configured)
+  └─ Auto-purges unapproved Scout feed
+  └─ Scout starts (if configured)
 
 LIVE → COMPLETED (when broadcast_end time reached, or manual "Complete")
-  └─ Auto-pauses day-scoped auto-discovered channels
+  └─ Auto-pauses day-scoped scouted channels
   └─ Triggers report generation (if configured)
   └─ Checks if stage/series completed
 ```
@@ -278,9 +278,9 @@ npm run test:watch  # Watch mode
 
 ## Tips
 
-- **Use discovery keywords wisely** — Word-boundary matching prevents partial matches, but more specific keywords produce cleaner results
-- **Review discovery regularly** — New channels appear as streams go live; approve or block them promptly
-- **Disable instead of delete** — Use Disable (or Block for discovery channels) to preserve historical data. Only use Delete to erase all records
+- **Use Scout keywords wisely** — Word-boundary matching prevents partial matches, but more specific keywords produce cleaner results
+- **Review the Scout feed regularly** — New channels appear as streams go live; approve or block them promptly
+- **Disable instead of delete** — Use Disable (or Block for scouted channels) to preserve historical data. Only use Delete to erase all records
 - **Check platform colors** — Reports and dashboard use unified brand colors across all 8 platforms
 - **Monitor TikTok relay** — Check the relay terminal output for scrape failures (0-viewer skipping)
 - **Use view groups** — Configure language/platform filters for focused regional reports
@@ -293,7 +293,7 @@ npm run test:watch  # Watch mode
 
 ### 2026-04-27 — Redesigned dashboard cutover
 
-The redesigned dashboard, previously available at `/preview/`, was promoted to the default URL `tracker.clutch.game/`. Concepts (series, channels, discovery, reports, polling) are unchanged; the UI layout, navigation, and several interaction patterns differ.
+The redesigned dashboard, previously available at `/preview/`, was promoted to the default URL `tracker.clutch.game/`. Concepts (series, channels, Scout, reports, polling) are unchanged; the UI layout, navigation, and several interaction patterns differ.
 
 **Routing after cutover:**
 - `tracker.clutch.game/` — redesigned dashboard (default)
@@ -312,7 +312,7 @@ The redesigned dashboard, previously available at `/preview/`, was promoted to t
 **Highlights of the redesign for editors / engineers:**
 - New per-page chrome (sticky top header with clickable Clutch wordmark = "back to series list")
 - Account & admin overflow menu (`⋯` in top-right) on every series page → Series list / Explore / Users / YT Keys / Sign out
-- Mobile dashboard with fixed bottom nav (Live / Channels / Discover / Ops) and a redesigned Discovery card list (external link, language chip, handle, relative time, sort, source filter, clear-all)
+- Mobile dashboard with fixed bottom nav (Live / Channels / Scout / Ops) and a redesigned Scout card list (external link, language chip, handle, relative time, sort, source filter, clear-all)
 - Live-rendered HTML reports at `/public/<short>/report/{simple|detailed}[/<scopeSlug>]` (replaces the on-demand server-render path)
 - Encrypted YouTube API key pool (admin UI at `/settings/youtube-keys`) — partner-tagged keys for discovery, with the legacy `YOUTUBE_API_KEY` env var still acting as the polling-side fallback
 
@@ -337,7 +337,7 @@ returns `{ channels: { channelId, displayName, platform, language, tier, ccv }[]
 
 ### 2026-04-28 — Web Push notifications
 
-Operators can now receive OS-level push notifications for live operational events: broadcasts going live or about to end, polling problems, YouTube quota exhaustion, and new auto-discovery candidates.
+Operators can now receive OS-level push notifications for live operational events: broadcasts going live or about to end, polling problems, YouTube quota exhaustion, and new Scout candidates.
 
 **Settings page:** `/settings/notifications` (editor + admin). Per-device subscription with per-event-type toggles — your laptop and phone can have different preferences.
 
@@ -354,7 +354,7 @@ Operators can now receive OS-level push notifications for live operational event
 | `broadcast_ending` | A live broadcast's `broadcast_end` is 9–11 minutes away (one-shot per day) |
 | `polling_stalled` | 5 consecutive poll cycles returned zero results (1 hour throttle) |
 | `quota_exhausted` | YouTube daily quota hit 100% (24 hour throttle) |
-| `discovery_candidate` | Auto-discovery added one or more channels to the pending-approval feed |
+| `discovery_candidate` | Scout added one or more channels to the pending-approval feed |
 
 **Backend pieces:**
 - `src/services/push-notifier.ts` — singleton, loads/generates the VAPID keypair on boot and fans out via `web-push`.

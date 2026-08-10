@@ -20,7 +20,7 @@ explains almost every "why does this number look like that?" question.
 | Question | "How did *our event* perform?" | "Who is streaming *this game* right now?" |
 | Scope | A curated roster of channels | Everything we can find |
 | Organised by | Series → broadcast day → stage | Game tracker |
-| Roster | Hand-picked, verified | Auto-discovered, then filtered |
+| Roster | Hand-picked, verified | Found automatically, then filtered |
 | Use it for | Official reporting, partner decks | Market view, scouting, trends |
 
 **Explore is authoritative. Discover is comprehensive.** When a number has to
