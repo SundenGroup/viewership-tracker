@@ -1261,7 +1261,7 @@ function DetailedReport({
       {/* Section 01 — timeline */}
       <Section
         eyebrow="Timeline"
-        title="Concurrent viewers — interactive"
+        title="Concurrent viewers · interactive"
         right={<Pill>{totalDayCount}-day span</Pill>}
       >
         {timeline.total.length > 0 ? (
