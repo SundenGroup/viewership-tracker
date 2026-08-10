@@ -770,7 +770,7 @@ function SimpleReport({
   const headline =
     scopeLevel === 'series'
       ? seriesInfo.name
-      : `${seriesInfo.name} — ${scopeLabel}`;
+      : `${seriesInfo.name} · ${scopeLabel}`;
 
   return (
     <div
@@ -989,7 +989,7 @@ function DetailedReport({
           ? `Broadcast day · ${scopeLabel}`
           : 'Executive summary';
   const headline =
-    scopeLevel === 'series' ? seriesInfo.name : `${seriesInfo.name} — ${scopeLabel}`;
+    scopeLevel === 'series' ? seriesInfo.name : `${seriesInfo.name} · ${scopeLabel}`;
 
   // Leaders — top channel by peak CCV, top platform by live CCV, top
   // language by viewed hours (matches the legacy report and is the
