@@ -10,6 +10,11 @@
  * CJK scripts don't delimit words with spaces anyway, so substring is
  * the correct semantics there, and the false-positive risk that word
  * boundaries exist to prevent is an ASCII-acronym problem.
+ *
+ * Titles are NFKC-folded before matching: Thai and Korean watch parties
+ * style event names in Unicode math-bold (𝐏𝐔𝐁𝐆 𝐆𝐋𝐎𝐁𝐀𝐋 𝐒𝐄𝐑𝐈𝐄𝐒), which
+ * plain-ASCII keywords can never hit — nine such channels were invisible
+ * to Scout across the whole of PGS7.
  */
 export function keywordMatches(
   keywords: string[],
@@ -17,8 +22,8 @@ export function keywordMatches(
   channelName?: string,
 ): boolean {
   if (keywords.length === 0) return true; // No keywords = accept all
-  const titleLower = (title ?? '').toLowerCase();
-  const channelLower = (channelName ?? '').toLowerCase();
+  const titleLower = (title ?? '').normalize('NFKC').toLowerCase();
+  const channelLower = (channelName ?? '').normalize('NFKC').toLowerCase();
   return keywords.some((kw) => {
     const kwLower = kw.toLowerCase().trim();
     if (kwLower.length === 0) return false;
