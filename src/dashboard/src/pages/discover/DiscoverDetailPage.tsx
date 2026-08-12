@@ -245,7 +245,7 @@ export function DiscoverDetailPage() {
               <Row gap={6} align="center">
                 <PlatformPip id="youtube" size={12} />
                 <span title="YouTube streams are matched by title rules and reviewed per channel">
-                  reviewed channels
+                  {detail.name}
                 </span>
               </Row>
             )}

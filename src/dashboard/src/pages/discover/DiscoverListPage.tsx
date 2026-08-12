@@ -250,7 +250,7 @@ export function DiscoverListPage() {
                 {t.youtube_enabled && (
                   <Row gap={6} align="center">
                     <PlatformPip id="youtube" size={11} />
-                    <span>reviewed channels</span>
+                    <span>{t.name}</span>
                   </Row>
                 )}
                 {t.tiktok_category_slug && (
