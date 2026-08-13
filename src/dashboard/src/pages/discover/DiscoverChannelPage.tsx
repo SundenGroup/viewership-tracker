@@ -689,7 +689,14 @@ function SessionsTable({
           <th style={{ ...th, textAlign: 'right' }}>Peak</th>
           <th style={{ ...th, textAlign: 'right' }}>Avg</th>
           {showChat && <th style={{ ...th, textAlign: 'right' }}>Msgs</th>}
-          {showChat && <th style={{ ...th, textAlign: 'right' }}>Chatters</th>}
+          {showChat && (
+            <th
+              style={{ ...th, textAlign: 'right', cursor: 'help' }}
+              title="Chatter-minutes: each minute's unique chatters, summed — one person chatting across N minutes counts N times. Not distinct people."
+            >
+              Chatter-min
+            </th>
+          )}
           <th style={{ ...th, textAlign: 'right' }}>Duration</th>
           {showHealth && <th style={{ ...th, textAlign: 'center' }}>Health</th>}
         </tr>

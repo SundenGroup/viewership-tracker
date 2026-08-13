@@ -59,7 +59,7 @@ export function DiscoveryFeedSection({
   const [confirmClear, setConfirmClear] = useState(false);
   // Keep a client-side "just acted" map so the row can render an
   // "Approved" / "Blocked" badge for a moment before the list refetches.
-  const [acted, setActed] = useState<Record<string, 'approved' | 'blocked'>>({});
+  const [acted, setActed] = useState<Record<string, 'approved' | 'blocked' | 'unblocked'>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [rowError, setRowError] = useState<Record<string, string>>({});
 
@@ -110,8 +110,8 @@ export function DiscoveryFeedSection({
       // discoveries (inserted inactive) never got Approve/Block buttons —
       // only Re-enable showed for already-promoted-then-disabled channels.
       // That's the "new ones don't work" bug operators hit.
-      const isPending = !actedState && c.tier === 'community';
       const isBlocked = !actedState && !c.is_active && inBlocklist;
+      const isPending = !actedState && c.tier === 'community' && !isBlocked;
       const isDisabled =
         !actedState &&
         !c.is_active &&
@@ -219,6 +219,29 @@ export function DiscoveryFeedSection({
         setRowError((m) => ({
           ...m,
           [id]: err instanceof Error ? err.message : 'Failed to block',
+        }));
+      } finally {
+        setRowBusy(id, false);
+      }
+    },
+    [seriesId, onMutate],
+  );
+
+  // Unblock fully undoes a block server-side: blocklist removal,
+  // reactivation, and a pin to the live day(s) so polling resumes now.
+  // The row returns to pending for a normal Approve.
+  const handleUnblock = useCallback(
+    async (id: string) => {
+      setRowBusy(id, true);
+      setRowError((m) => ({ ...m, [id]: '' }));
+      try {
+        await api.unblockChannel(seriesId, id);
+        setActed((m) => ({ ...m, [id]: 'unblocked' }));
+        onMutate();
+      } catch (err) {
+        setRowError((m) => ({
+          ...m,
+          [id]: err instanceof Error ? err.message : 'Failed to unblock',
         }));
       } finally {
         setRowBusy(id, false);
@@ -432,6 +455,20 @@ export function DiscoveryFeedSection({
                 )}
                 {r.actedState === 'blocked' && (
                   <StatusChip tone="danger" label="Blocked" />
+                )}
+                {r.actedState === 'unblocked' && (
+                  <StatusChip tone="live" label="Unblocked" />
+                )}
+                {r.isBlocked && !r.actedState && (
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    style={{ padding: '6px 12px' }}
+                    onClick={() => handleUnblock(r.id)}
+                    disabled={isBusy}
+                  >
+                    {isBusy ? '…' : 'Unblock'}
+                  </button>
                 )}
                 {r.isPending && !r.actedState && (
                   <>

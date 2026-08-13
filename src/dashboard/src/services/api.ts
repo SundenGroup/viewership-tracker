@@ -538,6 +538,13 @@ export function stopDiscovery(seriesId: string) {
   );
 }
 
+export function unblockChannel(seriesId: string, channelId: string) {
+  return request<{ unblocked: boolean; seriesId: string; channelId: string }>(
+    '/api/polling/discovery/unblock',
+    { method: 'POST', body: JSON.stringify({ seriesId, channelId }) },
+  );
+}
+
 export function blockChannel(seriesId: string, channelId: string) {
   return request<{ blocked: boolean; seriesId: string; channelId: string }>(
     '/api/polling/discovery/block',

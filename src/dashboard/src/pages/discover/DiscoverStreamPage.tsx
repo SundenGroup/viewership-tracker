@@ -365,7 +365,13 @@ export function DiscoverStreamPage() {
             sub={session.minutes_live > 0 ? `${(messages / session.minutes_live).toFixed(0)} / min` : undefined}
           />
         )}
-        {hasChatData && <StatBlock label="Unique chatters" value={fmtN(chatters)} />}
+        {hasChatData && (
+          <StatBlock
+            label="Chatter-minutes"
+            value={fmtN(chatters)}
+            sub="per-minute uniques, summed"
+          />
+        )}
         {followersDelta != null && (
           <StatBlock
             label="Followers"
