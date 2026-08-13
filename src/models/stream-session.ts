@@ -328,7 +328,15 @@ export async function finalizeSessions(ids: string[]): Promise<void> {
         peak_ccv = GREATEST(ss.peak_ccv, COALESCE(st.peak_ccv, 0)),
         messages = COALESCE(ch.messages, 0),
         unique_chatters = COALESCE(ch.chatters, 0),
-        distinct_chatters = ch.new_chatters,
+        -- messages with zero first-seens is impossible under live
+        -- tracking — it means the chat predates the new_chatters column
+        -- (or a collector restart wiped the set before any post-restart
+        -- message). NULL = "not tracked", so the UI can fall back to
+        -- chatter-minutes instead of claiming zero people.
+        distinct_chatters = CASE
+          WHEN COALESCE(ch.messages, 0) > 0 AND COALESCE(ch.new_chatters, 0) = 0 THEN NULL
+          ELSE ch.new_chatters
+        END,
         followers_end = fe.followers
     FROM closed c
     LEFT JOIN snap_stats st ON st.session_id = c.id
