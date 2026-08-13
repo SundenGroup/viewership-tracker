@@ -529,9 +529,15 @@ export class DiscoveryService {
     }
 
     // 6. Direct live-check for disabled channels not found via search
-    // Search APIs have result limits and may miss smaller channels
+    // Search APIs have result limits and may miss smaller channels.
+    // Blocklisted channels are excluded — this path bypasses the search
+    // loop's blocklist gate, and its keyword test also matches CHANNEL
+    // NAMES, so a channel literally named after the event ("PGS is
+    // Live") would otherwise re-surface every cycle forever.
     const uncheckedDisabled = disabledChannels.filter(
-      (ch) => !trackedSet.has(`${ch.platform}:${normIdent(ch.channel_identifier)}`),
+      (ch) =>
+        !trackedSet.has(`${ch.platform}:${normIdent(ch.channel_identifier)}`) &&
+        !blockSet.has(normIdent(ch.channel_identifier)),
     );
     if (uncheckedDisabled.length > 0) {
       // Group by platform for batch checking

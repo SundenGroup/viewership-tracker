@@ -107,6 +107,10 @@ export interface UpsertLiveSession {
 
 const TABLE = 'stream_sessions';
 
+/** When the collector's per-minute first-seen tracking went live —
+ *  sessions started earlier can only have partial distinct counts. */
+const DISTINCT_CHATTERS_EPOCH = '2026-08-13T12:30:00Z';
+
 /** pg returns bigint as string and jsonb pre-parsed — normalize a DB row. */
 function coerce(row: Record<string, unknown>): StreamSession {
   return {
@@ -328,12 +332,15 @@ export async function finalizeSessions(ids: string[]): Promise<void> {
         peak_ccv = GREATEST(ss.peak_ccv, COALESCE(st.peak_ccv, 0)),
         messages = COALESCE(ch.messages, 0),
         unique_chatters = COALESCE(ch.chatters, 0),
-        -- messages with zero first-seens is impossible under live
-        -- tracking — it means the chat predates the new_chatters column
-        -- (or a collector restart wiped the set before any post-restart
-        -- message). NULL = "not tracked", so the UI can fall back to
-        -- chatter-minutes instead of claiming zero people.
+        -- Sessions started before first-seen tracking existed can only
+        -- have PARTIAL distinct counts (senders from the early minutes
+        -- were never counted) — a confident-looking undercount is worse
+        -- than no number, so they get NULL and the UI falls back to
+        -- chatter-minutes. Same for messages with zero first-seens
+        -- (chat predates the column, or a collector restart wiped the
+        -- set before any post-restart message).
         distinct_chatters = CASE
+          WHEN c.started_at < '${DISTINCT_CHATTERS_EPOCH}'::timestamptz THEN NULL
           WHEN COALESCE(ch.messages, 0) > 0 AND COALESCE(ch.new_chatters, 0) = 0 THEN NULL
           ELSE ch.new_chatters
         END,
