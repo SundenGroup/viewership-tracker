@@ -192,6 +192,9 @@ async function fetchReplayPage(videoId: string, offsetSeconds: number): Promise<
 interface MinuteAgg {
   messages: number;
   chatters: Set<string>;
+  /** Commenters first seen in THIS minute (session-scoped) — replay is
+   *  complete, so summing these gives the exact distinct-chatter count. */
+  newChatters: number;
 }
 
 async function processSession(row: CandidateRow, budget: { pages: number }): Promise<{ status: string; detail?: string; messages?: number; minutes?: number }> {
@@ -216,6 +219,7 @@ async function processSession(row: CandidateRow, budget: { pages: number }): Pro
 
   const perMinute = new Map<number, MinuteAgg>();
   const seenIds = new Set<string>();
+  const seenCommenters = new Set<string>();
   let totalMessages = 0;
   let pages = 0;
   let nextOffset = startOffset;
@@ -247,12 +251,18 @@ async function processSession(row: CandidateRow, budget: { pages: number }): Pro
       const minuteMs = Math.floor(ts / 60_000) * 60_000;
       let agg = perMinute.get(minuteMs);
       if (!agg) {
-        agg = { messages: 0, chatters: new Set() };
+        agg = { messages: 0, chatters: new Set(), newChatters: 0 };
         perMinute.set(minuteMs, agg);
       }
       agg.messages++;
       totalMessages++;
-      if (c.commenterId) agg.chatters.add(c.commenterId);
+      if (c.commenterId) {
+        agg.chatters.add(c.commenterId);
+        if (!seenCommenters.has(c.commenterId)) {
+          seenCommenters.add(c.commenterId);
+          agg.newChatters++;
+        }
+      }
     }
     if (!page.hasNextPage || pageLastOffset > endOffset) break;
     // Seek to the last offset seen; when a full page shares one second
@@ -279,6 +289,7 @@ async function processSession(row: CandidateRow, budget: { pages: number }): Pro
       minute: new Date(minuteMs).toISOString(),
       messages: agg.messages,
       chatters: agg.chatters.size,
+      new_chatters: agg.newChatters,
     }));
     if (rows.length > 0) {
       for (let i = 0; i < rows.length; i += 500) {

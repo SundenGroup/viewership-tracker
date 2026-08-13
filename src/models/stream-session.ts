@@ -63,6 +63,9 @@ export interface StreamSession {
   followers_end: number | null;
   messages: number;
   unique_chatters: number;
+  /** True distinct people (from stream-scoped first-seen tracking).
+   *  NULL for sessions that predate it or had no chat evidence. */
+  distinct_chatters: number | null;
   health_score: number | null;
   health_grade: string | null;
   health_evidence: HealthEvidence | null;
@@ -85,6 +88,7 @@ export interface StreamSessionRow {
   followers_end: number | null;
   messages: number;
   unique_chatters: number;
+  distinct_chatters: number | null;
   health_score: number | null;
   health_grade: string | null;
   health_evidence: HealthEvidence | null;
@@ -113,6 +117,7 @@ function coerce(row: Record<string, unknown>): StreamSession {
     minutes_live: Number(row.minutes_live),
     messages: Number(row.messages),
     unique_chatters: Number(row.unique_chatters),
+    distinct_chatters: row.distinct_chatters != null ? Number(row.distinct_chatters) : null,
     titles: (row.titles ?? []) as TitleEntry[],
     health_score: row.health_score != null ? Number(row.health_score) : null,
     health_grade: (row.health_grade ?? null) as string | null,
@@ -138,6 +143,7 @@ export function toRow(s: StreamSession): StreamSessionRow {
     followers_end: s.followers_end,
     messages: s.messages,
     unique_chatters: s.unique_chatters,
+    distinct_chatters: s.distinct_chatters,
     health_score: s.health_score,
     health_grade: s.health_grade,
     health_evidence: s.health_evidence,
@@ -252,7 +258,11 @@ export async function closeStale(gameTrackerId: string): Promise<string[]> {
  *   - avg_ccv       = round(ccv_minutes / minutes_live)
  *   - peak_ccv      = per-minute MAX (kept monotonic vs the running peak)
  *   - messages / unique_chatters = SUMs from chat_minute_rollup
- *     (sum of per-minute chatters — a named approximation)
+ *     (unique_chatters = sum of per-minute chatters — chatter-minutes,
+ *     a named approximation kept for the scorer's per-minute basis)
+ *   - distinct_chatters = SUM(new_chatters): true distinct people, from
+ *     the collector's stream-scoped first-seen sets (NULL for sessions
+ *     that predate the tracking or had no chat evidence)
  *   - followers_end = latest follower snapshot ≤ ended_at + 10 min
  */
 export async function finalizeSessions(ids: string[]): Promise<void> {
@@ -287,7 +297,8 @@ export async function finalizeSessions(ids: string[]): Promise<void> {
     chat_stats AS (
       SELECT c.id AS session_id,
              SUM(r.messages)::int AS messages,
-             SUM(r.chatters)::int AS chatters
+             SUM(r.chatters)::int AS chatters,
+             SUM(r.new_chatters)::int AS new_chatters
       FROM closed c
       JOIN chat_minute_rollup r
         ON r.channel_id = c.channel_id
@@ -317,6 +328,7 @@ export async function finalizeSessions(ids: string[]): Promise<void> {
         peak_ccv = GREATEST(ss.peak_ccv, COALESCE(st.peak_ccv, 0)),
         messages = COALESCE(ch.messages, 0),
         unique_chatters = COALESCE(ch.chatters, 0),
+        distinct_chatters = ch.new_chatters,
         followers_end = fe.followers
     FROM closed c
     LEFT JOIN snap_stats st ON st.session_id = c.id

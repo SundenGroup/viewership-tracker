@@ -172,7 +172,24 @@ const db: Knex = knex({
 interface MinuteBucket {
   messages: number;
   chatters: Set<string>;
+  /** Senders seen for the FIRST time in the channel's current stream —
+   *  summing these over a session gives true distinct chatters. */
+  newChatters: number;
 }
+
+// Per-channel stream-scoped seen-sender sets. Reset when the channel's
+// stream_id changes (new broadcast) or after an hour without selection
+// or messages. Lost on collector restart — a session spanning a restart
+// counts some people twice; still ~8× closer to truth than
+// chatter-minutes.
+interface SessionSeen {
+  streamId: string | null;
+  seen: Set<string>;
+  lastActive: number;
+}
+const sessionSeen = new Map<string, SessionSeen>();
+const SESSION_SEEN_IDLE_MS = 60 * 60_000;
+const SESSION_SEEN_MAX = 100_000; // safety cap per channel
 
 const buckets = new Map<string, Map<number, MinuteBucket>>();
 
@@ -185,11 +202,22 @@ function recordMessage(channelId: string, sender: string): void {
   }
   let bucket = perMinute.get(minuteMs);
   if (!bucket) {
-    bucket = { messages: 0, chatters: new Set() };
+    bucket = { messages: 0, chatters: new Set(), newChatters: 0 };
     perMinute.set(minuteMs, bucket);
   }
   bucket.messages++;
   bucket.chatters.add(sender);
+
+  let ss = sessionSeen.get(channelId);
+  if (!ss) {
+    ss = { streamId: null, seen: new Set(), lastActive: 0 };
+    sessionSeen.set(channelId, ss);
+  }
+  ss.lastActive = Date.now();
+  if (!ss.seen.has(sender) && ss.seen.size < SESSION_SEEN_MAX) {
+    ss.seen.add(sender);
+    bucket.newChatters++;
+  }
 }
 
 // ── Twitch: one anonymous IRC connection ──────────────────────────────────
@@ -888,6 +916,20 @@ async function runSelection(): Promise<void> {
       if (selectedKeys.has(key)) continue;
       selectedKeys.add(key);
 
+      // New broadcast on this channel → fresh distinct-sender set (the
+      // seen-set is stream-scoped; carrying it over would undercount the
+      // next session's distinct chatters).
+      const rowStreamId = (row.stream_id ?? '').trim() || null;
+      if (rowStreamId) {
+        const ss = sessionSeen.get(row.channel_id);
+        if (!ss) {
+          sessionSeen.set(row.channel_id, { streamId: rowStreamId, seen: new Set(), lastActive: now });
+        } else if (ss.streamId !== rowStreamId) {
+          if (ss.streamId !== null) ss.seen.clear();
+          ss.streamId = rowStreamId;
+        }
+      }
+
       const cachedChatroomId = platform === 'kick' ? parseChatroomId(row.kick_chatroom_id) : null;
       const existing = tracked.get(key);
       if (existing) {
@@ -920,6 +962,17 @@ async function runSelection(): Promise<void> {
       } else {
         inGrace++;
       }
+    }
+
+    // Seen-sets stay warm while the channel is tracked; sets idle for an
+    // hour (unwatched AND silent) are dropped — their next sighting is a
+    // new stream for our purposes.
+    for (const t of tracked.values()) {
+      const ss = sessionSeen.get(t.channelId);
+      if (ss) ss.lastActive = Math.max(ss.lastActive, now);
+    }
+    for (const [chId, s] of sessionSeen) {
+      if (now - s.lastActive > SESSION_SEEN_IDLE_MS) sessionSeen.delete(chId);
     }
 
     // Resolve missing Kick chatroom ids (bounded per cycle, politely spaced).
@@ -990,6 +1043,7 @@ interface RollupRow {
   minute: string; // ISO timestamp of the minute start
   messages: number;
   chatters: number;
+  new_chatters: number;
 }
 
 let pendingRetry: RollupRow[] = []; // rows from a failed flush, retried next time
@@ -1012,6 +1066,7 @@ async function flushRollup(finalFlush = false): Promise<void> {
         minute: new Date(minuteMs).toISOString(),
         messages: bucket.messages,
         chatters: bucket.chatters.size,
+        new_chatters: bucket.newChatters,
       });
       perMinute.delete(minuteMs);
     }
@@ -1039,25 +1094,27 @@ async function flushRollup(finalFlush = false): Promise<void> {
     if (existing) {
       existing.messages += r.messages;
       existing.chatters = Math.max(existing.chatters, r.chatters);
+      existing.new_chatters += r.new_chatters;
     } else {
       merged.set(key, { ...r });
     }
   }
   const toWrite = [...merged.values()];
 
-  const valuesSql = toWrite.map(() => '(?::uuid, ?::timestamptz, ?::int, ?::int)').join(', ');
+  const valuesSql = toWrite.map(() => '(?::uuid, ?::timestamptz, ?::int, ?::int, ?::int)').join(', ');
   const bindings: Array<string | number> = [];
   for (const r of toWrite) {
-    bindings.push(r.channel_id, r.minute, r.messages, r.chatters);
+    bindings.push(r.channel_id, r.minute, r.messages, r.chatters, r.new_chatters);
   }
 
   try {
     await db.raw(
-      `INSERT INTO chat_minute_rollup (channel_id, minute, messages, chatters)
+      `INSERT INTO chat_minute_rollup (channel_id, minute, messages, chatters, new_chatters)
        VALUES ${valuesSql}
        ON CONFLICT (channel_id, minute) DO UPDATE
          SET messages = chat_minute_rollup.messages + EXCLUDED.messages,
-             chatters = GREATEST(chat_minute_rollup.chatters, EXCLUDED.chatters)`,
+             chatters = GREATEST(chat_minute_rollup.chatters, EXCLUDED.chatters),
+             new_chatters = chat_minute_rollup.new_chatters + EXCLUDED.new_chatters`,
       bindings,
     );
     const msgSum = toWrite.reduce((sum, r) => sum + r.messages, 0);
