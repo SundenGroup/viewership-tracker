@@ -1607,7 +1607,10 @@ export interface GameTrackerStreamSessionRow {
   followers_start: number | null;
   followers_end: number | null;
   messages: number;
+  /** Chatter-minutes: each minute's uniques, summed. */
   unique_chatters: number;
+  /** True distinct people; null for sessions predating the tracking. */
+  distinct_chatters: number | null;
   health_score: number | null;
   health_grade: string | null;
   health_evidence: GameTrackerHealthEvidence | null;

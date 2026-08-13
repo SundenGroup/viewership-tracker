@@ -692,9 +692,9 @@ function SessionsTable({
           {showChat && (
             <th
               style={{ ...th, textAlign: 'right', cursor: 'help' }}
-              title="Chatter-minutes: each minute's unique chatters, summed — one person chatting across N minutes counts N times. Not distinct people."
+              title="Distinct people who chatted during the stream. Sessions before Aug 13, 2026 show chatter-minutes instead (each minute's uniques, summed)."
             >
-              Chatter-min
+              Chatters
             </th>
           )}
           <th style={{ ...th, textAlign: 'right' }}>Duration</th>
@@ -783,7 +783,15 @@ function SessionsTable({
               )}
               {showChat && (
                 <td style={{ ...td, ...numTd, color: 'var(--fg-muted)' }}>
-                  {Number(s.unique_chatters) > 0 ? fmtCompact(Number(s.unique_chatters)) : '—'}
+                  {s.distinct_chatters != null ? (
+                    <span title="Distinct people">{fmtCompact(Number(s.distinct_chatters))}</span>
+                  ) : Number(s.unique_chatters) > 0 ? (
+                    <span title="Chatter-minutes (session predates distinct tracking)">
+                      {fmtCompact(Number(s.unique_chatters))}
+                    </span>
+                  ) : (
+                    '—'
+                  )}
                 </td>
               )}
               <td style={{ ...td, ...numTd, color: 'var(--fg-dim)' }}>

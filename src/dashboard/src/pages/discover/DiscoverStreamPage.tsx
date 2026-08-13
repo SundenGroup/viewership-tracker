@@ -240,6 +240,8 @@ export function DiscoverStreamPage() {
 
   const messages = Number(session.messages) || 0;
   const chatters = Number(session.unique_chatters) || 0;
+  const distinctChatters =
+    session.distinct_chatters != null ? Number(session.distinct_chatters) : null;
   const hasChatData = chart.hasChatBars || messages > 0 || chatters > 0;
   const hoursWatched = Math.round((Number(session.ccv_minutes) / 60) * 10) / 10;
   const followers = detail.followers;
@@ -365,13 +367,20 @@ export function DiscoverStreamPage() {
             sub={session.minutes_live > 0 ? `${(messages / session.minutes_live).toFixed(0)} / min` : undefined}
           />
         )}
-        {hasChatData && (
-          <StatBlock
-            label="Chatter-minutes"
-            value={fmtN(chatters)}
-            sub="per-minute uniques, summed"
-          />
-        )}
+        {hasChatData &&
+          (distinctChatters != null ? (
+            <StatBlock
+              label="Unique chatters"
+              value={fmtN(distinctChatters)}
+              sub={`${fmtN(chatters)} chatter-minutes`}
+            />
+          ) : (
+            <StatBlock
+              label="Chatter-minutes"
+              value={fmtN(chatters)}
+              sub="per-minute uniques, summed"
+            />
+          ))}
         {followersDelta != null && (
           <StatBlock
             label="Followers"
