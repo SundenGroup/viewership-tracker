@@ -224,6 +224,24 @@ router.post('/discovery/block', requireRole('admin', 'editor'), async (req: Requ
   }
 });
 
+// POST /api/polling/discovery/unblock — Undo a block: blocklist removal +
+// reactivation + live-day pin (editor+)
+router.post('/discovery/unblock', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const svc = ensureDiscovery(res);
+    if (!svc) return;
+    const { seriesId, channelId } = req.body;
+    if (!seriesId || !channelId) {
+      res.status(400).json({ error: 'seriesId and channelId are required' });
+      return;
+    }
+    await svc.unblockChannel(seriesId, channelId);
+    res.json({ unblocked: true, seriesId, channelId });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/polling/discovery/clear — Clear all unapproved discovered channels (editor+)
 router.post('/discovery/clear', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {

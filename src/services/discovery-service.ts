@@ -680,6 +680,54 @@ export class DiscoveryService {
   }
 
   /**
+   * Undo a block: remove the identifier from the series blocklist,
+   * reactivate the channel, and pin it to the currently-live day(s) so
+   * polling resumes immediately instead of waiting for re-discovery
+   * (day-scoped rows without a pin have their snapshots dropped).
+   */
+  async unblockChannel(seriesId: string, channelId: string): Promise<void> {
+    const channel = await this.db<Channel>('channels')
+      .where('id', channelId)
+      .first();
+    if (!channel) {
+      throw new Error(`Channel ${channelId} not found`);
+    }
+
+    const series = await this.db<TournamentSeries>('tournament_series')
+      .where('id', seriesId)
+      .first();
+    if (!series) {
+      throw new Error(`Series ${seriesId} not found`);
+    }
+
+    const metadata = { ...(series.metadata ?? {}) };
+    const identifier = channel.channel_identifier.toLowerCase();
+    const blocklist: string[] = Array.isArray(metadata.blocklist) ? [...metadata.blocklist] : [];
+    metadata.blocklist = blocklist.filter((b) => b !== identifier);
+
+    await this.db('tournament_series')
+      .where('id', seriesId)
+      .update({ metadata: JSON.stringify(metadata), updated_at: this.db.fn.now() });
+
+    await this.db('channels').where('id', channelId).update({ is_active: true });
+
+    const liveDayIds = await this.db('broadcast_days')
+      .where({ series_id: seriesId, status: 'live' })
+      .pluck('id');
+    for (const dayId of liveDayIds) {
+      await this.db('channel_broadcast_days')
+        .insert({ channel_id: channelId, broadcast_day_id: dayId })
+        .onConflict(['channel_id', 'broadcast_day_id'])
+        .ignore();
+    }
+
+    logger.info(
+      `[Discovery] Unblocked channel ${channel.display_name} (${channel.channel_identifier}) for series ${series.name}` +
+        (liveDayIds.length > 0 ? ` — pinned to ${liveDayIds.length} live day(s)` : ''),
+    );
+  }
+
+  /**
    * Promote a channel to a new tier.
    */
   async promoteChannel(channelId: string, tier: string): Promise<void> {
