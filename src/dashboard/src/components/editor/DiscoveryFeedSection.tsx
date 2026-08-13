@@ -63,7 +63,10 @@ export function DiscoveryFeedSection({
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [rowError, setRowError] = useState<Record<string, string>>({});
 
-  const blocklistSet = useMemo(() => new Set(blocklist), [blocklist]);
+  // The service stores blocklist identifiers lowercased; channel rows keep
+  // the raw casing (YouTube UC ids are mixed-case) — compare folded, or a
+  // blocked YouTube channel renders as PENDING forever.
+  const blocklistSet = useMemo(() => new Set(blocklist.map((b) => b.toLowerCase())), [blocklist]);
 
   // ── Filter to the same set the legacy panel shows ───────────────────────
   const visibleChannels = useMemo(() => {
@@ -72,7 +75,7 @@ export function DiscoveryFeedSection({
       if (c.is_active) return true;
       // Inactive channels: keep if blocked (we'll render a Blocked badge),
       // or if there's evidence they were re-discovered / auto-paused.
-      if (blocklistSet.has(c.channel_identifier)) return true;
+      if (blocklistSet.has(c.channel_identifier.toLowerCase())) return true;
       const md = c.metadata as
         | { last_seen_at?: string; auto_paused?: boolean }
         | undefined;
@@ -91,7 +94,7 @@ export function DiscoveryFeedSection({
         auto_paused_reason?: string;
         paused_at?: string;
       };
-      const inBlocklist = blocklistSet.has(c.channel_identifier);
+      const inBlocklist = blocklistSet.has(c.channel_identifier.toLowerCase());
       const autoPaused = !!md.auto_paused;
       const actedState = acted[c.id];
 

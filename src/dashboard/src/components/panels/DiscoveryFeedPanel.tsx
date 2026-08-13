@@ -62,7 +62,7 @@ export function DiscoveryFeedPanel({
   const sorted = [...(channels ?? [])]
     .filter((ch) => {
       // Hide disabled channels unless re-discovered streaming or auto-paused
-      if (!ch.is_active && !blocklist.includes(ch.channel_identifier)) {
+      if (!ch.is_active && !blocklist.includes(ch.channel_identifier.toLowerCase())) {
         return !!ch.metadata?.last_seen_at || !!ch.metadata?.auto_paused;
       }
       return true;
