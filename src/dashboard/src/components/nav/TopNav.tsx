@@ -70,7 +70,19 @@ export function useNavItems(
         .getLiveNow()
         .then((entries) => {
           if (cancelled) return;
-          const e = entries[0];
+          // Multiple events can be on air at once (PGS + GOALS Open) —
+          // entries[0] let the API's ordering pick the label. Prefer the
+          // series the user is in (or last visited) when it is live.
+          let remembered: string | null = null;
+          try {
+            remembered = localStorage.getItem(LAST_SERIES_KEY);
+          } catch {
+            /* noop */
+          }
+          const e =
+            entries.find((x) => x.series.id === activeSeriesId) ??
+            entries.find((x) => x.series.id === remembered) ??
+            entries[0];
           setLiveNow(e ? { id: e.series.id, short: e.series.short_name || e.series.name } : null);
         })
         .catch(() => {});
@@ -80,7 +92,7 @@ export function useNavItems(
       cancelled = true;
       clearInterval(h);
     };
-  }, []);
+  }, [activeSeriesId]);
 
   // Remember the last series the user visited so "Live" stays useful
   // when browsing Discover/Settings/Home.
