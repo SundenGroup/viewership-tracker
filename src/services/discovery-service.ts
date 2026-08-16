@@ -322,11 +322,14 @@ export class DiscoveryService {
         this.where('source', 'auto_discovered')
           .orWhereRaw("metadata->'auto_paused' = 'true'::jsonb");
       })
-      .select('id', 'platform', 'channel_identifier', 'display_name');
+      .select('id', 'platform', 'channel_identifier', 'display_name', 'tier');
 
-    const disabledMap = new Map<string, string>();
+    const disabledMap = new Map<string, { id: string; tier: string }>();
     for (const ch of disabledChannels) {
-      disabledMap.set(`${ch.platform}:${normIdent(ch.channel_identifier)}`, ch.id);
+      disabledMap.set(`${ch.platform}:${normIdent(ch.channel_identifier)}`, {
+        id: ch.id,
+        tier: (ch as unknown as { tier: string }).tier,
+      });
     }
 
     // 3. Load blocklist from series metadata
@@ -448,8 +451,8 @@ export class DiscoveryService {
         }
 
         // Check if this is a disabled channel that's streaming again
-        const disabledId = disabledMap.get(lookupKey);
-        if (disabledId) {
+        const disabledEntry = disabledMap.get(lookupKey);
+        if (disabledEntry) {
           try {
             const relevant = matchesKeywords(stream.title, stream.displayName);
 
@@ -464,8 +467,26 @@ export class DiscoveryService {
             const freshMeta: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
             if (stream.title) freshMeta.stream_title = stream.title;
             if (stream.concurrentViewers > 0) freshMeta.discovered_ccv = stream.concurrentViewers;
-            await this.db('channels').where('id', disabledId)
+            await this.db('channels').where('id', disabledEntry.id)
               .update({ metadata: this.db.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [JSON.stringify(freshMeta)]) });
+
+            // Auto-heal: a HUMAN-approved channel (tier beyond the default
+            // community) going live with a matching title on a live day
+            // needs no second approval — reactivate and pin so its data
+            // flows immediately instead of queueing for a manual click
+            // (500BROS lost three broadcast hours to that queue).
+            if (disabledEntry.tier !== 'community' && liveDaySet.size > 0) {
+              await this.db('channels').where('id', disabledEntry.id).update({ is_active: true });
+              for (const dayId of liveDaySet) {
+                await this.db('channel_broadcast_days')
+                  .insert({ channel_id: disabledEntry.id, broadcast_day_id: dayId })
+                  .onConflict(['channel_id', 'broadcast_day_id'])
+                  .ignore();
+              }
+              logger.info(
+                `[Discovery] Auto-reactivated approved channel ${stream.displayName} [${platform}] onto live day(s)`,
+              );
+            }
             trackedSet.add(lookupKey);
             resurfaced++;
             logger.info(
@@ -588,6 +609,21 @@ export class DiscoveryService {
                 if (snap.concurrentViewers > 0) freshMeta.discovered_ccv = snap.concurrentViewers;
                 await this.db('channels').where('id', ch.id)
                   .update({ metadata: this.db.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [JSON.stringify(freshMeta)]) });
+                // Same auto-heal as the search path: approved channels
+                // rejoin live days without waiting for a manual click.
+                const chTier = (ch as unknown as { tier?: string }).tier;
+                if (chTier && chTier !== 'community' && liveDaySet.size > 0) {
+                  await this.db('channels').where('id', ch.id).update({ is_active: true });
+                  for (const dayId of liveDaySet) {
+                    await this.db('channel_broadcast_days')
+                      .insert({ channel_id: ch.id, broadcast_day_id: dayId })
+                      .onConflict(['channel_id', 'broadcast_day_id'])
+                      .ignore();
+                  }
+                  logger.info(
+                    `[Discovery] Auto-reactivated approved channel ${snap.channelIdentifier} [${platform}] onto live day(s)`,
+                  );
+                }
                 resurfaced++;
                 logger.info(
                   `[Discovery] Re-surfaced disabled channel ${snap.channelIdentifier} [${platform}] via direct check (${snap.concurrentViewers} viewers)`,
