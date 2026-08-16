@@ -12,6 +12,7 @@ import { requirePublicSeries } from '../middleware/auth';
 import { publicCacheMiddleware } from '../middleware/public-cache';
 import * as ViewershipSnapshotModel from '../../models/viewership-snapshot';
 import * as TournamentSeriesModel from '../../models/tournament-series';
+import { trimIncompleteEdge } from '../../utils/timeline';
 import db from '../../utils/db';
 
 const router = Router();
@@ -450,11 +451,16 @@ router.get('/:shortName/timeseries', timeseriesCache, async (req: Request, res: 
         }) => r.rows,
       );
 
+    // The newest bucket routinely exists without its TikTok rows (relay
+    // lag) — withhold still-filling edge buckets instead of serving a
+    // dip that heals itself a minute later.
+    const settled = trimIncompleteEdge(rows, interval);
+
     res.json({
       scope: scopeObj,
       interval,
       groupBy,
-      data: rows.map((r) => ({
+      data: settled.map((r) => ({
         timestamp: r.bucket,
         groupKey: r.group_key,
         totalCCV: parseInt(r.total_ccv, 10),

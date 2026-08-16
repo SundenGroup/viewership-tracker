@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import * as ViewershipSnapshotModel from '../../models/viewership-snapshot';
 import { publicCacheMiddleware } from '../middleware/public-cache';
+import { trimIncompleteEdge } from '../../utils/timeline';
 import db from '../../utils/db';
 
 const router = Router();
@@ -305,11 +306,15 @@ router.get('/timeseries', timeseriesCache, async (req: Request, res: Response, n
       { interval, id: scopeObj.id, ...fClauses.bindings },
     ).then((r: { rows: Array<{ bucket: Date; group_key: string; total_ccv: string; channel_count: string }> }) => r.rows);
 
+    // Same live-edge rule as the public timeline: never serve a bucket
+    // that is still waiting for the TikTok relay.
+    const settled = trimIncompleteEdge(rows, interval);
+
     res.json({
       scope: scopeObj,
       interval,
       groupBy,
-      data: rows.map((r) => ({
+      data: settled.map((r) => ({
         timestamp: r.bucket,
         groupKey: r.group_key,
         totalCCV: parseInt(r.total_ccv, 10),
