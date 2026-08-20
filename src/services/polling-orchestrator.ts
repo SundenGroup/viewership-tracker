@@ -858,7 +858,9 @@ export class PollingOrchestrator {
             language: channel.language,
             region: channel.region,
             stream_id: snap.streamId ?? null,
-            stream_title: snap.streamTitle ?? null,
+            // streamTitle is the per-stream field (YouTube multi-stream);
+            // every other adapter reports the broadcast title in `title`.
+            stream_title: snap.streamTitle ?? snap.title ?? null,
           });
         }
 

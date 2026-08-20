@@ -17,6 +17,7 @@
 
 import webpush from 'web-push';
 import logger from '../utils/logger';
+import * as OpsEventModel from '../models/ops-event';
 import * as PushSubscriptionModel from '../models/push-subscription';
 import * as PushVapidKeyModel from '../models/push-vapid-key';
 import type { PushEventType, PushSubscriptionRow } from '../models/push-subscription';
@@ -103,6 +104,15 @@ export class PushNotifier {
 
     if (subs.length === 0) {
       logger.debug('No subscribers for event', { eventType });
+      // Still persist to history — "nobody was subscribed" is exactly the
+      // case where the reviewable log matters most.
+      await OpsEventModel.record({
+        eventType,
+        title: payload.title,
+        body: payload.body,
+        url: payload.url ?? null,
+        urgent: payload.urgent === true,
+      });
       return { sent: 0, failed: 0, pruned: 0 };
     }
 
@@ -144,6 +154,16 @@ export class PushNotifier {
     }
 
     logger.info('Push notification fan-out', { eventType, sent, failed, pruned, total: subs.length });
+    await OpsEventModel.record({
+      eventType,
+      title: payload.title,
+      body: payload.body,
+      url: payload.url ?? null,
+      urgent: payload.urgent === true,
+      sent,
+      failed,
+      pruned,
+    });
     return { sent, failed, pruned };
   }
 

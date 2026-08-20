@@ -18,6 +18,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { getPushNotifier } from '../../services/push-notifier';
+import * as OpsEventModel from '../../models/ops-event';
 import * as PushSubscriptionModel from '../../models/push-subscription';
 import { ALL_EVENT_TYPES } from '../../models/push-subscription';
 import type { PushPreferences } from '../../models/push-subscription';
@@ -155,6 +156,24 @@ router.post('/test', async (req: Request, res: Response, next: NextFunction) => 
     const result = await getPushNotifier().sendTest(req.user.id);
     logger.info('Sent test push notification', { userId: req.user.id, ...result });
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/push/events — reviewable history of every emitted notification
+// (persisted server-side even when no device was subscribed). Query:
+//   ?type=<eventType>  filter to one event type
+//   ?limit=<n>         default 100, max 500
+//   ?before=<iso>      paginate older than this timestamp
+router.get('/events', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const events = await OpsEventModel.listRecent({
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+      eventType: typeof req.query.type === 'string' && req.query.type ? req.query.type : undefined,
+      before: typeof req.query.before === 'string' && req.query.before ? req.query.before : undefined,
+    });
+    res.json({ events, eventTypes: ALL_EVENT_TYPES });
   } catch (err) {
     next(err);
   }
