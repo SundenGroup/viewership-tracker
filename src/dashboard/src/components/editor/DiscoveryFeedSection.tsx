@@ -95,7 +95,9 @@ export function DiscoveryFeedSection({
         paused_at?: string;
       };
       const inBlocklist = blocklistSet.has(c.channel_identifier.toLowerCase());
-      const autoPaused = !!md.auto_paused;
+      // A stale auto_paused flag on an ACTIVE row (auto-healed channel)
+      // must not dress a tracking channel as paused.
+      const autoPaused = !!md.auto_paused && !c.is_active;
       const actedState = acted[c.id];
 
       // State machine mirrors the LEGACY DiscoveryFeedPanel:
@@ -112,12 +114,14 @@ export function DiscoveryFeedSection({
       // That's the "new ones don't work" bug operators hit.
       const isBlocked = !actedState && !c.is_active && inBlocklist;
       const isPending = !actedState && c.tier === 'community' && !isBlocked;
+      // Re-enable must stay offered for auto-paused rows even after the
+      // nightly retention pass strips their last_seen_at — requiring the
+      // timestamp left them chip-only with no action at all.
       const isDisabled =
         !actedState &&
         !c.is_active &&
         !inBlocklist &&
-        !!md.last_seen_at &&
-        (c.tier !== 'community' || autoPaused);
+        (autoPaused || (c.tier !== 'community' && !!md.last_seen_at));
 
       return {
         id: c.id,
