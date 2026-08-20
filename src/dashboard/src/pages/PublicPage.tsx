@@ -413,14 +413,6 @@ function PublicLive({
     });
   }, [model.tierRows, timeline.region]);
 
-  // Filters lifted from the channel table into the header per design v2.
-  const [region, setRegion] = useState<string>('all');
-  const [platform, setPlatform] = useState<string>('all');
-  const regionOptions = useMemo(
-    () => Array.from(new Set(model.leaderboard.map((c) => c.region).filter(Boolean))) as string[],
-    [model.leaderboard],
-  );
-
   const liveCount = seriesInfo.stages.reduce(
     (acc, s) => acc + s.broadcast_days.filter((d) => d.status === 'live').length,
     0,
@@ -462,44 +454,6 @@ function PublicLive({
             ● Live
             {totalDayCount > 0 ? ` · Day ${currentDayNumber} of ${totalDayCount}` : ''}
           </Pill>
-          <select
-            value={region}
-            onChange={(e) => setRegion(e.target.value)}
-            style={{
-              background: 'var(--bg-card)',
-              border: '1px solid var(--border)',
-              color: 'var(--fg)',
-              fontSize: 12,
-              padding: '5px 10px',
-              borderRadius: 4,
-            }}
-          >
-            <option value="all">All regions</option>
-            {regionOptions.map((r) => (
-              <option key={r} value={r}>
-                {REGION_LABELS[r.toLowerCase()]?.label ?? r.toUpperCase()}
-              </option>
-            ))}
-          </select>
-          <select
-            value={platform}
-            onChange={(e) => setPlatform(e.target.value)}
-            style={{
-              background: 'var(--bg-card)',
-              border: '1px solid var(--border)',
-              color: 'var(--fg)',
-              fontSize: 12,
-              padding: '5px 10px',
-              borderRadius: 4,
-            }}
-          >
-            <option value="all">All platforms</option>
-            {PLATFORMS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
           <ThemeToggle />
         </Row>
       </header>
@@ -753,14 +707,7 @@ function PublicLive({
       {/* Sortable channel table */}
       <div style={{ padding: '0 32px 40px' }}>
         <Section eyebrow="Live now" title={`All ${model.leaderboard.length} tracked channels`}>
-          <SortableChannelTable
-            channels={model.leaderboard}
-            live
-            region={region}
-            platform={platform}
-            onRegionChange={setRegion}
-            onPlatformChange={setPlatform}
-          />
+          <SortableChannelTable channels={model.leaderboard} live />
         </Section>
       </div>
 
@@ -1244,31 +1191,17 @@ function PublicRecap({
 function SortableChannelTable({
   channels,
   live,
-  region: controlledRegion,
-  platform: controlledPlatform,
-  onRegionChange,
-  onPlatformChange,
 }: {
   channels: ChannelRow[];
   live: boolean;
-  region?: string;
-  platform?: string;
-  onRegionChange?: (v: string) => void;
-  onPlatformChange?: (v: string) => void;
 }) {
   const [sort, setSort] = useState<keyof ChannelRow>(live ? 'live' : 'peak');
   const [dir, setDir] = useState<'asc' | 'desc'>('desc');
-  const [internalRegion, setInternalRegion] = useState<string>('all');
-  const [internalPlatform, setInternalPlatform] = useState<string>('all');
+  const [platform, setPlatform] = useState<string>('all');
 
-  const region = controlledRegion ?? internalRegion;
-  const platform = controlledPlatform ?? internalPlatform;
-  const setRegion = onRegionChange ?? setInternalRegion;
-  const setPlatform = onPlatformChange ?? setInternalPlatform;
-
-  const filtered = channels
-    .filter((c) => (region === 'all' ? true : c.region === region))
-    .filter((c) => (platform === 'all' ? true : c.platform === platform));
+  const filtered = channels.filter((c) =>
+    platform === 'all' ? true : c.platform === platform,
+  );
 
   const sorted = [...filtered].sort((a, b) => {
     const av = a[sort] ?? 0;
@@ -1325,32 +1258,10 @@ function SortableChannelTable({
   const cols = live
     ? '28px 1.4fr 100px 110px 60px 90px 90px 90px 100px'
     : '28px 1.4fr 100px 110px 60px 90px 90px 100px';
-  const regions = Array.from(new Set(channels.map((c) => c.region).filter(Boolean))) as string[];
-  const filtersControlled = !!onRegionChange || !!onPlatformChange;
-
   return (
     <div>
-      {!filtersControlled ? (
+      {(
         <Row gap={8} style={{ marginBottom: 12, flexWrap: 'wrap' }}>
-          <select
-            value={region}
-            onChange={(e) => setRegion(e.target.value)}
-            style={{
-              background: 'var(--bg-card)',
-              border: '1px solid var(--border)',
-              color: 'var(--fg)',
-              fontSize: 12,
-              padding: '5px 10px',
-              borderRadius: 4,
-            }}
-          >
-            <option value="all">All regions</option>
-            {regions.map((r) => (
-              <option key={r} value={r}>
-                {REGION_LABELS[r.toLowerCase()]?.label ?? r.toUpperCase()}
-              </option>
-            ))}
-          </select>
           <select
             value={platform}
             onChange={(e) => setPlatform(e.target.value)}
@@ -1375,12 +1286,6 @@ function SortableChannelTable({
             {sorted.length} channels · sort any column
           </div>
         </Row>
-      ) : (
-        <Row justify="flex-end" style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
-            {sorted.length} channels · sort any column
-          </div>
-        </Row>
       )}
 
       <div
@@ -1394,7 +1299,7 @@ function SortableChannelTable({
       >
         <div />
         <H k="name">Channel</H>
-        <H k="region">Region</H>
+        <H k="platform">Platform</H>
         <H k="tier">Category</H>
         <H k="language">Language</H>
         {live && <H k="live" align="right">Live</H>}
@@ -1442,7 +1347,7 @@ function SortableChannelTable({
               </div>
             </Row>
             <div style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>
-              {c.region ? REGION_LABELS[c.region.toLowerCase()]?.label ?? c.region.toUpperCase() : '—'}
+              {PLATFORMS.find((p) => p.id === c.platform)?.name ?? c.platform}
             </div>
             <div>
               <TierBadge tier={c.tier} />
