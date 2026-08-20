@@ -476,7 +476,15 @@ export class DiscoveryService {
             // flows immediately instead of queueing for a manual click
             // (500BROS lost three broadcast hours to that queue).
             if (disabledEntry.tier !== 'community' && liveDaySet.size > 0) {
-              await this.db('channels').where('id', disabledEntry.id).update({ is_active: true });
+              await this.db('channels').where('id', disabledEntry.id).update({
+                is_active: true,
+                // Clear the pause bookkeeping — a healed channel wearing a
+                // stale AUTO-PAUSED chip confuses the feed into showing no
+                // actions at all.
+                metadata: this.db.raw(
+                  `COALESCE(metadata,'{}'::jsonb) - 'auto_paused' - 'auto_paused_reason' - 'paused_at'`,
+                ),
+              });
               for (const dayId of liveDaySet) {
                 await this.db('channel_broadcast_days')
                   .insert({ channel_id: disabledEntry.id, broadcast_day_id: dayId })
@@ -613,7 +621,12 @@ export class DiscoveryService {
                 // rejoin live days without waiting for a manual click.
                 const chTier = (ch as unknown as { tier?: string }).tier;
                 if (chTier && chTier !== 'community' && liveDaySet.size > 0) {
-                  await this.db('channels').where('id', ch.id).update({ is_active: true });
+                  await this.db('channels').where('id', ch.id).update({
+                    is_active: true,
+                    metadata: this.db.raw(
+                      `COALESCE(metadata,'{}'::jsonb) - 'auto_paused' - 'auto_paused_reason' - 'paused_at'`,
+                    ),
+                  });
                   for (const dayId of liveDaySet) {
                     await this.db('channel_broadcast_days')
                       .insert({ channel_id: ch.id, broadcast_day_id: dayId })
