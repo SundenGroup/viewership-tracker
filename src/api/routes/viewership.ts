@@ -90,6 +90,11 @@ router.get('/live/:seriesId', liveCache, async (req: Request, res: Response, nex
         timestamp: s.timestamp,
         streamId: s.stream_id ?? null,
         streamTitle: s.stream_title ?? null,
+        // True when this row's stream_id came from the API multi-stream
+        // path (ownership-verified per video) — the theater embeds those
+        // by exact id; the by-channel live_stream embed can't resolve a
+        // channel running several simultaneous lives.
+        ytApiStream: s.yt_api_stream === true,
       })),
     });
   } catch (err) {

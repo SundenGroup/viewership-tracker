@@ -259,7 +259,7 @@ export async function getSnapshotsForScope(scope: Scope): Promise<ViewershipSnap
   return applyScope(db(TABLE), scope).orderBy('timestamp', 'asc');
 }
 
-export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?: ViewFilter): Promise<Array<ViewershipSnapshot & { display_name: string; channel_identifier: string; tier: string | null }>> {
+export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?: ViewFilter): Promise<Array<ViewershipSnapshot & { display_name: string; channel_identifier: string; tier: string | null; yt_api_stream: boolean }>> {
   // Strategy: each channel's LATEST snapshot within a short freshness
   // window. The previous approach picked one exact "bulk poll timestamp"
   // and returned only rows stamped precisely then — built when a single
@@ -299,7 +299,11 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
   return db
     .raw(
       `SELECT DISTINCT ON (vs.channel_id)
-         vs.*, c.display_name, c.channel_identifier, c.tier
+         vs.*, c.display_name, c.channel_identifier, c.tier,
+         (COALESCE(c.metadata->>'multi_stream_via_api', '') = 'true'
+          OR EXISTS (SELECT 1 FROM channels p
+                     WHERE p.id::text = c.metadata->>'multi_stream_parent'
+                       AND COALESCE(p.metadata->>'multi_stream_via_api', '') = 'true')) AS yt_api_stream
        FROM viewership_snapshots vs
        JOIN channels c ON c.id = vs.channel_id
        WHERE vs.series_id = :seriesId
@@ -311,7 +315,7 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
       bindings,
     )
     .then(
-      (r: { rows: Array<ViewershipSnapshot & { display_name: string; channel_identifier: string; tier: string | null }> }) =>
+      (r: { rows: Array<ViewershipSnapshot & { display_name: string; channel_identifier: string; tier: string | null; yt_api_stream: boolean }> }) =>
         r.rows,
     );
 }

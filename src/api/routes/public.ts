@@ -224,6 +224,7 @@ router.get('/:shortName/live-ccv', liveCcvCache, async (req: Request, res: Respo
         timestamp: s.timestamp,
         streamId: s.stream_id ?? null,
         streamTitle: s.stream_title ?? null,
+        ytApiStream: s.yt_api_stream === true,
       })),
     });
   } catch (err) {
