@@ -242,14 +242,13 @@ function ChannelAccordion({
 }) {
   const [sort, setSort] = useState<keyof ChannelRow>(live ? 'live' : 'peak');
   const [dir, setDir] = useState<'asc' | 'desc'>('desc');
-  const [region, setRegion] = useState<string>('all');
   const [platform, setPlatform] = useState<string>('all');
   const [showAll, setShowAll] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
 
-  const filtered = channels
-    .filter((c) => (region === 'all' ? true : c.region === region))
-    .filter((c) => (platform === 'all' ? true : c.platform === platform));
+  const filtered = channels.filter((c) =>
+    platform === 'all' ? true : c.platform === platform,
+  );
 
   const sorted = [...filtered].sort((a, b) => {
     const av = a[sort] ?? 0;
@@ -284,31 +283,11 @@ function ChannelAccordion({
         ['name', 'A–Z'],
       ];
 
-  const regionOptions = Array.from(new Set(channels.map((c) => c.region).filter(Boolean))) as string[];
 
   return (
     <div>
       <div style={{ overflowX: 'auto', marginBottom: 10, WebkitOverflowScrolling: 'touch' }}>
         <Row gap={6} style={{ padding: '0 0 4px', width: 'max-content' }}>
-          <select
-            value={region}
-            onChange={(e) => setRegion(e.target.value)}
-            style={{
-              background: 'var(--bg-card)',
-              border: '1px solid var(--border)',
-              color: 'var(--fg)',
-              fontSize: 11.5,
-              padding: '5px 8px',
-              borderRadius: 4,
-            }}
-          >
-            <option value="all">All regions</option>
-            {regionOptions.map((r) => (
-              <option key={r} value={r}>
-                {r.toUpperCase()}
-              </option>
-            ))}
-          </select>
           <select
             value={platform}
             onChange={(e) => setPlatform(e.target.value)}
