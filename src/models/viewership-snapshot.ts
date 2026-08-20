@@ -301,11 +301,14 @@ export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?
       `SELECT DISTINCT ON (vs.channel_id)
          vs.*, c.display_name, c.channel_identifier, c.tier,
          (COALESCE(c.metadata->>'multi_stream_via_api', '') = 'true'
-          OR EXISTS (SELECT 1 FROM channels p
-                     WHERE p.id::text = c.metadata->>'multi_stream_parent'
-                       AND COALESCE(p.metadata->>'multi_stream_via_api', '') = 'true')) AS yt_api_stream
+          OR COALESCE(pm.metadata->>'multi_stream_via_api', '') = 'true') AS yt_api_stream
        FROM viewership_snapshots vs
        JOIN channels c ON c.id = vs.channel_id
+       LEFT JOIN channels pm
+         ON pm.id = CASE
+              WHEN c.metadata->>'multi_stream_parent' ~ '^[0-9a-fA-F-]{36}$'
+              THEN (c.metadata->>'multi_stream_parent')::uuid
+            END
        WHERE vs.series_id = :seriesId
          ${scopeSql}
          AND vs."timestamp" > NOW() - INTERVAL '4 minutes'
