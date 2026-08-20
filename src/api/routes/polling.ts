@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { PollingOrchestrator } from '../../services/polling-orchestrator';
 import { DiscoveryService } from '../../services/discovery-service';
 import { requireRole } from '../middleware/auth';
+import logger from '../../utils/logger';
 import db from '../../utils/db';
 
 // The orchestrator and discovery instances are injected via factory functions
@@ -165,13 +166,20 @@ router.get('/discovery/status', requireRole('admin', 'editor'), (_req: Request, 
 });
 
 // POST /api/polling/discovery/trigger/:seriesId — Manually trigger one discovery cycle (admin only)
-router.post('/discovery/trigger/:seriesId', requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
+// Fire-and-forget: a full cycle can run well past 30s, which mobile
+// clients surface as "Load failed" — respond immediately and let the
+// cycle finish in the background (progress lands in discovery status).
+router.post('/discovery/trigger/:seriesId', requireRole('admin'), (req: Request, res: Response, next: NextFunction) => {
   try {
     const svc = ensureDiscovery(res);
     if (!svc) return;
     const seriesId = req.params.seriesId as string;
-    const result = await svc.executeDiscoveryCycle(seriesId);
-    res.json(result);
+    void svc
+      .executeDiscoveryCycle(seriesId)
+      .catch((err: Error) => {
+        logger.error('[Discovery] Manual cycle failed', { seriesId, error: err.message });
+      });
+    res.json({ started: true, seriesId });
   } catch (err) {
     next(err);
   }
