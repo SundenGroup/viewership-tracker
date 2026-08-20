@@ -260,156 +260,62 @@ export async function getSnapshotsForScope(scope: Scope): Promise<ViewershipSnap
 }
 
 export async function getLatestSnapshot(seriesId: string, scope?: Scope, filter?: ViewFilter): Promise<Array<ViewershipSnapshot & { display_name: string; channel_identifier: string; tier: string | null }>> {
-  // Strategy: find the most recent BULK poll timestamp (ignoring view-group
-  // filters), then return filtered snapshots from that poll cycle.
+  // Strategy: each channel's LATEST snapshot within a short freshness
+  // window. The previous approach picked one exact "bulk poll timestamp"
+  // and returned only rows stamped precisely then — built when a single
+  // orchestrator wrote every platform in sync. TikTok (and any relay-fed
+  // platform) writes on its own clock, forming a separate row-group;
+  // whichever group was momentarily newest won EXCLUSIVELY, so TikTok
+  // flickered between fully-present and fully-offline on the live
+  // dashboard (and a lone straggler row suppressed the old TikTok-only
+  // fallback, producing the "4 viewers" states). Per-channel latest is
+  // immune to source interleaving: a channel is live iff it reported
+  // recently, no matter which pipeline carried the report.
   //
-  // Why ignore filters for the timestamp lookup?
-  // Platforms are polled sequentially within each cycle. TikTok (scraped via
-  // headless browser) finishes a few seconds after the API-based platforms,
-  // so its timestamp is slightly newer. If we include the language/platform
-  // filter when finding MAX(timestamp), we might pick the TikTok-only
-  // timestamp and miss all other platforms' data from the same cycle.
-  //
-  // The scope (broadcast_day / stage) IS included because different days
-  // genuinely have different poll windows.
-  // Resolve the scope WHERE fragment. For series-level scope we don't add a
-  // narrowing predicate (series_id is already implied by the AND below); for
-  // multi_stage we use stage_id IN (…); for day/stage we use the matching
-  // bare column.
-  let scopeSql: string;
-  let scopeBindings: Record<string, unknown>;
-  if (!scope || scope.level === 'series') {
-    scopeSql = '"series_id" = :scopeId';
-    scopeBindings = { scopeId: seriesId };
-  } else if (scope.level === 'multi_stage') {
-    scopeSql = '"stage_id" = ANY(:scopeIds::uuid[])';
-    scopeBindings = { scopeIds: scope.ids };
-  } else {
-    scopeSql = `"${scopeColumnBare(scope)}" = :scopeId`;
-    scopeBindings = { scopeId: scope.id };
-  }
-
-  // Find the latest BULK poll timestamp — the most recent timestamp that has
-  // more than 1 row. TikTok's headless scraper writes a single row ~30s after
-  // the main adapters, so MAX(timestamp) often picks TikTok's lone row.
-  // By requiring count > 1, we always land on the real bulk poll cycle.
-  const latestTs = await db.raw(
-    `SELECT "timestamp" AS ts
-     FROM viewership_snapshots
-     WHERE ${scopeSql}
-       AND series_id = :seriesId
-       AND "timestamp" > NOW() - INTERVAL '5 minutes'
-     GROUP BY "timestamp"
-     HAVING COUNT(*) > 1
-     ORDER BY "timestamp" DESC
-     LIMIT 1`,
-    { ...scopeBindings, seriesId },
-  ).then((r: { rows: Array<{ ts: Date | null }> }) => r.rows[0]?.ts ?? null);
-
-  if (!latestTs) return [];
-
-  // Return all snapshots at that exact bulk-poll timestamp
-  const query = db(TABLE)
-    .join('channels', 'channels.id', 'viewership_snapshots.channel_id')
-    .where('viewership_snapshots.series_id', seriesId)
-    .where('viewership_snapshots.timestamp', latestTs)
-    // Hide rows whose owning channel record has since been disabled — stale
-    // post-deactivation snapshots otherwise pollute the live-CCV response
-    // until the next bulk poll, leaving "0 viewers" rows in the leaderboard
-    // for channels the operator just removed.
-    .where('channels.is_active', true)
-    .select(
-      'viewership_snapshots.*',
-      'channels.display_name',
-      'channels.channel_identifier',
-      // Current tier from the channels table — consumers overlay this on
-      // the live CCV rows so a channel freshly promoted from community to
-      // watch_party stops reading "COMMUNITY" until the next metrics
-      // aggregation pass catches up.
-      'channels.tier',
-    );
-
+  // Window: 4 minutes — comfortably above the TikTok relay's worst lag
+  // and Helix's stepped cadence, short enough that a channel that stops
+  // reporting drops out of the live total within minutes.
+  let scopeSql = '';
+  const bindings: Record<string, unknown> = { seriesId };
   if (scope && scope.level !== 'series') {
     if (scope.level === 'multi_stage') {
-      query.whereIn('viewership_snapshots.stage_id', scope.ids);
+      scopeSql = 'AND vs.stage_id = ANY(:scopeIds::uuid[])';
+      bindings.scopeIds = scope.ids;
     } else {
-      query.where(scopeColumn(scope), scope.id);
+      scopeSql = `AND vs."${scopeColumnBare(scope)}" = :scopeId`;
+      bindings.scopeId = scope.id;
     }
   }
-
-  // Apply view-group filters (language / platform) ONLY on the result rows
+  let filterSql = '';
   if (filter?.languages?.length) {
-    query.whereRaw("SPLIT_PART(viewership_snapshots.language, '-', 1) = ANY(?)", [filter.languages]);
+    filterSql += " AND SPLIT_PART(vs.language, '-', 1) = ANY(:filterLanguages)";
+    bindings.filterLanguages = filter.languages;
   }
-  if (filter?.platforms?.length) query.whereIn('viewership_snapshots.platform', filter.platforms);
-
-  const results = await query;
-
-  // TikTok data arrives via relay a few seconds after the main poll cycle,
-  // so it's often missing from the bulk-poll timestamp. Include the most
-  // recent TikTok snapshot per channel (within last 2 minutes) to avoid
-  // the dashboard showing 0 TikTok viewers between relay pushes.
-  //
-  // CRITICAL: this fallback MUST honor the same scope + view filter that the
-  // main query applies — otherwise it leaks cross-scope and unfiltered
-  // TikTok rows into the response. (Bug: when "West" view-group was
-  // selected and latestTs landed on a poll cycle without TikTok in it,
-  // this fallback used to push every TikTok channel regardless of
-  // language/platform/scope, so Vietnamese + Thai TikTok ended up in
-  // the West totals.)
-  const hasTikTok = results.some((r: { platform: string }) => r.platform === 'tiktok');
-  if (!hasTikTok) {
-    // Build scope predicate matching the main query
-    let fallbackScopeSql = '';
-    const fallbackBindings: Record<string, unknown> = { seriesId };
-    if (scope && scope.level !== 'series') {
-      if (scope.level === 'multi_stage') {
-        fallbackScopeSql = 'AND vs.stage_id = ANY(:scopeIds::uuid[])';
-        fallbackBindings.scopeIds = scope.ids;
-      } else {
-        const col = scopeColumnBare(scope);
-        fallbackScopeSql = `AND vs."${col}" = :scopeId`;
-        fallbackBindings.scopeId = scope.id;
-      }
-    }
-    // Build view-filter predicate (language + platform)
-    let filterSql = '';
-    if (filter?.languages?.length) {
-      filterSql += " AND SPLIT_PART(vs.language, '-', 1) = ANY(:filterLanguages)";
-      fallbackBindings.filterLanguages = filter.languages;
-    }
-    if (filter?.platforms?.length) {
-      // 'tiktok' must itself be in the platform allowlist, otherwise this
-      // fallback shouldn't run at all (the user excluded TikTok).
-      if (!filter.platforms.includes('tiktok')) {
-        return results;
-      }
-      // No additional platform predicate needed — fallback is already
-      // hard-filtered to platform='tiktok'.
-    }
-
-    const tiktokRows = await db.raw(`
-      SELECT DISTINCT ON (vs.channel_id)
-        vs.*, c.display_name, c.channel_identifier, c.tier
-      FROM viewership_snapshots vs
-      JOIN channels c ON c.id = vs.channel_id
-      WHERE vs.series_id = :seriesId
-        ${fallbackScopeSql}
-        AND vs.platform = 'tiktok'
-        AND vs."timestamp" > NOW() - INTERVAL '2 minutes'
-        AND vs.concurrent_viewers > 0
-        AND c.is_active = true
-        ${filterSql}
-      ORDER BY vs.channel_id, vs."timestamp" DESC
-    `, fallbackBindings).then((r: { rows: Array<ViewershipSnapshot & { display_name: string; channel_identifier: string; tier: string | null }> }) => r.rows);
-
-    if (tiktokRows.length > 0) {
-      results.push(...tiktokRows);
-    }
+  if (filter?.platforms?.length) {
+    filterSql += ' AND vs.platform::text = ANY(:filterPlatforms)';
+    bindings.filterPlatforms = filter.platforms;
   }
 
-  return results;
+  return db
+    .raw(
+      `SELECT DISTINCT ON (vs.channel_id)
+         vs.*, c.display_name, c.channel_identifier, c.tier
+       FROM viewership_snapshots vs
+       JOIN channels c ON c.id = vs.channel_id
+       WHERE vs.series_id = :seriesId
+         ${scopeSql}
+         AND vs."timestamp" > NOW() - INTERVAL '4 minutes'
+         AND c.is_active = true
+         ${filterSql}
+       ORDER BY vs.channel_id, vs."timestamp" DESC`,
+      bindings,
+    )
+    .then(
+      (r: { rows: Array<ViewershipSnapshot & { display_name: string; channel_identifier: string; tier: string | null }> }) =>
+        r.rows,
+    );
 }
+
 
 export async function getPeakCCV(scope: Scope, filter?: ViewFilter): Promise<PeakCCVResult | null> {
   // Per-minute total = SUM of per-channel rollup CCV; peak = the top minute.
