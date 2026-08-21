@@ -121,6 +121,10 @@ export interface YouTubeTrackerConfig {
   autoAllowWeakBelowCcv?: number;
   /** Above this CCV a human always confirms, however strong the match. */
   alwaysReviewAboveCcv?: number;
+  /** Escalate an auto-denied channel to review above this CCV (default 2000). */
+  escalateDeniedAboveCcv?: number;
+  /** Re-test automatic denials after this many days (default 7). */
+  denyRetestDays?: number;
   /** Continuation pages to follow per discovery query (zero quota). */
   discoveryPagesPerQuery?: number;
   /** Cap on ids polled per cycle. */
@@ -131,6 +135,12 @@ export interface YouTubeTrackerConfig {
 
 const DEFAULT_AUTO_ALLOW_WEAK_BELOW_CCV = 200;
 const DEFAULT_ALWAYS_REVIEW_ABOVE_CCV = 1_000;
+/** An auto-denied channel seen this big (and not showing an exclusion) goes
+ *  to review instead of being skipped silently. */
+const DEFAULT_ESCALATE_DENIED_ABOVE_CCV = 2_000;
+/** Automatic denials are re-tested after this long; human ones are final. */
+const DEFAULT_DENY_RETEST_DAYS = 7;
+const ESCALATION_REASON_PREFIX = 'auto-denied channel seen with';
 
 export interface YouTubeCycleResult {
   rosterSize: number;
@@ -147,6 +157,9 @@ export interface YouTubeCycleResult {
 interface GateOutcome {
   decision: GatingModel.GatingDecision;
   reason: string;
+  /** False when the stored verdict was passed through untouched (no
+   *  fresh evaluation) — keeps the auto-deny re-test clock honest. */
+  evaluated?: boolean;
 }
 
 /**
@@ -239,8 +252,42 @@ export function gateVideo(
   // viewers must not stay allowed unexamined at 3,000 — the stakes changed,
   // so it goes back for review. (This is how MortaL, auto-allowed small on
   // a stale "pubg" tag, ended up topping the board while playing Party
-  // Animals.) Denials stay: re-testing them every cycle just churns.
-  if (existing?.decision === 'deny') return { decision: 'deny', reason: 'channel denied' };
+  // Animals.)
+  //
+  // An automatic DENY, on the other hand, used to be a life sentence — one
+  // keyword-less title on Aug 12 locked TUI TÊN BÔ (a 46k PGS watch party)
+  // out of the tracker for good. Now:
+  //   • a big sighting escalates to REVIEW instead of being skipped
+  //     silently — unless the stream itself shows an exclusion (BGMI &
+  //     co.), which keeps the mobile giants out of the queue;
+  //   • an escalated channel stays queued until a human decides;
+  //   • otherwise the denial is re-tested after DENY_RETEST_DAYS, and the
+  //     stored reason is carried forward rather than clobbered.
+  const escalateFloor = cfg.escalateDeniedAboveCcv ?? DEFAULT_ESCALATE_DENIED_ABOVE_CCV;
+  const retestMs = (cfg.denyRetestDays ?? DEFAULT_DENY_RETEST_DAYS) * 86_400_000;
+  const hardExcluded = Boolean(notGaming || titleExcluded);
+  if (
+    existing && !existing.human && existing.decision === 'pending' &&
+    existing.reason?.startsWith(ESCALATION_REASON_PREFIX)
+  ) {
+    if (!hardExcluded) return { decision: 'pending', reason: existing.reason, evaluated: false };
+    // The stream now shows an exclusion — fall through; the normal path
+    // denies it with the explicit reason.
+  }
+  if (existing?.decision === 'deny') {
+    if (video.concurrentViewers >= escalateFloor && !hardExcluded) {
+      return {
+        decision: 'pending',
+        reason: `${ESCALATION_REASON_PREFIX} ${video.concurrentViewers} viewers — confirm before counting`,
+      };
+    }
+    const since = existing.decidedAt ?? existing.createdAt ?? null;
+    const stale = !since || Date.now() - since.getTime() > retestMs;
+    if (!stale) {
+      return { decision: 'deny', reason: existing.reason ?? 'channel denied', evaluated: false };
+    }
+    // Stale → fall through to a full re-evaluation (fresh verdict below).
+  }
   if (existing?.decision === 'allow' && video.concurrentViewers < reviewFloorEarly) {
     if (notGaming) return { decision: 'deny', reason: `auto-allowed channel, but ${notGaming}` };
     if (titleExcluded) {
@@ -427,7 +474,7 @@ export class YouTubeGameTracker {
     const cycleTime = new Date();
 
     for (const v of live) {
-      const { decision, reason } = gateVideo(v, cfg, decisions.get(v.channelId));
+      const { decision, reason, evaluated } = gateVideo(v, cfg, decisions.get(v.channelId));
       if (decision === 'allow') result.allowed++;
       else if (decision === 'pending') result.pending++;
       else result.denied++;
@@ -443,6 +490,7 @@ export class YouTubeGameTracker {
         sampleTitle: v.title || null,
         sampleVideoId: v.videoId,
         sampleCcv: v.concurrentViewers,
+        decidedAt: evaluated === false ? null : cycleTime,
       });
 
       // A pending stream is held, not dropped — approval promotes these

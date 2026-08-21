@@ -50,6 +50,12 @@ export interface StoredDecision {
   human: boolean;
   /** Only meaningful for an approved channel; see GatingScope. */
   scope: GatingScope;
+  /** Stored reason — carried forward on auto-deny pass-throughs so the
+   *  original verdict stays auditable instead of being clobbered. */
+  reason?: string | null;
+  /** Last time a verdict was actually derived (auto) or made (human). */
+  decidedAt?: Date | null;
+  createdAt?: Date | null;
 }
 
 /**
@@ -61,7 +67,7 @@ export interface StoredDecision {
 export async function decisionMap(gameTrackerId: string): Promise<Map<string, StoredDecision>> {
   const rows = await db(TABLE)
     .where('game_tracker_id', gameTrackerId)
-    .select('channel_identifier', 'decision', 'decided_by', 'scope');
+    .select('channel_identifier', 'decision', 'decided_by', 'scope', 'reason', 'decided_at', 'created_at');
   return new Map(
     rows.map((r) => [
       r.channel_identifier as string,
@@ -69,6 +75,9 @@ export async function decisionMap(gameTrackerId: string): Promise<Map<string, St
         decision: r.decision as GatingDecision,
         human: r.decided_by != null,
         scope: (r.scope as GatingScope) ?? 'matching',
+        reason: (r.reason as string | null) ?? null,
+        decidedAt: (r.decided_at as Date | null) ?? null,
+        createdAt: (r.created_at as Date | null) ?? null,
       },
     ]),
   );
@@ -108,6 +117,9 @@ export async function observe(inputRows: Array<{
   sampleTitle: string | null;
   sampleVideoId: string | null;
   sampleCcv: number | null;
+  /** Set when this cycle derived a fresh verdict (null = pass-through of the
+   *  stored one). Drives the auto-deny re-test clock. */
+  decidedAt?: Date | null;
 }>): Promise<void> {
   if (inputRows.length === 0) return;
 
@@ -130,10 +142,10 @@ export async function observe(inputRows: Array<{
     `
     INSERT INTO ${TABLE}
       (game_tracker_id, channel_identifier, display_name, decision, reason,
-       sample_title, sample_video_id, sample_ccv, last_seen_at, created_at, updated_at)
+       sample_title, sample_video_id, sample_ccv, last_seen_at, created_at, updated_at, decided_at)
     SELECT * FROM unnest(
       ?::uuid[], ?::text[], ?::text[], ?::text[], ?::text[],
-      ?::text[], ?::text[], ?::int[], ?::timestamptz[], ?::timestamptz[], ?::timestamptz[]
+      ?::text[], ?::text[], ?::int[], ?::timestamptz[], ?::timestamptz[], ?::timestamptz[], ?::timestamptz[]
     )
     ON CONFLICT (game_tracker_id, channel_identifier) DO UPDATE SET
       display_name  = COALESCE(EXCLUDED.display_name, ${TABLE}.display_name),
@@ -144,7 +156,11 @@ export async function observe(inputRows: Array<{
       updated_at    = EXCLUDED.updated_at,
       -- a human decision is final; only auto rows may be re-derived
       decision = CASE WHEN ${TABLE}.decided_by IS NULL THEN EXCLUDED.decision ELSE ${TABLE}.decision END,
-      reason   = CASE WHEN ${TABLE}.decided_by IS NULL THEN EXCLUDED.reason ELSE ${TABLE}.reason END
+      reason   = CASE WHEN ${TABLE}.decided_by IS NULL THEN EXCLUDED.reason ELSE ${TABLE}.reason END,
+      -- auto rows: stamp when a fresh verdict was derived (re-test clock); human rows untouched
+      decided_at = CASE WHEN ${TABLE}.decided_by IS NULL
+                        THEN COALESCE(EXCLUDED.decided_at, ${TABLE}.decided_at)
+                        ELSE ${TABLE}.decided_at END
     `,
     [
       rows.map((r) => r.gameTrackerId),
@@ -158,6 +174,7 @@ export async function observe(inputRows: Array<{
       rows.map(() => now),
       rows.map(() => now),
       rows.map(() => now),
+      rows.map((r) => r.decidedAt ?? null),
     ],
   );
 }
