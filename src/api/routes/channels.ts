@@ -190,7 +190,7 @@ router.get('/:seriesId/channels', async (req: Request, res: Response, next: Next
     };
 
     const { platform, tier, source, is_active } = req.query;
-    if (platform && ['twitch', 'youtube', 'kick', 'tiktok', 'steam', 'trovo', 'chzzk', 'soop'].includes(platform as string)) {
+    if (platform && ['twitch', 'youtube', 'kick', 'tiktok', 'steam', 'trovo', 'chzzk', 'soop', 'nimotv'].includes(platform as string)) {
       filters.platform = platform as ChannelModel.Platform;
     }
     if (tier && ['official', 'partner', 'community', 'player', 'watch_party'].includes(tier as string)) {
@@ -222,7 +222,7 @@ router.get('/:seriesId/channels', async (req: Request, res: Response, next: Next
 router.post('/:seriesId/channels', requireRole('admin', 'editor'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { platform, channel_identifier, display_name, broadcast_day_ids } = req.body;
-    if (!platform || !['twitch', 'youtube', 'kick', 'tiktok', 'steam', 'trovo', 'chzzk', 'soop'].includes(platform)) {
+    if (!platform || !['twitch', 'youtube', 'kick', 'tiktok', 'steam', 'trovo', 'chzzk', 'soop', 'nimotv'].includes(platform)) {
       res.status(400).json({ error: 'platform must be one of: twitch, youtube, kick, tiktok, steam, trovo, chzzk, soop' });
       return;
     }
