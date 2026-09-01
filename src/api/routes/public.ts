@@ -419,11 +419,13 @@ router.get('/:shortName/timeseries', timeseriesCache, async (req: Request, res: 
       group_key: string;
       total_ccv: string;
       channel_count: string;
+      relay_count: string;
     }> = await db
       .raw(
         `SELECT bucket, group_key,
            SUM(max_viewers)::text AS total_ccv,
-           COUNT(*)::text AS channel_count
+           COUNT(*)::text AS channel_count,
+           COUNT(*) FILTER (WHERE row_platform = 'tiktok')::text AS relay_count
          FROM (
            SELECT
              date_trunc('minute', ${vsPrefix}"timestamp")
@@ -431,6 +433,7 @@ router.get('/:shortName/timeseries', timeseriesCache, async (req: Request, res: 
                * interval '1 second' AS bucket,
              ${vsPrefix}channel_id,
              ${groupExpr} AS group_key,
+             MAX(${vsPrefix}platform::text) AS row_platform,
              MAX(${vsPrefix}concurrent_viewers) AS max_viewers
            FROM viewership_snapshots ${needsJoin ? 'vs' : ''}
            ${joinClause}
@@ -448,6 +451,7 @@ router.get('/:shortName/timeseries', timeseriesCache, async (req: Request, res: 
             group_key: string;
             total_ccv: string;
             channel_count: string;
+            relay_count: string;
           }>;
         }) => r.rows,
       );

@@ -283,12 +283,14 @@ router.get('/timeseries', timeseriesCache, async (req: Request, res: Response, n
     const fClauses = filter ? ViewershipSnapshotModel.buildFilterClauses(filter) : { sql: '', bindings: {} };
     // Prefix filter SQL with vs. alias when using JOIN
     const fSql = needsJoin ? fClauses.sql.replace(/\b(language|platform|region)\b/g, 'vs.$1') : fClauses.sql;
-    const rows: Array<{ bucket: Date; group_key: string; total_ccv: string; channel_count: string }> = await db.raw(
+    const rows: Array<{ bucket: Date; group_key: string; total_ccv: string; channel_count: string; relay_count: string }> = await db.raw(
       `SELECT bucket, group_key,
          SUM(channel_ccv)::text AS total_ccv,
-         COUNT(*)::text AS channel_count
+         COUNT(*)::text AS channel_count,
+         COUNT(*) FILTER (WHERE row_platform = 'tiktok')::text AS relay_count
        FROM (
          SELECT bucket, channel_id, group_key,
+           MAX(row_platform) AS row_platform,
            MAX(cycle_ccv) AS channel_ccv
          FROM (
            SELECT
@@ -298,6 +300,7 @@ router.get('/timeseries', timeseriesCache, async (req: Request, res: Response, n
              ${vsPrefix}"timestamp" AS poll_ts,
              ${vsPrefix}channel_id,
              ${groupExpr} AS group_key,
+             MAX(${vsPrefix}platform::text) AS row_platform,
              SUM(${vsPrefix}concurrent_viewers) AS cycle_ccv
            FROM viewership_snapshots ${needsJoin ? 'vs' : ''}
            ${joinClause}
@@ -309,7 +312,7 @@ router.get('/timeseries', timeseriesCache, async (req: Request, res: Response, n
        GROUP BY bucket, group_key
        ORDER BY bucket ASC, total_ccv DESC`,
       { interval, id: scopeObj.id, ...fClauses.bindings },
-    ).then((r: { rows: Array<{ bucket: Date; group_key: string; total_ccv: string; channel_count: string }> }) => r.rows);
+    ).then((r: { rows: Array<{ bucket: Date; group_key: string; total_ccv: string; channel_count: string; relay_count: string }> }) => r.rows);
 
     // Same live-edge rule as the public timeline: never serve a bucket
     // that is still waiting for the TikTok relay.

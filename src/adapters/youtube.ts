@@ -2,6 +2,7 @@ import axios, { AxiosInstance, AxiosError } from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
 import logger from '../utils/logger';
+import { mergeStickyIds, dropStickyId, type StickyHistory } from '../utils/sticky-ids';
 import { config } from '../utils/config';
 import type { PlatformAdapter, ChannelSnapshot, DiscoveredStream } from './types';
 import * as YouTubeApiKeyModel from '../models/youtube-api-key';
@@ -163,6 +164,11 @@ export class YouTubeAdapter implements PlatformAdapter {
    */
   private multiStreamApiChannels = new Set<string>();
   private readonly apiMultiStreamCache = new Map<string, CachedMultiStreamVideoIds>();
+  /** Sticky history for the API multi-stream path (channel id → video id →
+   *  last seen). Bridges search.list omissions of streams that are still
+   *  live; videos.list remains the per-id validator. Seeded on boot from
+   *  recent snapshots (see seedApiStickyIds) so restarts don't forget. */
+  private readonly apiStickyLiveIds = new Map<string, StickyHistory>();
   /**
    * Per-channel "last seen" map for multi-stream videoIds. When a fresh
    * scrape misses a videoId we recently saw on this channel, we keep it
@@ -422,6 +428,21 @@ export class YouTubeAdapter implements PlatformAdapter {
     if (channelIds.length > 0) {
       logger.debug(`YouTube: API multi-stream mode enabled for ${channelIds.length} channel(s)`);
     }
+  }
+
+  /**
+   * Seed the API-path sticky history from ids observed shortly before a
+   * restart, so a mid-broadcast deploy doesn't lose a stream that
+   * search.list happens to omit in the first cycles after boot.
+   */
+  seedApiStickyIds(entries: Array<{ channelId: string; videoIds: string[] }>, nowMs = Date.now()): void {
+    let n = 0;
+    for (const { channelId, videoIds } of entries) {
+      const history = this.apiStickyLiveIds.get(channelId) ?? new Map<string, number>();
+      for (const id of videoIds) { history.set(id, nowMs); n++; }
+      this.apiStickyLiveIds.set(channelId, history);
+    }
+    if (n > 0) logger.info(`YouTube: seeded ${n} sticky multi-stream id(s) for ${entries.length} channel(s)`);
   }
 
   /**
@@ -718,15 +739,23 @@ export class YouTubeAdapter implements PlatformAdapter {
           return null;
         }
 
-        videoIds = result.items.map((it) => it.id.videoId);
+        const freshIds = result.items.map((it) => it.id.videoId);
+        // Sticky merge: a stream search.list momentarily omits stays a
+        // candidate for STICKY_VIDEO_TTL_MS; videos.list below decides what
+        // is actually live and ended ids are dropped there.
+        const history = this.apiStickyLiveIds.get(channelId) ?? new Map<string, number>();
+        const merged = mergeStickyIds(history, freshIds, Date.now(), YouTubeAdapter.STICKY_VIDEO_TTL_MS);
+        this.apiStickyLiveIds.set(channelId, history);
+        videoIds = merged.ids;
         this.apiMultiStreamCache.set(channelId, {
           videoIds,
           cachedAt: Date.now(),
         });
 
         logger.info(
-          `YouTube: multi-stream-API ${originalId} → ${videoIds.length} live id(s)` +
-          (videoIds.length > 0 ? ` (${videoIds.join(', ')})` : ''),
+          `YouTube: multi-stream-API ${originalId} → ${freshIds.length} live id(s)` +
+          (freshIds.length > 0 ? ` (${freshIds.join(', ')})` : '') +
+          (merged.restored.length > 0 ? ` +${merged.restored.length} sticky (${merged.restored.join(', ')})` : ''),
         );
       }
     }
@@ -802,6 +831,15 @@ export class YouTubeAdapter implements PlatformAdapter {
           `YouTube: multi-stream-API ${channelId} dropping foreign id ` +
           `${v.id} (owner=${v.snippet.channelId})`,
         );
+        continue;
+      }
+      if (v.liveStreamingDetails?.actualEndTime) {
+        // Ended broadcast still present via the sticky/cache candidates —
+        // never a live row. (A missing concurrentViewers is NOT treated as
+        // ended: creators can hide the viewer count on a live stream, and
+        // those must keep tracking as 0 exactly as before.)
+        const h = this.apiStickyLiveIds.get(channelId);
+        if (h) dropStickyId(h, v.id);
         continue;
       }
       const ccv = v.liveStreamingDetails?.concurrentViewers

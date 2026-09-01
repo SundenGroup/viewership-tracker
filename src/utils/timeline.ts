@@ -26,20 +26,37 @@ const BASELINE_WINDOW = 5;
 /** Extra allowance past the bucket span for relay lag. */
 const RELAY_LAG_MS = 3 * 60_000;
 
-export function trimIncompleteEdge<T extends { bucket: Date | string; channel_count: string | number }>(
-  rows: T[],
-  intervalSeconds: number,
-  nowMs: number = Date.now(),
-): T[] {
+export function trimIncompleteEdge<
+  T extends { bucket: Date | string; channel_count: string | number; relay_count?: string | number | null },
+>(rows: T[], intervalSeconds: number, nowMs: number = Date.now()): T[] {
   if (rows.length === 0) return rows;
 
+  // Two completeness signals per bucket: total channel count, and the
+  // count of relay-fed (TikTok) channels. The relay signal exists because
+  // TikTok is few channels with big audiences — 8 of 166 channels but 14 %
+  // of viewers on 2026-08-21 — so its absence never moved the total count
+  // below the 90 % threshold, and the edge bucket shipped ~14 % low.
   const perBucket = new Map<number, number>();
+  const relayPerBucket = new Map<number, number>();
+  let hasRelaySignal = false;
   for (const r of rows) {
     const t = new Date(r.bucket).getTime();
     perBucket.set(t, (perBucket.get(t) ?? 0) + Number(r.channel_count));
+    if (r.relay_count !== undefined && r.relay_count !== null) {
+      hasRelaySignal = true;
+      relayPerBucket.set(t, (relayPerBucket.get(t) ?? 0) + Number(r.relay_count));
+    }
   }
   const buckets = [...perBucket.keys()].sort((a, b) => a - b);
   if (buckets.length < BASELINE_WINDOW + 1) return rows;
+
+  const incomplete = (map: Map<number, number>, idx: number, t: number): boolean => {
+    const baseline = Math.max(
+      ...buckets.slice(idx - BASELINE_WINDOW, idx).map((b) => map.get(b) ?? 0),
+    );
+    if (baseline <= 0) return false;
+    return (map.get(t) ?? 0) < COVERAGE_RATIO * baseline;
+  };
 
   const liveEdgeMs = intervalSeconds * 1000 + RELAY_LAG_MS;
   const drop = new Set<number>();
@@ -48,11 +65,9 @@ export function trimIncompleteEdge<T extends { bucket: Date | string; channel_co
     if (idx < BASELINE_WINDOW) break;
     const t = buckets[idx] as number;
     if (nowMs - t > liveEdgeMs + trimmed * intervalSeconds * 1000) break; // settled — it is what it is
-    const baseline = Math.max(
-      ...buckets.slice(idx - BASELINE_WINDOW, idx).map((b) => perBucket.get(b) ?? 0),
-    );
-    if (baseline <= 0) break;
-    if ((perBucket.get(t) ?? 0) >= COVERAGE_RATIO * baseline) break;
+    const totalIncomplete = incomplete(perBucket, idx, t);
+    const relayIncomplete = hasRelaySignal && incomplete(relayPerBucket, idx, t);
+    if (!totalIncomplete && !relayIncomplete) break;
     drop.add(t);
   }
   if (drop.size === 0) return rows;

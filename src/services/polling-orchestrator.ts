@@ -1,5 +1,6 @@
 import type { Knex } from 'knex';
 import logger from '../utils/logger';
+import { assignMultiStreamSlots, type MultiStreamBindings } from '../utils/multi-stream-binding';
 import { config } from '../utils/config';
 import { AdapterRegistry } from '../adapters';
 import type { MultiPlatformChannel } from '../adapters';
@@ -208,6 +209,36 @@ export class PollingOrchestrator {
 
   // ── Lifecycle ─────────────────────────────────────────────────────────
 
+  /** See start(): restore sticky multi-stream ids for API-mode channels. */
+  private async seedYouTubeStickyIds(): Promise<void> {
+    try {
+      const ytAdapter = this.registry.getAdapter('youtube') as import('../adapters/youtube').YouTubeAdapter;
+      const rows: Array<{ root: string; ids: string[] }> = await this.db
+        .raw(
+          `SELECT SPLIT_PART(c.channel_identifier, ':stream-', 1) AS root,
+                  array_agg(DISTINCT vs.stream_id) AS ids
+           FROM viewership_snapshots vs
+           JOIN channels c ON c.id = vs.channel_id
+           WHERE vs.platform = 'youtube'
+             AND vs.stream_id IS NOT NULL
+             AND vs."timestamp" > NOW() - INTERVAL '10 minutes'
+             AND EXISTS (
+               SELECT 1 FROM channels p
+               WHERE p.channel_identifier = SPLIT_PART(c.channel_identifier, ':stream-', 1)
+                 AND p.platform = 'youtube'
+                 AND COALESCE(p.metadata->>'multi_stream_via_api', '') = 'true'
+             )
+           GROUP BY 1`,
+        )
+        .then((r: { rows: Array<{ root: string; ids: string[] }> }) => r.rows);
+      if (rows.length > 0) {
+        ytAdapter.seedApiStickyIds(rows.map((r) => ({ channelId: r.root, videoIds: r.ids })));
+      }
+    } catch (err) {
+      logger.warn('[Poll] Could not seed YouTube sticky ids', { error: (err as Error).message });
+    }
+  }
+
   start(): void {
     if (this.intervalHandle) {
       logger.warn('[Poll] Orchestrator already running — ignoring start()');
@@ -216,6 +247,11 @@ export class PollingOrchestrator {
 
     const intervalMs = config.polling.intervalMs;
     logger.info(`[Poll] Starting polling orchestrator (interval: ${intervalMs}ms)`);
+
+    // Seed the YouTube API-path sticky ids from the last 10 minutes of
+    // snapshots so a restart mid-broadcast doesn't forget a stream that
+    // search.list omits in the first cycles after boot.
+    void this.seedYouTubeStickyIds();
 
     // Run the first cycle immediately
     this.tick();
@@ -688,15 +724,61 @@ export class PollingOrchestrator {
     // Cache of child channels per parent (loaded once, reused across poll cycles)
     const childChannelCache = new Map<string, Array<{ id: string; metadata: Record<string, unknown>; display_name: string }>>();
 
+    // Slot binding: which video id lives on the parent row and on each
+    // ":stream-N" child. Bound by VIDEO ID (persisted in the parent's
+    // metadata.multi_stream_binding), not by viewer rank — see
+    // utils/multi-stream-binding.ts for the two incidents this prevents.
+    // A bound slot whose stream is missing this cycle gets NO row (an
+    // empty snapshot list), never another stream's numbers.
+    const BIND_TTL_MS = 15 * 60_000;
+    const BIND_PERSIST_MS = 5 * 60_000;
+    const readBinding = (meta: Record<string, unknown>): MultiStreamBindings => {
+      const raw = meta.multi_stream_binding as
+        | {
+            parent?: { videoId?: string | null; seenAt?: number | null };
+            children?: Record<string, { videoId?: string | null; seenAt?: number | null }>;
+          }
+        | undefined;
+      const children = new Map<number, { videoId: string | null; seenAt: number | null }>();
+      for (const [k, v] of Object.entries(raw?.children ?? {})) {
+        const idx = Number(k);
+        if (Number.isFinite(idx)) children.set(idx, { videoId: v?.videoId ?? null, seenAt: v?.seenAt ?? null });
+      }
+      return { parent: { videoId: raw?.parent?.videoId ?? null, seenAt: raw?.parent?.seenAt ?? null }, children };
+    };
+    const serializeBinding = (b: MultiStreamBindings) => ({
+      parent: b.parent,
+      children: Object.fromEntries([...b.children.entries()].map(([k, v]) => [String(k), v])),
+    });
+
     for (const parent of multiStreamParents) {
       const key = `${parent.platform}:${parent.channel_identifier.toLowerCase()}`;
       const parentSnapshots = snapshotMap.get(key);
-      if (!parentSnapshots || parentSnapshots.length <= 1) continue;
+      if (!parentSnapshots || parentSnapshots.length === 0) continue;
 
-      // Sort by viewers DESC — highest stays with parent
-      const sorted = [...parentSnapshots].sort(
-        (a, b) => (b.concurrentViewers ?? 0) - (a.concurrentViewers ?? 0),
+      // Every candidate must carry a stream id to be bindable. If any
+      // doesn't (legacy scrape result), keep the old behaviour for this
+      // parent: single snapshot → parent, several → highest viewers wins.
+      const withIds = parentSnapshots.filter((s) => !!s.streamId);
+      if (withIds.length !== parentSnapshots.length) {
+        if (parentSnapshots.length > 1) {
+          const sorted = [...parentSnapshots].sort(
+            (a, b) => (b.concurrentViewers ?? 0) - (a.concurrentViewers ?? 0),
+          );
+          snapshotMap.set(key, [sorted[0]]);
+        }
+        continue;
+      }
+
+      const parentMeta = (parent.metadata ?? {}) as Record<string, unknown>;
+      const nowMs = Date.now();
+      const assignment = assignMultiStreamSlots(
+        withIds.map((s) => ({ videoId: s.streamId as string, viewers: s.concurrentViewers ?? 0 })),
+        readBinding(parentMeta),
+        nowMs,
+        BIND_TTL_MS,
       );
+      const byId = new Map(withIds.map((s) => [s.streamId as string, s]));
 
       // Load existing children for this parent
       if (!childChannelCache.has(parent.id)) {
@@ -708,73 +790,71 @@ export class PollingOrchestrator {
       }
       const existingChildren = childChannelCache.get(parent.id)!;
 
-      // Keep first (highest CCV) as parent, reassign the rest
-      const reassigned: ChannelSnapshot[] = [sorted[0]]; // Parent keeps this one
-      for (let i = 1; i < sorted.length; i++) {
-        const snap = sorted[i];
-        const streamIndex = i + 1; // Stream 2, 3, etc.
-
-        // Find existing child for this index
+      const ensureChild = async (streamIndex: number, snap: ChannelSnapshot) => {
         let child = existingChildren.find(
           (c) => (c.metadata as Record<string, unknown>)?.multi_stream_index === streamIndex,
         );
-
-        if (!child) {
-          // Auto-create child channel
-          const childName = this.generateMultiStreamChildName(
-            parent.display_name,
-            snap.streamTitle ?? snap.title,
-            streamIndex,
-          );
-
-          try {
-            const [created] = await this.db('channels').insert({
-              series_id: parent.series_id,
-              platform: 'youtube',
-              channel_identifier: `${parent.channel_identifier}:stream-${streamIndex}`,
-              display_name: childName,
-              language: parent.language,
-              region: parent.region,
-              tier: parent.tier,
-              source: 'auto_discovered',
-              is_active: true,
-              metadata: JSON.stringify({
-                multi_stream_parent: parent.id,
-                multi_stream_index: streamIndex,
-              }),
-            }).returning('*');
-
-            child = { id: created.id, metadata: created.metadata, display_name: created.display_name };
+        if (child) return child;
+        const childName = this.generateMultiStreamChildName(
+          parent.display_name,
+          snap.streamTitle ?? snap.title,
+          streamIndex,
+        );
+        try {
+          const [created] = await this.db('channels').insert({
+            series_id: parent.series_id,
+            platform: 'youtube',
+            channel_identifier: `${parent.channel_identifier}:stream-${streamIndex}`,
+            display_name: childName,
+            language: parent.language,
+            region: parent.region,
+            tier: parent.tier,
+            source: 'auto_discovered',
+            is_active: true,
+            metadata: JSON.stringify({
+              multi_stream_parent: parent.id,
+              multi_stream_index: streamIndex,
+            }),
+          }).returning('*');
+          child = { id: created.id, metadata: created.metadata, display_name: created.display_name };
+          existingChildren.push(child);
+          // Also add to channelList so it gets day assignments
+          channelList.push(created);
+          logger.info(`[Poll] Multi-stream: auto-created child "${childName}" for parent ${parent.display_name}`);
+          return child;
+        } catch (err) {
+          // Unique constraint — child already exists (race condition)
+          const existing = await this.db('channels')
+            .where('series_id', parent.series_id)
+            .where('channel_identifier', `${parent.channel_identifier}:stream-${streamIndex}`)
+            .first();
+          if (existing) {
+            child = { id: existing.id, metadata: existing.metadata, display_name: existing.display_name };
             existingChildren.push(child);
-            // Also add to channelList so it gets day assignments
-            channelList.push(created);
-
-            logger.info(`[Poll] Multi-stream: auto-created child "${childName}" for parent ${parent.display_name}`);
-          } catch (err) {
-            // Unique constraint — child already exists (race condition)
-            const existing = await this.db('channels')
-              .where('series_id', parent.series_id)
-              .where('channel_identifier', `${parent.channel_identifier}:stream-${streamIndex}`)
-              .first();
-            if (existing) {
-              child = { id: existing.id, metadata: existing.metadata, display_name: existing.display_name };
-              existingChildren.push(child);
-            } else {
-              logger.warn(`[Poll] Multi-stream: failed to create child for ${parent.display_name}`, {
-                error: (err as Error).message,
-              });
-              continue;
-            }
+            return child;
           }
+          logger.warn(`[Poll] Multi-stream: failed to create child for ${parent.display_name}`, {
+            error: (err as Error).message,
+          });
+          return null;
         }
+      };
 
-        // Reassign this snapshot to the child channel
-        // We'll create a new entry in the snapshot map for the child
+      // Parent slot: its bound stream, or nothing this cycle.
+      if (assignment.parentVideoId) {
+        snapshotMap.set(key, [byId.get(assignment.parentVideoId)!]);
+      } else {
+        snapshotMap.set(key, []); // bound main stream missing → no row (see insert loop)
+        logger.info(`[Poll] Multi-stream: ${parent.display_name} main stream absent this cycle — parent row left empty`);
+      }
+
+      // Child slots.
+      for (const [streamIndex, videoId] of assignment.childAssignments) {
+        const snap = byId.get(videoId)!;
+        const child = await ensureChild(streamIndex, snap);
+        if (!child) continue;
         const childKey = `youtube:${parent.channel_identifier.toLowerCase()}:stream-${streamIndex}`;
         snapshotMap.set(childKey, [snap]);
-
-        // Also add the child to the channelList iteration so it gets insert rows
-        // (using a temporary lookup that the insert loop below will use)
         if (!channelList.find((c) => c.id === child!.id)) {
           channelList.push({
             ...parent,
@@ -787,8 +867,27 @@ export class PollingOrchestrator {
         }
       }
 
-      // Update parent's snapshot map to only contain the highest-viewer stream
-      snapshotMap.set(key, [sorted[0]]);
+      // Persist bindings when they changed, or periodically so a restart
+      // resumes with fresh seenAt values.
+      const persistedAt = Number(parentMeta.multi_stream_binding_persisted_at ?? 0);
+      if (assignment.changed || nowMs - persistedAt > BIND_PERSIST_MS) {
+        try {
+          await this.db('channels')
+            .where('id', parent.id)
+            .update({
+              metadata: this.db.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [
+                JSON.stringify({
+                  multi_stream_binding: serializeBinding(assignment.bindings),
+                  multi_stream_binding_persisted_at: nowMs,
+                }),
+              ]),
+            });
+        } catch (err) {
+          logger.warn(`[Poll] Multi-stream: failed to persist binding for ${parent.display_name}`, {
+            error: (err as Error).message,
+          });
+        }
+      }
     }
 
     const insertRows: SnapshotInsertRow[] = [];
@@ -800,6 +899,10 @@ export class PollingOrchestrator {
 
       const key = `${channel.platform}:${channel.channel_identifier.toLowerCase()}`;
       const existingSnapshots = snapshotMap.get(key);
+
+      // An explicitly EMPTY list means a bound multi-stream slot whose
+      // stream is missing this cycle: write nothing rather than a zero.
+      if (existingSnapshots && existingSnapshots.length === 0) continue;
 
       // Auto-discovered multi-stream children (channel_identifier ending in
       // ":stream-N") only get rows when their parent's auto-split fired this

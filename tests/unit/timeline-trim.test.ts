@@ -48,3 +48,33 @@ describe('trimIncompleteEdge', () => {
     expect(out.map((r) => r.channel_count)).toEqual([50, 50, 50, 50, 50, 50]);
   });
 });
+
+describe('trimIncompleteEdge — relay-platform coverage signal', () => {
+  const mk = (minutesAgo: number, channels: number, relay: number, nowMs: number) => ({
+    bucket: new Date(nowMs - minutesAgo * 60_000),
+    channel_count: String(channels),
+    relay_count: String(relay),
+    total_ccv: '1',
+  });
+
+  it('withholds an edge bucket whose relay channels are missing even when the total count passes 90 %', () => {
+    const now = Date.UTC(2026, 7, 21, 10, 0, 0);
+    // 166 channels incl. 8 TikTok for six minutes; edge minute has 158 channels, 0 TikTok (95 % total coverage)
+    const rows = [6, 5, 4, 3, 2, 1].map((m) => mk(m, 166, 8, now)).concat([mk(0, 158, 0, now)]);
+    const out = trimIncompleteEdge(rows, 60, now + 20_000);
+    expect(out.length).toBe(rows.length - 1);
+  });
+
+  it('keeps the edge bucket when relay coverage is complete', () => {
+    const now = Date.UTC(2026, 7, 21, 10, 0, 0);
+    const rows = [6, 5, 4, 3, 2, 1, 0].map((m) => mk(m, 166, 8, now));
+    expect(trimIncompleteEdge(rows, 60, now + 20_000).length).toBe(rows.length);
+  });
+
+  it('behaves as before when no relay signal is supplied', () => {
+    const now = Date.UTC(2026, 7, 21, 10, 0, 0);
+    const rows = [6, 5, 4, 3, 2, 1].map((m) => ({ bucket: new Date(now - m * 60_000), channel_count: '166', total_ccv: '1' }))
+      .concat([{ bucket: new Date(now), channel_count: '158', total_ccv: '1' }]);
+    expect(trimIncompleteEdge(rows, 60, now + 20_000).length).toBe(rows.length); // 95 % passes the count-only rule
+  });
+});

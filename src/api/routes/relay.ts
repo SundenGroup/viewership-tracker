@@ -93,7 +93,7 @@ export function setRelayBroadcast(fn: RelayBroadcastFn): void {
 // vs. writing hours of combined-badge inflation. Every inflation case
 // we've repaired was 2–10x the slice.
 const COHOST_SUSPECT_TTL_MS = 30 * 60_000;
-const MAX_PLAUSIBLE_RELAY_CCV = 500_000;
+import { normalizeRelayViewers, detectBleedIdentifiers, MAX_PLAUSIBLE_RELAY_CCV } from '../../utils/relay-values';
 const cohostSuspects = new Map<string, number>(); // identifier(lower) -> expiry epoch ms
 
 /** Returns true when this is a NEW suspect (not already active). */
@@ -271,14 +271,21 @@ router.post('/tiktok', requireRelayToken, async (req: Request, res: Response, ne
       return true;
     };
 
+    let invalid = 0;
     for (const input of channels) {
       const key = (input.identifier || '').toLowerCase().replace(/^@/, '');
       if (!channelMap.has(key)) continue;
 
+      // Validate before anything touches the DB: a non-numeric / negative /
+      // implausible value must not fail the whole batch (which would lose
+      // every channel in this push).
+      const viewers = normalizeRelayViewers(input.viewers);
+      if (viewers === null) { invalid++; continue; }
+
       // Ingest guard: a sudden plunge (stale relay re-emit / disconnect
       // zero) is held one cycle for a second opinion — see the guard's
       // header for the exact semantics.
-      const verdict = tiktokGuard.assess(key, input.viewers ?? 0, timestamp);
+      const verdict = tiktokGuard.assess(key, viewers, timestamp);
       if (verdict.action === 'defer') {
         deferred++;
         continue;
@@ -289,8 +296,9 @@ router.post('/tiktok', requireRelayToken, async (req: Request, res: Response, ne
         buildRows(key, verdict.release.viewers, input.title ?? null, verdict.release.timestamp);
         released++;
       }
-      buildRows(key, input.viewers ?? 0, input.title ?? null, timestamp);
+      buildRows(key, viewers, input.title ?? null, timestamp);
     }
+    if (invalid > 0) logger.warn(`[Relay] TikTok: ${invalid} entr${invalid === 1 ? 'y' : 'ies'} with invalid viewer values skipped`);
     if (deferred > 0 || released > 0) {
       logger.info(`[Relay] TikTok guard: ${deferred} plunge(s) held, ${released} released as real`);
     }
@@ -387,22 +395,29 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
 
     // Tab-bleed signature: ≥3 channels pushing the IDENTICAL value (>100)
     // in one batch means the scraper read the same tab for all of them.
+    // Those values are NOT written (Helix keeps its value for the minute);
+    // previously the signature only raised an alert while the bled values
+    // overwrote correct rows.
+    const normalized = channels.map((input) => ({
+      identifier: (input.identifier || '').toLowerCase(),
+      viewers: normalizeRelayViewers(input.viewers),
+    }));
+    const bleedSet = detectBleedIdentifiers(normalized);
     const valueGroups = new Map<number, string[]>();
-    for (const input of channels) {
-      const v = input.viewers ?? 0;
-      if (v > 100) {
-        const list = valueGroups.get(v) ?? [];
-        list.push((input.identifier || '').toLowerCase());
-        valueGroups.set(v, list);
+    for (const e of normalized) {
+      if (e.viewers !== null && e.viewers > 100 && bleedSet.has(e.identifier)) {
+        const list = valueGroups.get(e.viewers) ?? [];
+        list.push(e.identifier);
+        valueGroups.set(e.viewers, list);
       }
     }
-    const bleedGroups = [...valueGroups.entries()].filter(([, ids]) => ids.length >= 3);
+    const bleedGroups = [...valueGroups.entries()];
     if (bleedGroups.length > 0 && Date.now() - lastBleedPushAt > 10 * 60_000) {
       lastBleedPushAt = Date.now();
       const desc = bleedGroups
         .map(([v, ids]) => `${ids.join(', ')} all @ ${v}`)
         .join(' | ');
-      logger.warn(`[Relay] Twitch: tab-bleed signature — ${desc}`);
+      logger.warn(`[Relay] Twitch: tab-bleed signature — ${desc} (values skipped, Helix kept)`);
       getPushNotifier()
         .notify('data_anomaly', {
           title: 'Browser scraper tab-bleed suspected',
@@ -412,16 +427,16 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
         .catch(() => {});
     }
 
+    let bled = 0;
     for (const input of channels) {
       const identifier = (input.identifier || '').toLowerCase();
-      const relayViewers = input.viewers ?? 0;
-      if (relayViewers <= 0) continue;
-      if (relayViewers > MAX_PLAUSIBLE_RELAY_CCV) {
-        logger.warn(
-          `[Relay] Twitch: ignoring implausible value for ${identifier}: ${relayViewers}`,
-        );
+      const relayViewers = normalizeRelayViewers(input.viewers);
+      if (relayViewers === null) {
+        logger.warn(`[Relay] Twitch: ignoring invalid/implausible value for ${identifier}: ${String(input.viewers)}`);
         continue;
       }
+      if (relayViewers <= 0) continue;
+      if (bleedSet.has(identifier)) { bled++; continue; }
 
       // Find all snapshots for this channel at the most recent poll timestamp
       const rows = await db('viewership_snapshots as vs')
@@ -462,7 +477,8 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
 
     logger.info(
       `[Relay] Twitch: ${matched} matched, ${updated} replaced with browser data` +
-        (suspected > 0 ? `, ${suspected} cohost-suspect (kept Helix)` : ''),
+        (suspected > 0 ? `, ${suspected} cohost-suspect (kept Helix)` : '') +
+        (bled > 0 ? `, ${bled} tab-bleed (kept Helix)` : ''),
     );
     if (newSuspects.length > 0) {
       getPushNotifier()
