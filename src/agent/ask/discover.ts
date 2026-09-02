@@ -298,7 +298,7 @@ const RANGE_PROP = {
     "month use preset 'month' plus month as 'YYYY-MM'.",
   properties: {
     preset: { type: 'string', enum: ['today', '24h', '7d', '30d', 'month'] },
-    month: { type: 'string', description: "Calendar month 'YYYY-MM' — only with preset 'month'" },
+    month: { type: 'string', description: "Calendar month 'YYYY-MM', only with preset 'month'" },
   },
   required: ['preset'],
 } as const;
@@ -580,7 +580,7 @@ async function runTopChannels(
 
   return {
     kind: 'answer',
-    headline: `Top ${rows.length}${qualifiers ? ` ${qualifiers}` : ''} channels by ${METRIC_LABELS[p.metric]} — ${p.range.label}`,
+    headline: `Top ${rows.length}${qualifiers ? ` ${qualifiers}` : ''} channels by ${METRIC_LABELS[p.metric]} · ${p.range.label}`,
     blocks: [
       {
         type: 'table',
@@ -689,11 +689,11 @@ export async function executeDiscoverIntent(
       const startedAt = new Date(row.started_at);
       return {
         kind: 'answer',
-        headline: `Biggest stream by ${METRIC_LABELS[metric]} — ${range.label}`,
+        headline: `Biggest stream by ${METRIC_LABELS[metric]} · ${range.label}`,
         blocks: [
           {
             type: 'stat',
-            label: `${row.display_name} (${row.platform}) — peak CCV`,
+            label: `${row.display_name} (${row.platform}), peak CCV`,
             value: Math.round(Number(row.peak_ccv) || 0),
             sub: `started ${formatUtc(startedAt)} UTC${row.title ? ` · ${row.title.slice(0, 80)}` : ''}`,
           },
@@ -763,7 +763,7 @@ export async function executeDiscoverIntent(
       if (sessions === 0) {
         return {
           kind: 'answer',
-          headline: `${channel.name} — no streams in ${range.label}`,
+          headline: `${channel.name}: no streams in ${range.label}`,
           blocks: [],
           resolvedIntent: chips,
           deepLink: {
@@ -775,7 +775,7 @@ export async function executeDiscoverIntent(
       }
       return {
         kind: 'answer',
-        headline: `${channel.name} (${channel.platform}) — ${range.label}`,
+        headline: `${channel.name} (${channel.platform}) · ${range.label}`,
         blocks: [
           { type: 'stat', label: 'Peak CCV', value: Math.round(Number(row?.peak_ccv) || 0) },
           { type: 'stat', label: 'Viewed hours', value: Math.round((Number(row?.ccv_minutes) || 0) / 60) },
@@ -851,7 +851,7 @@ export async function executeDiscoverIntent(
       }
       return {
         kind: 'answer',
-        headline: `Trending — last ${hours}h vs the ${hours}h before`,
+        headline: `Trending: last ${hours}h vs the ${hours}h before`,
         blocks: [
           {
             type: 'table',
@@ -911,7 +911,7 @@ export async function executeDiscoverIntent(
       }
       return {
         kind: 'answer',
-        headline: `Viewed hours by ${dimension} — ${range.label}`,
+        headline: `Viewed hours by ${dimension} · ${range.label}`,
         blocks: [
           {
             type: 'table',

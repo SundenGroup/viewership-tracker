@@ -280,7 +280,7 @@ export function gateVideo(
     if (video.concurrentViewers >= escalateFloor && !hardExcluded) {
       return {
         decision: 'pending',
-        reason: `${ESCALATION_REASON_PREFIX} ${video.concurrentViewers} viewers — confirm before counting`,
+        reason: `${ESCALATION_REASON_PREFIX} ${video.concurrentViewers} viewers; confirm before counting`,
       };
     }
     const since = existing.decidedAt ?? existing.createdAt ?? null;
@@ -365,7 +365,7 @@ export function gateVideo(
   if (ccv >= reviewFloor) {
     return {
       decision: 'pending',
-      reason: `${strong ? 'strong' : 'weak'} match on ${where}, but ${ccv} viewers — confirm before counting`,
+      reason: `${strong ? 'strong' : 'weak'} match on ${where}, but ${ccv} viewers; confirm before counting`,
     };
   }
 
@@ -376,15 +376,15 @@ export function gateVideo(
       decision: weakIn ? 'pending' : 'deny',
       reason: weakIn
         ? `title mentions "${weakIn}" but channel also tagged "${tagExclude}"`
-        : `only channel-level match (${where}); channel tagged "${tagExclude}" — not this game`,
+        : `only channel-level match (${where}); channel tagged "${tagExclude}", not this game`,
     };
   }
 
   if (ccv < weakCeiling) {
-    return { decision: 'allow', reason: `weak match on ${where} (${ccv} viewers — auto)` };
+    return { decision: 'allow', reason: `weak match on ${where} (${ccv} viewers, auto)` };
   }
 
-  return { decision: 'pending', reason: `weak match on ${where} — awaiting review` };
+  return { decision: 'pending', reason: `weak match on ${where}, awaiting review` };
 }
 
 export class YouTubeGameTracker {

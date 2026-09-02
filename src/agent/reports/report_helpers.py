@@ -248,7 +248,7 @@ def build_scope_label(payload: Dict[str, Any]) -> str:
         day = days[0]
         stage = next((s for s in stages if s['id'] == day.get('stageId')), None)
         stage_name = stage['name'] if stage else ''
-        return f"{day.get('label', 'Day')} — {stage_name}" if stage_name else day.get('label', 'Day')
+        return f"{day.get('label', 'Day')} · {stage_name}" if stage_name else day.get('label', 'Day')
     elif scope == 'stage' and stages:
         return stages[0].get('name', 'Stage')
     elif scope == 'series':

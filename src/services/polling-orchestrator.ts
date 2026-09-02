@@ -1061,7 +1061,7 @@ export class PollingOrchestrator {
       this.pushAnomaly(
         'total-drop',
         'Total CCV dropped sharply',
-        `${this.prevTotalCCV.toLocaleString()} → ${totalCCV.toLocaleString()} in one poll cycle — possible tracking outage or broadcast crash.`,
+        `${this.prevTotalCCV.toLocaleString()} → ${totalCCV.toLocaleString()} in one poll cycle. Possible tracking outage or broadcast crash.`,
       );
     }
     this.prevTotalCCV = totalCCV;

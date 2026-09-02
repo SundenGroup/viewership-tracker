@@ -713,7 +713,7 @@ function scoreOne(
         kind: 'low_engagement',
         ...(critical ? { severity: 'critical' as const } : {}),
         detail:
-          `Roughly ${per1k} unique chatters per 1,000 viewers each minute — ` +
+          `Roughly ${per1k} unique chatters per 1,000 viewers each minute, ` +
           `bottom ${Math.max(engagementPct, 1)}% of ${engCohortName} streams from the ` +
           `last 30 days (typical is ~${medianPer1k}).` +
           (critical
@@ -772,7 +772,7 @@ function scoreOne(
     flags.push({
       kind: 'step_discontinuity',
       detail:
-        `${steps.length} abrupt viewer step${steps.length === 1 ? '' : 's'} mid-stream — ` +
+        `${steps.length} abrupt viewer step${steps.length === 1 ? '' : 's'} mid-stream, ` +
         `largest ${fmtInt(worst.from)} → ${fmtInt(worst.to)} (${pct >= 0 ? '+' : ''}${pct}%) ` +
         `within ${Math.max(1, Math.round(worst.gapMin))} min at ${fmtUtcTime(worst.t)} UTC. ` +
         `Organic audiences rarely move in synchronized blocks.`,
@@ -809,7 +809,7 @@ function scoreOne(
       detail:
         `Viewer spike ${fmtInt(worst.from)} → ${fmtInt(worst.to)} ` +
         `(+${Math.round(worst.rise * 100)}%) at ${fmtUtcTime(worst.t)} UTC with no title ` +
-        `change within ±3 minutes — above the 99th-percentile minute-rise for this cohort.`,
+        `change within ±3 minutes, above the 99th-percentile minute-rise for this cohort.`,
     });
   }
   curvePts = Math.max(0, curvePts);
@@ -827,7 +827,7 @@ function scoreOne(
         kind: 'low_follower_conversion',
         detail:
           `${delta >= 0 ? '+' : ''}${fmtInt(delta)} follower${Math.abs(delta) === 1 ? '' : 's'} across ` +
-          `${fmtInt(candidate.ccv_minutes)} viewer-minutes — bottom ${Math.max(pct, 1)}% of ` +
+          `${fmtInt(candidate.ccv_minutes)} viewer-minutes, bottom ${Math.max(pct, 1)}% of ` +
           `comparable streams. Real audiences of this size usually follow.`,
       });
     }

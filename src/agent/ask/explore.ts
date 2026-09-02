@@ -564,7 +564,7 @@ export async function executeExploreIntent(
         return {
           kind: 'patch',
           patch: { set: { day: day.id }, del: [...del, 'stage'] },
-          headline: `Scoped to ${day.label} — ${day.date}`,
+          headline: `Scoped to ${day.label} · ${day.date}`,
           resolvedIntent: ['Scope', day.label],
         };
       }
@@ -612,14 +612,14 @@ export async function executeExploreIntent(
       if (typeof input.day_id === 'string') {
         if (scope.level !== 'day') {
           return refusal(
-            'Comparing a day needs the view scoped to a day first — say e.g. "show Day 2" and then compare.',
+            'Comparing a day needs the view scoped to a day first. Say e.g. "show Day 2" and then compare.',
             vocab, scope, ['Compare', 'needs day scope'],
           );
         }
         const day = vocab.days.find((d) => d.id === input.day_id);
         if (!day) return refusal('That broadcast day does not belong to this series.', vocab, scope, ['Compare', 'unknown day']);
         if (day.id === scope.day?.id) {
-          return refusal('That is the day already on screen — pick a different day to compare against.', vocab, scope, ['Compare', 'same day']);
+          return refusal('That is the day already on screen. Pick a different day to compare against.', vocab, scope, ['Compare', 'same day']);
         }
         return {
           kind: 'patch',
@@ -631,14 +631,14 @@ export async function executeExploreIntent(
       if (typeof input.stage_id === 'string') {
         if (scope.level !== 'stage') {
           return refusal(
-            'Comparing a stage needs the view scoped to a stage first — switch to a stage and then compare.',
+            'Comparing a stage needs the view scoped to a stage first. Switch to a stage and then compare.',
             vocab, scope, ['Compare', 'needs stage scope'],
           );
         }
         const stage = vocab.stages.find((s) => s.id === input.stage_id);
         if (!stage) return refusal('That stage does not belong to this series.', vocab, scope, ['Compare', 'unknown stage']);
         if (stage.id === scope.stage?.id) {
-          return refusal('That is the stage already on screen — pick a different stage to compare against.', vocab, scope, ['Compare', 'same stage']);
+          return refusal('That is the stage already on screen. Pick a different stage to compare against.', vocab, scope, ['Compare', 'same stage']);
         }
         return {
           kind: 'patch',
@@ -658,7 +658,7 @@ export async function executeExploreIntent(
         );
       }
       const t = parseHHMM(input.time);
-      if (!t) return refusal('I could not read that time — use 24h HH:MM.', vocab, scope, ['Pin time', 'bad time']);
+      if (!t) return refusal('I could not read that time. Use 24h HH:MM.', vocab, scope, ['Pin time', 'bad time']);
       const iso = zonedToUtc(scope.day.date, t.h, t.m, 0, series.timezone).toISOString();
       const label = `${String(t.h).padStart(2, '0')}:${String(t.m).padStart(2, '0')}`;
       return {
@@ -679,7 +679,7 @@ export async function executeExploreIntent(
       }
       const from = parseHHMM(input.from);
       const to = parseHHMM(input.to);
-      if (!from || !to) return refusal('I could not read those times — use 24h HH:MM.', vocab, scope, ['Range', 'bad time']);
+      if (!from || !to) return refusal('I could not read those times. Use 24h HH:MM.', vocab, scope, ['Range', 'bad time']);
       const fromDate = zonedToUtc(scope.day.date, from.h, from.m, 0, series.timezone);
       // A window ending "past midnight" (23:00-01:00) rolls to the next date.
       let toDate = zonedToUtc(scope.day.date, to.h, to.m, 0, series.timezone);
@@ -766,7 +766,7 @@ export async function executeExploreIntent(
 
       return {
         kind: 'answer',
-        headline: `Top ${top.length}${qualifiers ? ` ${qualifiers}` : ''} channels by ${METRIC_LABELS[metric]} — ${scope.label}`,
+        headline: `Top ${top.length}${qualifiers ? ` ${qualifiers}` : ''} channels by ${METRIC_LABELS[metric]} · ${scope.label}`,
         blocks: [
           {
             type: 'table',
@@ -801,7 +801,7 @@ export async function executeExploreIntent(
         }
         return {
           kind: 'answer',
-          headline: `Peak concurrent viewers — ${scope.label}`,
+          headline: `Peak concurrent viewers · ${scope.label}`,
           blocks: [{
             type: 'stat',
             label: 'Peak CCV',
@@ -818,7 +818,7 @@ export async function executeExploreIntent(
         const avg = await ViewershipSnapshotModel.getAverageCCV(queryScope);
         return {
           kind: 'answer',
-          headline: `Average concurrent viewers — ${scope.label}`,
+          headline: `Average concurrent viewers · ${scope.label}`,
           blocks: [{
             type: 'stat',
             label: 'Average CCV',
@@ -831,7 +831,7 @@ export async function executeExploreIntent(
       const hours = await ViewershipSnapshotModel.getTotalViewedHours(queryScope);
       return {
         kind: 'answer',
-        headline: `Total viewed hours — ${scope.label}`,
+        headline: `Total viewed hours · ${scope.label}`,
         blocks: [{
           type: 'stat',
           label: 'Viewed hours',
@@ -863,7 +863,7 @@ export async function executeExploreIntent(
       }
       return {
         kind: 'answer',
-        headline: `${language.toUpperCase()} viewership — ${scope.label}`,
+        headline: `${language.toUpperCase()} viewership · ${scope.label}`,
         blocks: [
           {
             type: 'stat',

@@ -192,7 +192,7 @@ export async function compileIntent(opts: {
   const validated = validateInput(toolUse.input, tool.input_schema);
   if ('error' in validated) {
     logger.warn('[Ask] Tool call failed validation', { name: toolUse.name, error: validated.error });
-    return refuseIntent('I understood the question but could not resolve it against this series — try rephrasing.');
+    return refuseIntent('I understood the question but could not resolve it against this series. Try rephrasing.');
   }
 
   return { name: toolUse.name, input: validated.params };

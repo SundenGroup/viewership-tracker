@@ -118,7 +118,7 @@ def build_summary_tab(wb: Workbook, payload: Dict, agg: Dict, branding: Dict):
 
     # Title section
     ws.merge_cells('A1:D1')
-    cell = ws.cell(row=1, column=1, value=f"Viewership Report — {series.get('name', 'Unknown')}")
+    cell = ws.cell(row=1, column=1, value=f"Viewership Report: {series.get('name', 'Unknown')}")
     cell.font = Font(name='Arial', size=14, bold=True, color='374151')
     cell.alignment = Alignment(horizontal='center')
 

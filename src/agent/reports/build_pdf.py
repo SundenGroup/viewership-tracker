@@ -230,7 +230,7 @@ def build_pdf(input_data: Dict):
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    report_title = f"Viewership Report — {series.get('name', 'Report')}"
+    report_title = f"Viewership Report: {series.get('name', 'Report')}"
     on_page = make_page_callbacks(branding, report_title)
 
     doc = SimpleDocTemplate(
@@ -271,7 +271,7 @@ def build_pdf(input_data: Dict):
     start = format_date(series.get('startDate'))
     end = format_date(series.get('endDate'))
     if start != '—' or end != '—':
-        elements.append(Paragraph(f'{start} — {end}', styles['cover_meta']))
+        elements.append(Paragraph(f'{start} – {end}', styles['cover_meta']))
 
     gen = format_datetime(payload.get('generatedAt', ''))
     elements.append(Spacer(1, 24))

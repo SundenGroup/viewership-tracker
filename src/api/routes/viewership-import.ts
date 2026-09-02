@@ -299,7 +299,7 @@ export async function resolveAnchor(
       if (!anchor) {
         return {
           error:
-            `Could not read the stream start time from video ${vid} — ` +
+            `Could not read the stream start time from video ${vid}. ` +
             'pass streamStart explicitly (the "Stream started" time from YouTube Studio).',
         };
       }
@@ -310,7 +310,7 @@ export async function resolveAnchor(
   }
   return {
     error:
-      'This CSV uses "Live stream position (seconds)" — relative offsets. ' +
+      'This CSV uses "Live stream position (seconds)", relative offsets. ' +
       'Provide the stream start: paste the VOD URL (videoUrl) or the exact ' +
       'start time (streamStart).',
   };
@@ -560,7 +560,7 @@ router.post('/csv', async (req: Request, res: Response, next: NextFunction) => {
         warnings.push(
           `CSV curve fits live tracking ${Math.abs(clockShift.bestLagMinutes)} min ` +
             `${clockShift.bestLagMinutes > 0 ? 'earlier' : 'later'} than imported ` +
-            `(r ${clockShift.bestR} vs ${clockShift.zeroLagR} at zero) — the export's clock ` +
+            `(r ${clockShift.bestR} vs ${clockShift.zeroLagR} at zero). The export's clock ` +
             `looks like ${suggestTimezone(tzOffsetMinutes(timezone, points[0].ts), clockShift.bestLagMinutes)}, ` +
             `not ${timezone}.`,
         );
@@ -664,7 +664,7 @@ router.post('/csv', async (req: Request, res: Response, next: NextFunction) => {
     const user = (req as Request & { user?: { username?: string } }).user;
     logger.info(
       `[Import] CSV replace by ${user?.username ?? 'unknown'}: ` +
-        `${channel.platform}/${channel.channel_identifier} on "${day.label}" — ` +
+        `${channel.platform}/${channel.channel_identifier} on "${day.label}": ` +
         `deleted ${deleted}, inserted ${insertRows.length} ` +
         `(${summary.range.fromLocal} → ${summary.range.toLocal} ${timezone})`,
     );
@@ -912,7 +912,7 @@ router.post('/discover-backfill', async (req: Request, res: Response, next: Next
     const user = (req as Request & { user?: { username?: string } }).user;
     logger.info(
       `[Import] Discover backfill (${mode}) by ${user?.username ?? 'unknown'}: ` +
-        `${channel.platform}/${channel.channel_identifier} on "${day.label}" — ` +
+        `${channel.platform}/${channel.channel_identifier} on "${day.label}": ` +
         `deleted ${deleted}, inserted ${insertRows.length} from ${trackerName} ` +
         `(${summary.range.fromLocal} → ${summary.range.toLocal} ${timezone})`,
     );

@@ -813,7 +813,7 @@ export class ReportAgent {
     const hoursVal = hours ? parseFloat(String(hours)) : 0;
     if (peakVal <= 0 && avgVal <= 0) {
       throw new ReportAgentError(
-        'The chosen comparison has no viewership data — pick a different baseline',
+        'The chosen comparison has no viewership data. Pick a different baseline',
       );
     }
 
@@ -825,7 +825,7 @@ export class ReportAgent {
     if (curLen > 0 && baseLen > 0) {
       const ratio = Math.max(curLen, baseLen) / Math.min(curLen, baseLen);
       if (ratio > 1.15) {
-        lengthNote = `broadcast lengths differ (${curLen.toFixed(1)}h vs ${baseLen.toFixed(1)}h) — Avg CCV is the fair comparison`;
+        lengthNote = `broadcast lengths differ (${curLen.toFixed(1)}h vs ${baseLen.toFixed(1)}h), so Avg CCV is the fair comparison`;
       }
     }
 
@@ -1344,7 +1344,7 @@ Respond with ONLY the JSON object, no markdown code blocks.`;
     parts.push(`- Event: ${series.name}`);
     if (series.game) parts.push(`- Game: ${series.game}`);
     if (series.partner) parts.push(`- Partner: ${series.partner}`);
-    parts.push(`- Scope: ${scope} — ${scopeLabel}`);
+    parts.push(`- Scope: ${scope}: ${scopeLabel}`);
     parts.push(`- Template: ${template}`);
 
     parts.push(`\n## Key Metrics`);
@@ -1466,7 +1466,7 @@ Respond with ONLY the JSON object, no markdown code blocks.`;
     if (scope === 'day' && payload.broadcastDays.length > 0) {
       const day = payload.broadcastDays[0];
       const stage = payload.stages.find((s) => s.id === day?.stageId);
-      return stage ? `${day?.label} — ${stage.name}` : (day?.label ?? 'Day');
+      return stage ? `${day?.label} · ${stage.name}` : (day?.label ?? 'Day');
     }
     if (scope === 'stage' && payload.stages.length > 0) {
       return payload.stages[0]?.name ?? 'Stage';

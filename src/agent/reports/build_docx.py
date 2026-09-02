@@ -159,7 +159,7 @@ def build_cover_page(doc: Document, payload: Dict, branding: Dict, scope_label: 
     if start != '—' or end != '—':
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run(f'{start} — {end}')
+        run = p.add_run(f'{start} – {end}')
         run.font.size = Pt(10)
         run.font.color.rgb = RGBColor(*branding.get('muted_color_rgb', (156, 163, 175)))
 
