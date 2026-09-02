@@ -485,20 +485,176 @@ export function NotificationsSettingsPage() {
             })}
           </div>
         )}
+
+        {/* Event history — server-side log, independent of this device's
+            push state: exactly the place to review what you missed. */}
+        <EventHistoryCard />
       </div>
     </SettingsShell>
+  );
+}
+
+// ── Event history ─────────────────────────────────────────────────────────
+
+const PAGE_SIZE = 50;
+
+function eventLabel(type: string): string {
+  return EVENT_DESCRIPTORS.find((d) => d.key === type)?.label ?? type;
+}
+
+function EventHistoryCard() {
+  const [events, setEvents] = useState<api.OpsEvent[]>([]);
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
+  const [exhausted, setExhausted] = useState(false);
+  const [histError, setHistError] = useState<string | null>(null);
+
+  const load = useCallback(
+    async (reset: boolean, before?: string) => {
+      setLoading(true);
+      setHistError(null);
+      try {
+        const r = await api.getPushEvents({
+          type: typeFilter === 'all' ? undefined : typeFilter,
+          limit: PAGE_SIZE,
+          before,
+        });
+        setEvents((prev) => (reset ? r.events : [...prev, ...r.events]));
+        setExhausted(r.events.length < PAGE_SIZE);
+      } catch (err) {
+        setHistError((err as Error).message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [typeFilter],
+  );
+
+  useEffect(() => {
+    void load(true);
+  }, [load]);
+
+  return (
+    <div className="card" style={{ padding: 20, marginBottom: 14 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
+          marginBottom: 4,
+        }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)' }}>Event history</div>
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+          style={{
+            background: 'var(--bg-sunken)',
+            border: '1px solid var(--border)',
+            color: 'var(--fg)',
+            fontSize: 12,
+            padding: '4px 8px',
+            borderRadius: 4,
+          }}
+        >
+          <option value="all">All events</option>
+          {EVENT_DESCRIPTORS.map((d) => (
+            <option key={d.key} value={d.key}>
+              {d.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginBottom: 12 }}>
+        Everything the system emitted — recorded server-side even when no device was subscribed,
+        so dismissed or missed notifications can be reviewed here. Kept 90 days.
+      </div>
+
+      {histError && (
+        <p style={{ color: 'var(--red)', fontSize: 12.5, margin: '0 0 10px' }}>{histError}</p>
+      )}
+
+      {events.length === 0 && !loading && !histError && (
+        <div style={{ fontSize: 12.5, color: 'var(--fg-dim)', padding: '8px 0' }}>
+          No events recorded yet. History starts from today — earlier notifications predate the log.
+        </div>
+      )}
+
+      {events.map((ev, i) => (
+        <div
+          key={ev.id}
+          style={{
+            display: 'flex',
+            gap: 12,
+            padding: '10px 0',
+            borderTop: i === 0 ? 'none' : '1px solid var(--border-faint)',
+            alignItems: 'flex-start',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--fg-dim)',
+              fontFamily: 'var(--font-mono)',
+              flexShrink: 0,
+              width: 92,
+              paddingTop: 2,
+            }}
+            title={new Date(ev.created_at).toLocaleString()}
+          >
+            {formatTimeAgo(ev.created_at)}
+          </div>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--fg)' }}>{ev.title}</span>
+              <StatusPill kind={ev.urgent ? 'warn' : 'muted'}>{eventLabel(ev.event_type)}</StatusPill>
+            </div>
+            {ev.body && (
+              <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 3, lineHeight: 1.5 }}>
+                {ev.body}
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: 'var(--fg-dim)', marginTop: 3 }}>
+              {ev.sent > 0
+                ? `Delivered to ${ev.sent} device${ev.sent === 1 ? '' : 's'}`
+                : 'No devices subscribed at the time'}
+              {ev.failed > 0 ? ` · ${ev.failed} failed` : ''}
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {!exhausted && events.length > 0 && (
+        <button
+          type="button"
+          className="btn btn-ghost"
+          disabled={loading}
+          style={{ marginTop: 10 }}
+          onClick={() => void load(false, events[events.length - 1]?.created_at)}
+        >
+          {loading ? 'Loading…' : 'Load older'}
+        </button>
+      )}
+    </div>
   );
 }
 
 // ── Status pill ───────────────────────────────────────────────────────────
 // Theme-aware replacement for the dark-only Badge.
 
-function StatusPill({ children, kind }: { children: React.ReactNode; kind: 'on' | 'muted' | 'info' }) {
+function StatusPill({ children, kind }: { children: React.ReactNode; kind: 'on' | 'muted' | 'info' | 'warn' }) {
   const styles: Record<typeof kind, React.CSSProperties> = {
     on: {
       background: 'color-mix(in oklab, var(--live) 16%, transparent)',
       color: 'var(--live)',
       borderColor: 'color-mix(in oklab, var(--live) 35%, transparent)',
+    },
+    warn: {
+      background: 'color-mix(in oklab, var(--red) 14%, transparent)',
+      color: 'var(--red)',
+      borderColor: 'color-mix(in oklab, var(--red) 35%, transparent)',
     },
     muted: {
       background: 'var(--bg-hover)',

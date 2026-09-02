@@ -9,7 +9,8 @@
  * (PublicLive + PublicPostEvent / PublicRecap).
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { readScopeFromUrl, writeScopeToUrl } from '@/utils/publicScopeUrl';
 import { useParams } from 'react-router-dom';
 import {
   Row,
@@ -245,14 +246,28 @@ function PublicLive({
     return null;
   }, [seriesInfo]);
 
+  // Deep links — ?day=YYYY-MM-DD / ?stage=slug / ?scope=series / &group=Name
+  // seed the scrubber, and the URL is kept in sync as the viewer clicks
+  // around, so the address bar (and the Share button) is always a link to
+  // exactly this view.
+  const urlInit = useMemo(() => readScopeFromUrl(seriesInfo), [seriesInfo]);
   const [scopeLevel, setScopeLevel] = useState<'series' | 'stage' | 'day'>(
-    liveDayInitial ? 'day' : 'series',
+    urlInit.scopeLevel ?? (liveDayInitial ? 'day' : 'series'),
   );
   const [selectedStageId, setSelectedStageId] = useState<string | null>(
-    liveDayInitial?.stageId ?? null,
+    urlInit.stageId ?? liveDayInitial?.stageId ?? null,
   );
-  const [selectedDayId, setSelectedDayId] = useState<string | null>(liveDayInitial?.dayId ?? null);
-  const [viewGroup, setViewGroup] = useState<string>('all');
+  const [selectedDayId, setSelectedDayId] = useState<string | null>(
+    urlInit.dayId ?? liveDayInitial?.dayId ?? null,
+  );
+  const [viewGroup, setViewGroup] = useState<string>(urlInit.viewGroup ?? 'all');
+  useEffect(() => {
+    writeScopeToUrl(
+      seriesInfo,
+      { scopeLevel, stageId: selectedStageId, dayId: selectedDayId, viewGroup },
+      { defaultDayId: liveDayInitial?.dayId ?? null },
+    );
+  }, [seriesInfo, scopeLevel, selectedStageId, selectedDayId, viewGroup, liveDayInitial]);
 
   const activeStage = useMemo(() => {
     if (selectedStageId) return seriesInfo.stages.find((s) => s.id === selectedStageId) ?? null;
@@ -394,6 +409,43 @@ function PublicLive({
     liveCCV: needsScopedFetch ? scopedLiveCCV : pollingData.liveCCV,
   });
 
+  // Raw live response for the theater — needs channelIdentifier/streamId,
+  // which the dashboard model doesn't carry through.
+  const liveResponse = needsScopedFetch ? scopedLiveCCV : pollingData.liveCCV;
+
+  // Theater state lives here (not in the component) because its three
+  // surfaces sit in different layout slots: the toggle chip in the scrubber
+  // row, standard mode in the hero's chart column, theatre mode full-width.
+  const [theaterOpen, setTheaterOpen] = useState<boolean>(
+    () => localStorage.getItem(THEATER_STORAGE_KEY) === '1',
+  );
+  const [theaterMode, setTheaterMode] = useState<'standard' | 'theatre'>(() =>
+    localStorage.getItem(THEATER_MODE_KEY) === 'theatre' ? 'theatre' : 'standard',
+  );
+  const [theaterPick, setTheaterPick] = useState<string>('');
+  useEffect(() => {
+    localStorage.setItem(THEATER_STORAGE_KEY, theaterOpen ? '1' : '0');
+  }, [theaterOpen]);
+  useEffect(() => {
+    localStorage.setItem(THEATER_MODE_KEY, theaterMode);
+  }, [theaterMode]);
+
+  const theaterChannels = useMemo(() => {
+    const chans = (liveResponse?.channels ?? []).filter(
+      (c) => c.concurrentViewers > 0 && theaterEmbedSrc(c) !== null,
+    );
+    // Picker order: by viewers. (Officials-first ordering buried a 44K watch
+    // party under twenty official entries.) The DEFAULT pick still prefers
+    // the biggest official broadcast — see theaterSelected.
+    return chans.sort((a, b) => b.concurrentViewers - a.concurrentViewers);
+  }, [liveResponse]);
+  const theaterSelected =
+    theaterChannels.find((c) => c.channelId === theaterPick) ??
+    theaterChannels.find((c) => c.tier === 'official') ??
+    theaterChannels[0] ??
+    null;
+  const theaterShowing = theaterOpen && theaterSelected !== null && liveResponse != null;
+
   // Same bug-fix we applied to the report: per-tier peak in tierRows is
   // Math.max() of per-channel peaks, which under-counts whenever several
   // channels peak at the same minute. The timeline hook already has the
@@ -429,6 +481,7 @@ function PublicLive({
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ width: '100%', maxWidth: PUBLIC_MAX_WIDTH, margin: '0 auto', display: 'flex', flexDirection: 'column', flex: 1 }}>
       {/* Header */}
       <header
         style={{
@@ -458,31 +511,73 @@ function PublicLive({
         </Row>
       </header>
 
-      {/* Scope scrubber — Series / Stage / Day + View Group (v6) */}
+      {/* Scope scrubber — Series / Stage / Day + View Group (v6), with the
+          theater toggle in the leftover room beside the View Group. */}
       <div
         style={{
           padding: '14px 32px',
           borderBottom: '1px solid var(--border)',
           background: 'var(--bg-raised)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          flexWrap: 'wrap',
         }}
       >
-        <ScopeScrubber
-          level={scopeLevel}
-          onLevelChange={(l) => setScopeLevel(l as 'series' | 'stage' | 'day')}
-          stages={stageOptions}
-          stageId={activeStage?.id}
-          onStageChange={(id) => {
-            setSelectedStageId(id);
-            setSelectedDayId(null);
-          }}
-          days={dayOptions}
-          dayId={activeDay?.id}
-          onDayChange={(id) => setSelectedDayId(id)}
-          viewGroup={viewGroup}
-          onViewGroupChange={setViewGroup}
-          viewGroups={viewGroups}
-        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <ScopeScrubber
+            level={scopeLevel}
+            onLevelChange={(l) => setScopeLevel(l as 'series' | 'stage' | 'day')}
+            stages={stageOptions}
+            stageId={activeStage?.id}
+            onStageChange={(id) => {
+              setSelectedStageId(id);
+              setSelectedDayId(null);
+            }}
+            days={dayOptions}
+            dayId={activeDay?.id}
+            onDayChange={(id) => setSelectedDayId(id)}
+            viewGroup={viewGroup}
+            onViewGroupChange={setViewGroup}
+            viewGroups={viewGroups}
+          />
+        </div>
+        {theaterSelected && (
+          <button
+            type="button"
+            className="btn"
+            style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+            onClick={() => setTheaterOpen((o) => !o)}
+          >
+            {theaterOpen ? (
+              '✕ Close player'
+            ) : (
+              <>
+                <span style={{ color: 'var(--live)', marginRight: 6 }}>●</span>
+                {/* The scoped TOTAL — same number as the hero and the player
+                    overlay. Showing the preselected channel's own CCV here
+                    read as "the event has 2.7K viewers" from the outside. */}
+                Watch live · {fmtCompact(liveResponse?.totalCCV ?? theaterSelected.concurrentViewers)}
+              </>
+            )}
+          </button>
+        )}
       </div>
+
+      {/* Live theater, theatre mode — full-bleed row above the hero */}
+      {theaterShowing && theaterMode === 'theatre' && (
+        <div style={{ padding: '18px 32px 0' }}>
+          <TheaterPlayer
+            variant="theatre"
+            live={liveResponse!}
+            channels={theaterChannels}
+            selected={theaterSelected!}
+            onPick={setTheaterPick}
+            onMode={() => setTheaterMode('standard')}
+            onClose={() => setTheaterOpen(false)}
+          />
+        </div>
+      )}
 
       {/* Hero row */}
       <div
@@ -536,20 +631,34 @@ function PublicLive({
             </Col>
           </Row>
         </div>
-        <div style={{ height: 180 }}>
-          {timeline.total.length > 0 ? (
-            <>
-              <AreaChart data={timeline.total} width={500} height={180} color="var(--red)" />
-              <div className="eyebrow" style={{ textAlign: 'right', marginTop: 4 }}>
-                Series timeline
+        {theaterShowing && theaterMode === 'standard' ? (
+          /* Standard mode: the player takes the timeline's slot beside the
+             live number. Theatre mode gets its own full-width row above. */
+          <TheaterPlayer
+            variant="standard"
+            live={liveResponse!}
+            channels={theaterChannels}
+            selected={theaterSelected!}
+            onPick={setTheaterPick}
+            onMode={() => setTheaterMode('theatre')}
+            onClose={() => setTheaterOpen(false)}
+          />
+        ) : (
+          <div style={{ height: 180 }}>
+            {timeline.total.length > 0 ? (
+              <>
+                <AreaChart data={timeline.total} width={500} height={180} color="var(--red)" />
+                <div className="eyebrow" style={{ textAlign: 'right', marginTop: 4 }}>
+                  Series timeline
+                </div>
+              </>
+            ) : (
+              <div className="placeholder" style={{ height: 180 }}>
+                Collecting data…
               </div>
-            </>
-          ) : (
-            <div className="placeholder" style={{ height: 180 }}>
-              Collecting data…
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* By category (tier breakdown) — hide tiers with no live streams. */}
@@ -725,6 +834,7 @@ function PublicLive({
         <ClutchWordmark size={14} muted />
         <span>tracker.clutch.game/public/{shortName} · Updated every 30s</span>
       </footer>
+      </div>
     </div>
   );
 }
@@ -749,10 +859,21 @@ function PublicRecap({
     [seriesInfo],
   );
 
-  const [scopeLevel, setScopeLevel] = useState<'series' | 'stage' | 'day'>('series');
-  const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
-  const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
-  const [viewGroup, setViewGroup] = useState<string>('all');
+  // Deep links (see the live component) — recap has no live default.
+  const urlInit = useMemo(() => readScopeFromUrl(seriesInfo), [seriesInfo]);
+  const [scopeLevel, setScopeLevel] = useState<'series' | 'stage' | 'day'>(
+    urlInit.scopeLevel ?? 'series',
+  );
+  const [selectedStageId, setSelectedStageId] = useState<string | null>(urlInit.stageId ?? null);
+  const [selectedDayId, setSelectedDayId] = useState<string | null>(urlInit.dayId ?? null);
+  const [viewGroup, setViewGroup] = useState<string>(urlInit.viewGroup ?? 'all');
+  useEffect(() => {
+    writeScopeToUrl(
+      seriesInfo,
+      { scopeLevel, stageId: selectedStageId, dayId: selectedDayId, viewGroup },
+      { defaultDayId: null },
+    );
+  }, [seriesInfo, scopeLevel, selectedStageId, selectedDayId, viewGroup]);
 
   const viewGroups = useMemo<ViewGroup[]>(
     () => ((seriesInfo.viewGroups ?? []) as ViewGroup[]),
@@ -958,6 +1079,7 @@ function PublicRecap({
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
+      <div style={{ width: '100%', maxWidth: PUBLIC_MAX_WIDTH, margin: '0 auto', display: 'flex', flexDirection: 'column', flex: 1 }}>
       {/* Header */}
       <header style={{ padding: '28px 40px 8px', borderBottom: '1px solid var(--border)' }}>
         <Row justify="space-between">
@@ -1042,6 +1164,7 @@ function PublicRecap({
           hours={model.viewedHours}
           days={totalDayCount}
           timeSeries={timeline.total}
+          showBroadcastTime
           yoyPeak={trend?.peak ?? null}
           yoyAvg={trend?.avg ?? null}
           yoyHours={trend?.hours ?? null}
@@ -1182,6 +1305,7 @@ function PublicRecap({
           Generated {new Date().toLocaleDateString()} · tracker.clutch.game/public/{shortName}
         </span>
       </footer>
+      </div>
     </div>
   );
 }
@@ -1198,6 +1322,9 @@ function SortableChannelTable({
   const [sort, setSort] = useState<keyof ChannelRow>(live ? 'live' : 'peak');
   const [dir, setDir] = useState<'asc' | 'desc'>('desc');
   const [platform, setPlatform] = useState<string>('all');
+  // Titles are all-or-none: only some platforms carry one (TikTok mostly),
+  // so per-row rendering made the table look broken. Default off.
+  const [showTitles, setShowTitles] = useState(false);
 
   const filtered = channels.filter((c) =>
     platform === 'all' ? true : c.platform === platform,
@@ -1281,6 +1408,29 @@ function SortableChannelTable({
               </option>
             ))}
           </select>
+          <label
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 12,
+              color: 'var(--fg-muted)',
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              padding: '5px 10px',
+              cursor: 'pointer',
+              userSelect: 'none',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={showTitles}
+              onChange={(e) => setShowTitles(e.target.checked)}
+              style={{ accentColor: 'var(--red)', margin: 0 }}
+            />
+            Show titles
+          </label>
           <div style={{ flex: 1 }} />
           <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
             {sorted.length} channels · sort any column
@@ -1331,7 +1481,11 @@ function SortableChannelTable({
                   platform={c.platform}
                   channelIdentifier={c.channelIdentifier}
                 />
-                {c.title && c.platform !== 'youtube' && (
+                {/* YouTube excluded: the /live-page scrape's title extraction
+                    is unreliable (variant pages bleed one foreign video's
+                    title across many channels) — hidden until root-caused.
+                    CCV extraction is separate and unaffected. */}
+                {showTitles && c.title && c.platform !== 'youtube' && (
                   <div
                     style={{
                       fontSize: 11,
@@ -1383,6 +1537,394 @@ function SortableChannelTable({
             No channels match the filters
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Live theater ──────────────────────────────────────────────────────────
+// Embedded stream player with the live total overlaid. Toggled from the
+// scrubber-row chip; open state and mode persist per browser. Standard mode
+// sits in the hero beside the live number, theatre mode runs full-width.
+// Only platforms with an official embed player are offered (Twitch, Kick,
+// YouTube — YouTube via the exact live video id we track per snapshot).
+
+type LiveTheaterChannel = NonNullable<LiveCCVResponse['channels']>[number];
+
+/** Cap the public canvas — full-bleed on 4K turned the hero into a billboard. */
+const PUBLIC_MAX_WIDTH = 1600;
+
+const THEATER_STORAGE_KEY = 'clutch_public_theater';
+const THEATER_MODE_KEY = 'clutch_public_theater_mode';
+
+function theaterEmbedSrc(c: LiveTheaterChannel): string | null {
+  const host = window.location.hostname;
+  if (c.platform === 'twitch') {
+    return `https://player.twitch.tv/?channel=${encodeURIComponent(c.channelIdentifier)}&parent=${encodeURIComponent(host)}&muted=true&autoplay=true`;
+  }
+  if (c.platform === 'kick') {
+    return `https://player.kick.com/${encodeURIComponent(c.channelIdentifier)}?muted=true&autoplay=true`;
+  }
+  if (c.platform === 'youtube') {
+    // Embed by our stored stream_id ONLY when the backend marks it
+    // ownership-verified (ytApiStream: the API multi-stream path checks
+    // every video against snippet.channelId). That covers channels running
+    // several simultaneous lives — the by-channel live_stream embed shows
+    // "video unavailable" for those — including their :stream-N children.
+    // enablejsapi + origin let the page post player commands into the
+    // iframe — needed for the visible Unmute chip (YouTube's own volume
+    // control hides in the auto-hiding hover bar, so a muted autoplay
+    // embed offers no obvious way to get sound).
+    const ytParams = `autoplay=1&mute=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`;
+    if (c.channelIdentifier.startsWith('yt-video:')) {
+      // Manually pinned video — the identifier IS the video id.
+      return `https://www.youtube.com/embed/${encodeURIComponent(c.channelIdentifier.slice('yt-video:'.length))}?${ytParams}`;
+    }
+    if (c.ytApiStream && c.streamId) {
+      return `https://www.youtube.com/embed/${encodeURIComponent(c.streamId)}?${ytParams}`;
+    }
+    // Everyone else: never trust scrape-sourced stream_ids (they can carry
+    // redirect-roulette garbage — foreign streams — even when the CCV is
+    // fine). YouTube's live_stream embed resolves the channel's current
+    // live by UC id at embed time; ownership guaranteed by YouTube.
+    if (/^UC[A-Za-z0-9_-]{22}$/.test(c.channelIdentifier)) {
+      return `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(c.channelIdentifier)}&${ytParams}`;
+    }
+    // Unverified child rows and non-UC identifiers have no trustworthy
+    // embed target — leave them out of the picker.
+    return null;
+  }
+  return null;
+}
+
+function TheaterPlayer({
+  variant,
+  live,
+  channels,
+  selected,
+  onPick,
+  onMode,
+  onClose,
+}: {
+  variant: 'standard' | 'theatre';
+  live: LiveCCVResponse;
+  channels: LiveTheaterChannel[];
+  selected: LiveTheaterChannel;
+  onPick: (channelId: string) => void;
+  onMode: () => void;
+  onClose: () => void;
+}) {
+  const theatre = variant === 'theatre';
+  const src = theaterEmbedSrc(selected)!;
+
+  // YouTube sound — embeds must start muted (autoplay policy), and
+  // YouTube's own volume button hides in the auto-hiding hover bar. This
+  // chip posts the official IFrame-API commands into the embed instead.
+  // Twitch/Kick players have workable native mute controls — no chip.
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [ytMuted, setYtMuted] = useState(true);
+  useEffect(() => {
+    setYtMuted(true); // every src change remounts the iframe muted
+  }, [src]);
+  const ytCommand = (func: string, args: unknown[] = []) => {
+    iframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: 'command', func, args }),
+      'https://www.youtube.com',
+    );
+  };
+  const toggleYtMute = () => {
+    if (ytMuted) {
+      ytCommand('unMute');
+      ytCommand('setVolume', [100]);
+      setYtMuted(false);
+    } else {
+      ytCommand('mute');
+      setYtMuted(true);
+    }
+  };
+
+  // Fullscreen — on OUR container (video + overlay together), not the
+  // iframe: the player's own fullscreen button fullscreens only the iframe,
+  // which is why the counter used to disappear. This way it stays on top.
+  //
+  // Two layers: native element-fullscreen where the environment completes
+  // it, and a fixed full-viewport fallback where it doesn't (iOS Safari has
+  // no element-fullscreen; some embedded webviews accept the call but never
+  // finish the transition). The overlay behaves identically in both.
+  const videoBoxRef = useRef<HTMLDivElement>(null);
+  const [nativeFs, setNativeFs] = useState(false);
+  const [fallbackFs, setFallbackFs] = useState(false);
+  const isFullscreen = nativeFs || fallbackFs;
+  useEffect(() => {
+    const doc = document as Document & { webkitFullscreenElement?: Element | null };
+    const sync = () => {
+      const fsEl = document.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+      setNativeFs(fsEl === videoBoxRef.current && fsEl !== null);
+    };
+    document.addEventListener('fullscreenchange', sync);
+    document.addEventListener('webkitfullscreenchange', sync);
+    return () => {
+      document.removeEventListener('fullscreenchange', sync);
+      document.removeEventListener('webkitfullscreenchange', sync);
+    };
+  }, []);
+  // Esc exits the fallback layer (native fullscreen handles Esc itself).
+  useEffect(() => {
+    if (!fallbackFs) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setFallbackFs(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fallbackFs]);
+  const enterFullscreen = () => {
+    const el = videoBoxRef.current as
+      | (HTMLDivElement & { webkitRequestFullscreen?: () => void })
+      | null;
+    if (!el) return;
+    const doc = document as Document & { webkitFullscreenElement?: Element | null };
+    const fsEngaged = () =>
+      (document.fullscreenElement ?? doc.webkitFullscreenElement ?? null) === el;
+    const engageFallback = () => {
+      if (!fsEngaged()) setFallbackFs(true);
+    };
+    try {
+      if (el.requestFullscreen) {
+        el.requestFullscreen().catch(engageFallback);
+      } else if (el.webkitRequestFullscreen) {
+        el.webkitRequestFullscreen();
+      } else {
+        engageFallback();
+        return;
+      }
+      // Some environments neither resolve nor reject — check shortly after.
+      window.setTimeout(engageFallback, 700);
+    } catch {
+      engageFallback();
+    }
+  };
+  const exitFullscreen = () => {
+    setFallbackFs(false);
+    const doc = document as Document & { webkitExitFullscreen?: () => void };
+    if (document.fullscreenElement && document.exitFullscreen) void document.exitFullscreen();
+    else doc.webkitExitFullscreen?.();
+  };
+
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      {/* Header row: picker + mode + close. Kept outside the video so the
+          overlay never has to fight the player's own controls. */}
+      <Row
+        gap={8}
+        style={{
+          padding: theatre ? '10px 14px' : '7px 10px',
+          alignItems: 'center',
+          borderBottom: '1px solid var(--border)',
+          flexWrap: 'wrap',
+        }}
+      >
+        <span style={{ color: 'var(--live)', fontSize: 10 }}>●</span>
+        {theatre && <span style={{ fontSize: 13, fontWeight: 600 }}>Live theater</span>}
+        <select
+          value={selected.channelId}
+          onChange={(e) => onPick(e.target.value)}
+          style={{
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border)',
+            color: 'var(--fg)',
+            fontSize: theatre ? 12 : 11,
+            padding: theatre ? '5px 10px' : '4px 8px',
+            borderRadius: 4,
+            maxWidth: theatre ? 340 : 230,
+            minWidth: 0,
+          }}
+        >
+          {channels.map((c) => (
+            <option key={c.channelId} value={c.channelId}>
+              {c.displayName} · {PLATFORMS.find((p) => p.id === c.platform)?.name ?? c.platform} · {fmtN(c.concurrentViewers)}
+            </option>
+          ))}
+        </select>
+        <div style={{ flex: 1 }} />
+        {theatre && (
+          <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+            Starts muted · numbers refresh with the tracker
+          </span>
+        )}
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={onMode}
+          title={theatre ? 'Shrink next to the live number' : 'Expand to full width'}
+        >
+          {theatre ? '❐ Standard' : '▭ Theatre'}
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={enterFullscreen}
+          title="Fullscreen with the live counter on top"
+        >
+          ⛶ Fullscreen
+        </button>
+        <button type="button" className="btn btn-ghost" onClick={onClose} title="Close player">
+          ✕
+        </button>
+      </Row>
+
+      <div
+        ref={videoBoxRef}
+        style={{
+          position: fallbackFs ? 'fixed' : 'relative',
+          background: '#000',
+          ...(fallbackFs ? { inset: 0, zIndex: 9999 } : {}),
+          ...(isFullscreen
+            ? { width: '100vw', height: '100vh' }
+            : theatre
+              ? { height: 'min(56vh, 560px)' }
+              : { aspectRatio: '16 / 9' }),
+        }}
+      >
+        <iframe
+          key={src}
+          ref={iframeRef}
+          src={src}
+          title={`Live: ${selected.displayName}`}
+          style={{ width: '100%', height: '100%', border: 'none', display: 'block', position: 'absolute', inset: 0 }}
+          allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+          allowFullScreen
+        />
+        {/* Unmute chip — YouTube only; sits above the player's bottom
+            control bar so it never covers YouTube's own controls. */}
+        {selected.platform === 'youtube' && (
+          <button
+            type="button"
+            onClick={toggleYtMute}
+            style={{
+              position: 'absolute',
+              left: 12,
+              bottom: 56,
+              zIndex: 2,
+              background: 'rgba(8, 10, 16, 0.68)',
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              color: '#fff',
+              borderRadius: 999,
+              padding: ytMuted ? '8px 16px' : '8px 12px',
+              fontSize: 12.5,
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+          >
+            {ytMuted ? '🔇 Tap for sound' : '🔊'}
+          </button>
+        )}
+        {/* Fullscreen controls — the header row with the regular controls is
+            outside the fullscreened element, so exit + channel picker get
+            their own top-left cluster here. Esc works too, natively. */}
+        {isFullscreen && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 16,
+              left: 16,
+              zIndex: 2,
+              display: 'flex',
+              gap: 8,
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              maxWidth: '52%',
+            }}
+          >
+            <button
+              type="button"
+              onClick={exitFullscreen}
+              style={{
+                background: 'rgba(8, 10, 16, 0.68)',
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
+                border: '1px solid rgba(255,255,255,0.2)',
+                color: '#fff',
+                borderRadius: 6,
+                padding: '7px 14px',
+                fontSize: 12.5,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              ✕ Exit fullscreen
+            </button>
+            <select
+              value={selected.channelId}
+              onChange={(e) => onPick(e.target.value)}
+              style={{
+                background: 'rgba(8, 10, 16, 0.68)',
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
+                border: '1px solid rgba(255,255,255,0.2)',
+                color: '#fff',
+                borderRadius: 6,
+                padding: '7px 10px',
+                fontSize: 12.5,
+                maxWidth: 300,
+                cursor: 'pointer',
+              }}
+            >
+              {channels.map((c) => (
+                <option key={c.channelId} value={c.channelId} style={{ color: '#000' }}>
+                  {c.displayName} · {PLATFORMS.find((p) => p.id === c.platform)?.name ?? c.platform} · {fmtN(c.concurrentViewers)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* The live-count overlay. pointer-events: none — clicks fall
+            through to the player, so controls under it keep working. In
+            standard mode the giant hero number sits right beside the video,
+            so the overlay slims down to a corner chip; in fullscreen it
+            scales up to broadcast size. */}
+        <div
+          style={{
+            position: 'absolute',
+            top: isFullscreen ? 20 : theatre ? 12 : 8,
+            right: isFullscreen ? 24 : theatre ? 12 : 8,
+            pointerEvents: 'none',
+            background: 'rgba(8, 10, 16, 0.68)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            border: '1px solid rgba(255,255,255,0.14)',
+            color: '#fff',
+            borderRadius: isFullscreen ? 12 : 8,
+            padding: isFullscreen ? '18px 28px' : theatre ? '10px 16px' : '6px 10px',
+            textAlign: 'right',
+            maxWidth: '46%',
+          }}
+        >
+          <div
+            className="tabular"
+            style={{
+              fontSize: isFullscreen ? 64 : theatre ? 26 : 17,
+              fontWeight: 650,
+              lineHeight: 1.05,
+              letterSpacing: '-0.02em',
+            }}
+          >
+            {fmtN(live.totalCCV)}
+          </div>
+          <div
+            style={{
+              fontSize: isFullscreen ? 14 : theatre ? 9.5 : 8.5,
+              letterSpacing: '0.09em',
+              textTransform: 'uppercase',
+              opacity: 0.82,
+              marginTop: isFullscreen ? 8 : theatre ? 3 : 2,
+            }}
+          >
+            <span style={{ color: 'var(--live)' }}>●</span> watching now · {live.liveChannels} channels
+          </div>
+        </div>
       </div>
     </div>
   );

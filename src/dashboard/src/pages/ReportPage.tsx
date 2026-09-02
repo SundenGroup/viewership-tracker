@@ -824,6 +824,7 @@ function SimpleReport({
           hours={model.viewedHours}
           days={totalDayCount}
           timeSeries={timeline.total}
+          showBroadcastTime
           peakAt={model.peakTotalAt}
           timezone={seriesInfo.timezone}
           peakIncludeDate={scopeLevel !== 'day'}
@@ -1246,6 +1247,7 @@ function DetailedReport({
           hours={model.viewedHours}
           days={totalDayCount}
           timeSeries={timeline.total}
+          showBroadcastTime
           peakAt={model.peakTotalAt}
           timezone={seriesInfo.timezone}
           peakIncludeDate={scopeLevel !== 'day'}

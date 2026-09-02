@@ -34,6 +34,7 @@ const PLATFORMS: Array<{ id: Platform; label: string }> = [
   { id: 'trovo', label: 'Trovo' },
   { id: 'chzzk', label: 'CHZZK' },
   { id: 'soop', label: 'SOOP' },
+  { id: 'nimotv', label: 'NimoTV' },
 ];
 
 const TIERS: Array<{ id: ChannelTier; label: string }> = [
@@ -332,7 +333,9 @@ export function AddChannelDialog({
                             ? '@username'
                             : platform === 'steam'
                               ? '76561198… or vanity name'
-                              : 'username'
+                              : platform === 'nimotv'
+                                ? 'nimo.tv slug or room id (the part after nimo.tv/)'
+                                : 'username'
                   }
                   style={fieldStyle}
                 />

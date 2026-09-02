@@ -6,7 +6,8 @@
  * whether any broadcast day is live.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { readScopeFromUrl, writeScopeToUrl } from '@/utils/publicScopeUrl';
 import * as api from '@/services/api';
 import type { PublicSeriesInfo } from '@/services/api';
 import type {
@@ -532,15 +533,27 @@ export function PublicMobile({
     }
     return null;
   }, [seriesInfo]);
+  // Deep links — same URL contract as the desktop page; the Share button
+  // below shares window.location.href, so it always shares this exact view.
+  const urlInit = useMemo(() => readScopeFromUrl(seriesInfo), [seriesInfo]);
   const [scopeLevel, setScopeLevel] = useState<ScopeLevel>(
-    liveDayInitial ? 'day' : 'series',
+    urlInit.scopeLevel ?? (liveDayInitial ? 'day' : 'series'),
   );
   const [selectedStageId, setSelectedStageId] = useState<string | null>(
-    liveDayInitial?.stageId ?? null,
+    urlInit.stageId ?? liveDayInitial?.stageId ?? null,
   );
   const [selectedDayId, setSelectedDayId] = useState<string | null>(
-    liveDayInitial?.dayId ?? null,
+    urlInit.dayId ?? liveDayInitial?.dayId ?? null,
   );
+  useEffect(() => {
+    writeScopeToUrl(
+      seriesInfo,
+      // Mobile has no view-group control; preserve a group that arrived in
+      // the URL so re-sharing from a phone doesn't strip it.
+      { scopeLevel, stageId: selectedStageId, dayId: selectedDayId, viewGroup: urlInit.viewGroup ?? 'all' },
+      { defaultDayId: liveDayInitial?.dayId ?? null },
+    );
+  }, [seriesInfo, scopeLevel, selectedStageId, selectedDayId, liveDayInitial, urlInit]);
 
   // Derived scope for data fetching
   const activeStage = useMemo(() => {
@@ -807,6 +820,7 @@ export function PublicMobile({
                 hours={model.viewedHours}
                 days={Math.max(1, seriesInfo.stages.reduce((a, s) => a + s.broadcast_days.length, 0))}
                 timeSeries={timeline.total}
+                showBroadcastTime
               />
             </section>
           </>

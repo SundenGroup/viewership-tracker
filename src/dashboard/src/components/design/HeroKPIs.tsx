@@ -56,6 +56,7 @@ export function HeroKPIs({
   peakAt,
   timezone,
   peakIncludeDate,
+  showBroadcastTime = false,
 }: {
   variant?: HeroKPIVariant;
   peak: number | null;
@@ -86,6 +87,10 @@ export function HeroKPIs({
    *  full-series scopes where the peak could be any day). For single-day
    *  scopes leave this false to keep the caption tight. */
   peakIncludeDate?: boolean;
+  /** Show total broadcast time (computed from `timeSeries`, which must be
+   *  per-minute buckets) instead of the 24/7-equivalent ballpark. The
+   *  external reports and the public series view opt in. */
+  showBroadcastTime?: boolean;
 }) {
   const sizes = SIZES[variant];
 
@@ -98,6 +103,13 @@ export function HeroKPIs({
 
   // Ballpark: "24/7 equivalent viewer" baseline — hours / (days * 24)
   const avgEqViewers = days > 0 ? Math.round(safeHours / (days * 24)) : 0;
+
+  // Total broadcast time — non-zero minutes in the (per-minute) series.
+  const broadcastMinutes = showBroadcastTime && timeSeries ? timeSeries.filter((v) => v > 0).length : 0;
+  const broadcastTimeLabel =
+    broadcastMinutes > 0
+      ? `${Math.floor(broadcastMinutes / 60)}h ${String(broadcastMinutes % 60).padStart(2, '0')}m`
+      : null;
 
   const Cell = ({
     label,
@@ -367,7 +379,11 @@ export function HeroKPIs({
           {days} {days === 1 ? 'day' : 'days'} of live broadcast
         </span>
         <span style={{ color: 'var(--fg-dim)' }}>
-          ≈ {fmtCompact(avgEqViewers)} 24/7 equiv.
+          {showBroadcastTime
+            ? broadcastTimeLabel
+              ? `${broadcastTimeLabel} total`
+              : ''
+            : `≈ ${fmtCompact(avgEqViewers)} 24/7 equiv.`}
         </span>
       </div>
     </div>

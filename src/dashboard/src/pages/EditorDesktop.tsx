@@ -207,10 +207,27 @@ export function EditorDesktop({
   }, [scopeLevel, activeStage, allDays]);
 
   const viewGroups = useMemo(() => {
-    const raw = (seriesDetail?.metadata as { viewGroups?: Array<{ name: string }> } | undefined)
-      ?.viewGroups;
+    const raw = (seriesDetail?.metadata as { viewGroups?: ViewGroup[] } | undefined)?.viewGroups;
     return raw ?? [];
   }, [seriesDetail]);
+
+  // Resolve the active view group into {languages, platforms} — the same
+  // shape PublicPage feeds the API. 'all' (default) = no filter. Without
+  // this the dropdown only re-labels the Export dialog and the on-page
+  // data never narrows.
+  const viewFilter = useMemo<{ languages?: string[]; platforms?: string[] }>(() => {
+    if (viewGroup === 'all') return {};
+    const vg = viewGroups.find((g) => g.name === viewGroup);
+    if (!vg) return {};
+    return {
+      ...(vg.languages?.length ? { languages: vg.languages } : {}),
+      ...(vg.platforms?.length ? { platforms: vg.platforms } : {}),
+    };
+  }, [viewGroup, viewGroups]);
+  const hasViewFilter = Boolean(
+    (viewFilter.languages?.length ?? 0) > 0 || (viewFilter.platforms?.length ?? 0) > 0,
+  );
+  const filterKey = `${viewFilter.languages?.join(',') ?? ''}|${viewFilter.platforms?.join(',') ?? ''}`;
 
   const scope = useMemo(() => {
     if (scopeLevel === 'series' && seriesId) {
@@ -228,7 +245,12 @@ export function EditorDesktop({
     return null;
   }, [scopeLevel, activeStage, activeDay, seriesId]);
 
-  const timeline = useTimelineSeries({ scope, interval: 60 });
+  const timeline = useTimelineSeries({
+    scope,
+    interval: 60,
+    languages: viewFilter.languages,
+    platforms: viewFilter.platforms,
+  });
 
   // ── Scope-aware metrics + liveCCV ─────────────────────────────────────
   // usePollingData only fetches series-level. When the operator picks a
@@ -236,24 +258,24 @@ export function EditorDesktop({
   // otherwise "Peak today" prints the whole-series peak and "Hours
   // watched this scope" prints the whole-series hours. Fetch scoped
   // metrics on demand and union them into the dashboard model.
-  const needsScopedFetch = !!scope && scope.level !== 'series';
+  const needsScopedFetch = (!!scope && scope.level !== 'series') || hasViewFilter;
   const scopeCacheKey = scope ? `${scope.level}:${scope.id}` : '';
 
   const { data: scopedMetrics } = usePollingApi<MetricsResponse>(
     () =>
       needsScopedFetch && scope
-        ? api.getMetrics(scope.level, scope.id)
+        ? api.getMetrics(scope.level, scope.id, viewFilter.languages, viewFilter.platforms)
         : Promise.resolve(null as unknown as MetricsResponse),
-    [seriesId, scopeCacheKey],
+    [seriesId, scopeCacheKey, filterKey],
     { intervalMs: 30_000, enabled: needsScopedFetch && !!seriesId },
   );
 
   const { data: scopedLiveCCV } = usePollingApi<LiveCCVResponse>(
     () =>
       needsScopedFetch && scope && seriesId
-        ? api.getLiveCCV(seriesId, scope.level, scope.id)
+        ? api.getLiveCCV(seriesId, scope.level, scope.id, viewFilter.languages, viewFilter.platforms)
         : Promise.resolve(null as unknown as LiveCCVResponse),
-    [seriesId, scopeCacheKey],
+    [seriesId, scopeCacheKey, filterKey],
     { intervalMs: 30_000, enabled: needsScopedFetch && !!seriesId },
   );
 
