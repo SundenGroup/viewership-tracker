@@ -355,6 +355,7 @@ export function DiscoverDetailPage() {
           <Row
             gap={4}
             align="center"
+            wrap
             className="discover-tabbar"
             style={{
               marginBottom: 24,
