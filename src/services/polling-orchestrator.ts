@@ -760,7 +760,27 @@ export class PollingOrchestrator {
       // doesn't (legacy scrape result), keep the old behaviour for this
       // parent: single snapshot → parent, several → highest viewers wins.
       const withIds = parentSnapshots.filter((s) => !!s.streamId);
-      if (withIds.length !== parentSnapshots.length) {
+      // A stream that is not positively the channel's own must never take
+      // a slot: no snapshot, no child row. (Two foreign live videos became
+      // "official" GeoGuessr children on 2026-09-02 when the ownership
+      // check failed open.) A single candidate is the /live main stream,
+      // which has its own owner check in the adapter.
+      const unverified = withIds.length > 1 ? withIds.filter((s) => s.ownerVerified !== true) : [];
+      if (unverified.length > 0) {
+        logger.warn(
+          `[Poll] Multi-stream: ${parent.display_name}: dropping ${unverified.length} unverified stream(s): ` +
+            unverified.map((s) => `${s.streamId} "${(s.streamTitle ?? s.title ?? '').slice(0, 40)}"`).join(', '),
+        );
+        for (const u of unverified) {
+          const i = withIds.indexOf(u);
+          if (i >= 0) withIds.splice(i, 1);
+        }
+        if (withIds.length === 0) {
+          snapshotMap.set(key, []);
+          continue;
+        }
+      }
+      if (withIds.length !== parentSnapshots.length - unverified.length) {
         if (parentSnapshots.length > 1) {
           const sorted = [...parentSnapshots].sort(
             (a, b) => (b.concurrentViewers ?? 0) - (a.concurrentViewers ?? 0),
@@ -795,11 +815,10 @@ export class PollingOrchestrator {
           (c) => (c.metadata as Record<string, unknown>)?.multi_stream_index === streamIndex,
         );
         if (child) return child;
-        const childName = this.generateMultiStreamChildName(
-          parent.display_name,
-          snap.streamTitle ?? snap.title,
-          streamIndex,
-        );
+        // Always "<parent> (Stream N)": the live title is shown next to the
+        // row anyway, and a video title must never become a channel name.
+        void snap;
+        const childName = `${parent.display_name} (Stream ${streamIndex})`;
         try {
           const [created] = await this.db('channels').insert({
             series_id: parent.series_id,

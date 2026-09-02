@@ -11,6 +11,12 @@ export interface ChannelSnapshot {
   streamTitle?: string;
   /** Populated by AdapterRegistry.getViewerCountsMultiPlatform to identify source platform */
   platform?: string;
+  /**
+   * True when the adapter positively confirmed this stream belongs to the
+   * channel it is reported under (videos.list owner, or the channel-scoped
+   * API path). Multi-stream child rows are only ever created from these.
+   */
+  ownerVerified?: boolean;
 }
 
 export interface DiscoveredStream {

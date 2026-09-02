@@ -1,3 +1,4 @@
+import { gateMultiStreamIds } from '../utils/multi-stream-ownership';
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -140,6 +141,8 @@ interface ScrapedLiveData {
   concurrentViewers: number;
   startedAt: string | null;
   language: string | null;
+  /** UC id from the watch page's videoDetails, when the page exposed it. */
+  ownerChannelId?: string | null;
 }
 
 export interface QuotaUsage {
@@ -178,6 +181,8 @@ export class YouTubeAdapter implements PlatformAdapter {
    * temporarily disappears from the /streams scrape.
    */
   private readonly stickyLiveVideoIds = new Map<string, Map<string, number>>();
+  /** channelId → videoId → when videos.list last confirmed the channel owns it (see gateMultiStreamIds). */
+  private readonly verifiedMultiStreamIds = new Map<string, Map<string, number>>();
   private static readonly STICKY_VIDEO_TTL_MS = 10 * 60_000;
   private quotaUsed = 0;
   private quotaResetDate: string = todayDateString();
@@ -556,46 +561,44 @@ export class YouTubeAdapter implements PlatformAdapter {
       // accept a transient false positive than blank the channel out
       // for the rest of the broadcast — the channel-ownership step in
       // /watch?v= scrapeVideoLiveData is the second line of defence.
-      let verifiedIds = liveVideoIds;
+      // Ownership gate (fail closed). videos.list is the truth-source for
+      // who owns each id. When it answers, foreign and unreturned ids are
+      // dropped. When it does NOT answer (quota, outage), nothing new is
+      // admitted: only ids this channel already proved it owns in the last
+      // 30 minutes survive. The old fail-open branch here is how two other
+      // channels' live videos became "official" GeoGuessr children on
+      // 2026-09-02.
+      let verifiedIds: string[] = [];
       if (liveVideoIds.length > 0) {
+        let owners: Map<string, string> | null = null;
         try {
           const details = await this.getVideoDetails(liveVideoIds);
-          const ownerByVideoId = new Map<string, string>();
-          for (const v of details) {
-            if (v.snippet?.channelId) ownerByVideoId.set(v.id, v.snippet.channelId);
-          }
-          if (ownerByVideoId.size > 0) {
-            const owned: string[] = [];
-            const dropped: Array<{ vid: string; owner: string }> = [];
-            for (const vid of liveVideoIds) {
-              const owner = ownerByVideoId.get(vid);
-              if (!owner) {
-                // videos.list didn't return this id (deleted, private,
-                // or geo-blocked). Be conservative: drop it. A real
-                // live stream would always come back from videos.list.
-                dropped.push({ vid, owner: '<not-returned>' });
-                continue;
-              }
-              if (owner === channelId) {
-                owned.push(vid);
-              } else {
-                dropped.push({ vid, owner });
-              }
+          if (details.length > 0) {
+            owners = new Map<string, string>();
+            for (const v of details) {
+              if (v.snippet?.channelId) owners.set(v.id, v.snippet.channelId);
             }
-            if (dropped.length > 0) {
-              logger.info(
-                `YouTube: multi-stream scrape for ${channelId} — videos.list rejected ${dropped.length} foreign id(s): ` +
-                  dropped.map((d) => `${d.vid}→${d.owner}`).join(', '),
-              );
-            }
-            verifiedIds = owned;
           }
-          // Else: API returned nothing (quota exhausted / outage) — keep
-          // candidates as-is and let downstream defences handle it.
         } catch (err) {
           logger.warn(
-            `YouTube: multi-stream ownership check failed for ${channelId}, falling back to scrape-only`,
+            `YouTube: multi-stream ownership check failed for ${channelId}; admitting only previously verified ids`,
             { error: (err as Error).message },
+          );
+        }
+        const previouslyVerified = this.verifiedMultiStreamIds.get(channelId) ?? new Map<string, number>();
+        const gate = gateMultiStreamIds(channelId, liveVideoIds, owners, previouslyVerified, Date.now());
+        this.verifiedMultiStreamIds.set(channelId, previouslyVerified);
+        verifiedIds = gate.kept;
+        if (gate.rejected.length > 0) {
+          logger.info(
+            `YouTube: multi-stream scrape for ${channelId}: videos.list rejected ${gate.rejected.length} foreign id(s): ` +
+              gate.rejected.map((d) => `${d.videoId}→${d.owner}`).join(', '),
+          );
+        }
+        if (gate.unverified.length > 0) {
+          logger.warn(
+            `YouTube: multi-stream scrape for ${channelId}: ownership lookup unavailable, dropped ${gate.unverified.length} unverified id(s): ` +
+              gate.unverified.join(', '),
           );
         }
       }
@@ -856,6 +859,7 @@ export class YouTubeAdapter implements PlatformAdapter {
         startedAt: v.liveStreamingDetails?.actualStartTime ?? null,
         streamId: v.id,
         streamTitle: v.snippet.title ?? undefined,
+        ownerVerified: true,
       });
     }
 
@@ -1158,6 +1162,9 @@ export class YouTubeAdapter implements PlatformAdapter {
 
       // Channel ID for reference
       const channelIdMatch = html.match(/"channelId":"(UC[a-zA-Z0-9_-]+)"/);
+      // The owner as stated by the player's own videoDetails block — the
+      // first "channelId" on a watch page can belong to a recommended tile.
+      const ownerMatch = html.match(/"videoDetails":\{[\s\S]{0,4000}?"channelId":"(UC[a-zA-Z0-9_-]+)"/);
 
       logger.debug(`YouTube scrape video: ${videoId} is LIVE → viewers=${concurrentViewers}, channel=${channelName}`);
 
@@ -1168,6 +1175,7 @@ export class YouTubeAdapter implements PlatformAdapter {
         concurrentViewers,
         startedAt,
         language,
+        ownerChannelId: ownerMatch ? ownerMatch[1] : null,
       };
     } catch (err) {
       const errMsg = (err as Error).message;
@@ -1738,6 +1746,17 @@ export class YouTubeAdapter implements PlatformAdapter {
               this.dropStickyVideoId(resolvedId, liveVideoId);
               continue;
             }
+            // Second line of defence: the watch page names its owner.
+            if (
+              streamData.ownerChannelId &&
+              streamData.ownerChannelId.toLowerCase() !== resolvedId.toLowerCase()
+            ) {
+              logger.warn(
+                `YouTube: multi-stream ${originalId}: ${liveVideoId} belongs to ${streamData.ownerChannelId}, dropping it`,
+              );
+              this.dropStickyVideoId(resolvedId, liveVideoId);
+              continue;
+            }
 
             // Try API enrichment for this video
             const apiVideo = videoMap.get(liveVideoId);
@@ -1754,6 +1773,9 @@ export class YouTubeAdapter implements PlatformAdapter {
               startedAt: apiVideo?.liveStreamingDetails?.actualStartTime ?? streamData.startedAt,
               streamId: liveVideoId,
               streamTitle: apiVideo?.snippet.title ?? streamData.title ?? undefined,
+              // Every id here passed the videos.list ownership gate (or was
+              // verified for this channel within the last 30 minutes).
+              ownerVerified: true,
             });
           }
           continue; // Skip the single-stream path below
