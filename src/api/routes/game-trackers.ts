@@ -920,7 +920,7 @@ router.get('/:slug/range-leaderboard', async (req: Request, res: Response, next:
       ChannelModel.findByIds(channelIds),
       // Period grade: median across the sessions inside the range, keyed by
       // streamer identity to match how the leaderboard groups rows.
-      StreamSessionModel.rangeGradesFor(tracker.id, fromTs, toTs).catch(() => new Map()),
+      StreamSessionModel.rangeGradesFor(tracker.id, fromTs, toTs, channelIds).catch(() => new Map()),
       StreamSessionModel.scoredSessionCounts30d(tracker.id, channelIds),
     ]);
     const channelMap = new Map(channels.map((c) => [c.id, c]));

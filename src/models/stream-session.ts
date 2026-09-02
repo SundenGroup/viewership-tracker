@@ -666,34 +666,49 @@ export async function todayRank(
  * days among all channels' best peaks in this tracker. Null when the
  * channel has no sessions in the window or fewer than 10 channels do.
  */
+// The tracker-wide "best peak per channel" distribution behind the
+// percentile is the same for every channel page opened in the same minute
+// — computed once per tracker and held for 60 s (130k sessions otherwise
+// re-aggregated on every channel page load).
+const PEAK_DIST_TTL_MS = 60_000;
+const peakDistCache = new Map<string, { at: number; bests: Map<string, number>; sorted: number[] }>();
+
+async function peakDistribution30d(gameTrackerId: string): Promise<{ bests: Map<string, number>; sorted: number[] }> {
+  const cached = peakDistCache.get(gameTrackerId);
+  if (cached && Date.now() - cached.at < PEAK_DIST_TTL_MS) return cached;
+  const result = await db.raw<{ rows: Array<{ channel_id: string; best: string }> }>(
+    `
+    SELECT channel_id, MAX(peak_ccv) AS best
+    FROM stream_sessions
+    WHERE game_tracker_id = ?
+      AND started_at >= now() - interval '30 days'
+    GROUP BY channel_id
+    `,
+    [gameTrackerId],
+  );
+  const bests = new Map<string, number>();
+  for (const r of result.rows) bests.set(r.channel_id, Number(r.best));
+  const sorted = [...bests.values()].sort((a, b) => a - b);
+  const entry = { at: Date.now(), bests, sorted };
+  peakDistCache.set(gameTrackerId, entry);
+  return entry;
+}
+
 export async function peakPercentile30d(
   gameTrackerId: string,
   channelId: string,
 ): Promise<number | null> {
-  const result = await db.raw<{
-    rows: Array<{ pct: string; n: string }>;
-  }>(
-    `
-    WITH per_channel AS (
-      SELECT channel_id, MAX(peak_ccv) AS best
-      FROM stream_sessions
-      WHERE game_tracker_id = ?
-        AND started_at >= now() - interval '30 days'
-      GROUP BY channel_id
-    ),
-    ranked AS (
-      SELECT channel_id,
-             PERCENT_RANK() OVER (ORDER BY best) AS pr,
-             COUNT(*) OVER () AS n
-      FROM per_channel
-    )
-    SELECT ROUND(pr * 100) AS pct, n FROM ranked WHERE channel_id = ?
-    `,
-    [gameTrackerId, channelId],
-  );
-  const row = result.rows[0];
-  if (!row || Number(row.n) < 10) return null;
-  return Number(row.pct);
+  const dist = await peakDistribution30d(gameTrackerId);
+  const n = dist.sorted.length;
+  const best = dist.bests.get(channelId);
+  if (best == null || n < 10) return null;
+  // PERCENT_RANK: (rows strictly below) / (n - 1)
+  let below = 0;
+  for (const v of dist.sorted) {
+    if (v < best) below++;
+    else break;
+  }
+  return n > 1 ? Math.round((below / (n - 1)) * 100) : 0;
 }
 
 /**
@@ -865,7 +880,10 @@ export async function rangeGradesFor(
   gameTrackerId: string,
   fromTs: Date,
   toTs: Date,
+  /** Restrict to the channels on the page — grades for a whole tracker's month are never all needed at once. */
+  channelIds?: string[],
 ): Promise<Map<string, { grade: string; sessions: number; avgScore: number | null }>> {
+  const scoped = channelIds && channelIds.length > 0;
   const rows = await db.raw<{
     rows: Array<{ key: string; grade: string; sessions: string; avg_score: string | null }>;
   }>(
@@ -881,9 +899,10 @@ export async function rangeGradesFor(
       AND ss.status <> 'live'
       AND ss.started_at < ?
       AND COALESCE(ss.ended_at, ss.started_at) >= ?
+      ${scoped ? 'AND ss.channel_id = ANY(?::uuid[])' : ''}
     GROUP BY 1
     `,
-    [gameTrackerId, toTs, fromTs],
+    scoped ? [gameTrackerId, toTs, fromTs, channelIds] : [gameTrackerId, toTs, fromTs],
   );
   const out = new Map<string, { grade: string; sessions: number; avgScore: number | null }>();
   for (const r of rows.rows) {
