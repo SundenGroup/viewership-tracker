@@ -108,6 +108,7 @@ export async function leaderboardAt(
   windowSeconds = 120,
   limit = 50,
   offset = 0,
+  filters: { platform?: string | null; language?: string | null } = {},
 ): Promise<
   Array<{
     channel_id: string;
@@ -120,6 +121,12 @@ export async function leaderboardAt(
 > {
   // Pick the most recent row per channel within [at-window, at]
   const fromTs = new Date(at.getTime() - windowSeconds * 1000);
+  const filterSql =
+    (filters.platform ? ' AND platform = ?' : '') +
+    (filters.language ? ' AND LOWER(language) = LOWER(?)' : '');
+  const filterParams: unknown[] = [];
+  if (filters.platform) filterParams.push(filters.platform);
+  if (filters.language) filterParams.push(filters.language);
   return db
     .select<
       Array<{
@@ -140,9 +147,10 @@ export async function leaderboardAt(
           WHERE game_tracker_id = ?
             AND "timestamp" >= ?
             AND "timestamp" <= ?
+            ${filterSql}
           ORDER BY channel_id, "timestamp" DESC
         ) s`,
-        [gameTrackerId, fromTs, at],
+        [gameTrackerId, fromTs, at, ...filterParams],
       ),
     )
     .orderBy([{ column: 's.concurrent_viewers', order: 'desc' }, { column: 's.channel_id', order: 'asc' }])

@@ -405,12 +405,23 @@ export async function liveChannelCount(
   gameTrackerId: string,
   at: Date,
   windowSeconds = 120,
+  filters: { platform?: string | null; language?: string | null } = {},
 ): Promise<number> {
   const fromTs = new Date(at.getTime() - windowSeconds * 1000);
+  const params: unknown[] = [gameTrackerId, fromTs, at];
+  let filterSql = '';
+  if (filters.platform) {
+    filterSql += ' AND platform = ?';
+    params.push(filters.platform);
+  }
+  if (filters.language) {
+    filterSql += ' AND LOWER(language) = LOWER(?)';
+    params.push(filters.language);
+  }
   const result = await db.raw<{ rows: Array<{ n: string }> }>(
     `SELECT COUNT(DISTINCT channel_id) AS n FROM game_tracker_snapshots
-     WHERE game_tracker_id = ? AND "timestamp" >= ? AND "timestamp" <= ?`,
-    [gameTrackerId, fromTs, at],
+     WHERE game_tracker_id = ? AND "timestamp" >= ? AND "timestamp" <= ? ${filterSql}`,
+    params,
   );
   return Number(result.rows[0]?.n ?? 0);
 }

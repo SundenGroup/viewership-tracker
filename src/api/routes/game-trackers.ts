@@ -606,9 +606,13 @@ router.get('/:slug/leaderboard', async (req: Request, res: Response, next: NextF
       res.status(400).json({ error: 'at must be a valid ISO timestamp' });
       return;
     }
+    const filters = {
+      platform: req.query.platform ? String(req.query.platform) : null,
+      language: req.query.language ? String(req.query.language) : null,
+    };
     const [rows, total] = await Promise.all([
-      GameTrackerSnapshotModel.leaderboardAt(tracker.id, at, 120, limit, offset),
-      envelope ? RollupReads.liveChannelCount(tracker.id, at, 120) : Promise.resolve(0),
+      GameTrackerSnapshotModel.leaderboardAt(tracker.id, at, 120, limit, offset, filters),
+      envelope ? RollupReads.liveChannelCount(tracker.id, at, 120, filters) : Promise.resolve(0),
     ]);
     if (rows.length === 0) {
       res.json(envelope ? { rows: [], total, limit, offset } : []);
