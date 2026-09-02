@@ -97,3 +97,22 @@ export async function rollupRecentDays(days: number): Promise<DayRollupResult[]>
   }
   return results;
 }
+
+// ── Intraday pass ────────────────────────────────────────────────────────
+// Today's partial day is rolled every few minutes so the range leaderboard
+// and breakdowns can read it from day stats instead of scanning today's
+// raw rows on every request. The reads only trust it while it is fresh.
+
+let lastTodayRollupAt = 0;
+export const TODAY_ROLLUP_FRESH_MS = 8 * 60_000;
+
+export async function rollupToday(): Promise<DayRollupResult> {
+  const result = await rollupDay(utcDay(0));
+  lastTodayRollupAt = Date.now();
+  return result;
+}
+
+/** True when today's day-stats row set was refreshed recently enough to serve reads. */
+export function todayRollupFresh(): boolean {
+  return Date.now() - lastTodayRollupAt < TODAY_ROLLUP_FRESH_MS;
+}

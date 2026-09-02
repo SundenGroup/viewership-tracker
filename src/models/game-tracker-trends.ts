@@ -75,19 +75,17 @@ export async function trendsV2(
       WHERE game_tracker_id = :tid AND day >= :baselineFrom::date AND day < :baselineTo::date
       GROUP BY channel_id
     ),
-    older AS (
-      SELECT DISTINCT channel_id
-      FROM game_tracker_channel_day_stats
-      WHERE game_tracker_id = :tid AND day < :baselineFrom::date
     )
     SELECT c.channel_id,
            c.peak AS cur_peak,
            b.peak AS baseline_peak,
-           (o.channel_id IS NOT NULL) AS has_older,
+           EXISTS (
+             SELECT 1 FROM game_tracker_channel_day_stats o
+             WHERE o.game_tracker_id = :tid AND o.channel_id = c.channel_id AND o.day < :baselineFrom::date
+           ) AS has_older,
            gtc.joined_at
     FROM cur c
     LEFT JOIN base b ON b.channel_id = c.channel_id
-    LEFT JOIN older o ON o.channel_id = c.channel_id
     LEFT JOIN game_tracker_channels gtc ON gtc.game_tracker_id = :tid AND gtc.channel_id = c.channel_id
     WHERE c.peak >= 50
     `,

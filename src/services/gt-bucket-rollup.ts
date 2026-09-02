@@ -1,7 +1,8 @@
 /**
  * Game-tracker 10-minute bucket rollup — pre-aggregates
  * game_tracker_snapshots into game_tracker_bucket_stats (one row per
- * tracker / platform / 10-minute bucket, platform '*' = every platform)
+ * tracker / platform / language / 10-minute bucket; '*' = every platform
+ * or every language, '-' = no language tag)
  * so the Trends timeline and the 24h peak stop scanning raw minute rows.
  *
  * Semantics are exactly rangeAggregate()'s: a minute's total is the SUM
@@ -36,37 +37,39 @@ export async function rollupBuckets(from: Date, to: Date): Promise<BucketRollupR
   const result = await db.raw<{ rowCount: number }>(
     `
     WITH per_minute AS (
+      -- finest grain: one row per tracker / platform / language / minute
       SELECT game_tracker_id,
              platform::text AS platform,
+             COALESCE(NULLIF(LOWER(language), ''), '-') AS language,
              date_trunc('minute', "timestamp") AS minute,
              SUM(concurrent_viewers) AS ccv,
              COUNT(DISTINCT channel_id) AS streams
       FROM game_tracker_snapshots
       WHERE "timestamp" >= ? AND "timestamp" < ?
-      GROUP BY 1, 2, 3
-    ),
-    per_minute_all AS (
-      SELECT game_tracker_id, '*'::text AS platform, minute, SUM(ccv) AS ccv, SUM(streams) AS streams
-      FROM per_minute
-      GROUP BY 1, 2, 3
+      GROUP BY 1, 2, 3, 4
     ),
     u AS (
-      SELECT * FROM per_minute
+      SELECT game_tracker_id, platform, language, minute, ccv, streams FROM per_minute
       UNION ALL
-      SELECT * FROM per_minute_all
+      SELECT game_tracker_id, platform, '*', minute, SUM(ccv), SUM(streams) FROM per_minute GROUP BY 1, 2, 4
+      UNION ALL
+      SELECT game_tracker_id, '*', language, minute, SUM(ccv), SUM(streams) FROM per_minute GROUP BY 1, 3, 4
+      UNION ALL
+      SELECT game_tracker_id, '*', '*', minute, SUM(ccv), SUM(streams) FROM per_minute GROUP BY 1, 4
     )
     INSERT INTO game_tracker_bucket_stats
-      (game_tracker_id, platform, bucket_ts, ccv_sum, stream_sum, ccv_max, minutes)
+      (game_tracker_id, platform, language, bucket_ts, ccv_sum, stream_sum, ccv_max, minutes)
     SELECT game_tracker_id,
            platform,
+           language,
            date_bin(?::interval, minute, ?::timestamptz) AS bucket_ts,
            SUM(ccv)::bigint,
            SUM(streams)::bigint,
            MAX(ccv)::int,
            COUNT(*)::int
     FROM u
-    GROUP BY 1, 2, 3
-    ON CONFLICT (game_tracker_id, platform, bucket_ts) DO UPDATE SET
+    GROUP BY 1, 2, 3, 4
+    ON CONFLICT (game_tracker_id, platform, language, bucket_ts) DO UPDATE SET
       ccv_sum    = EXCLUDED.ccv_sum,
       stream_sum = EXCLUDED.stream_sum,
       ccv_max    = EXCLUDED.ccv_max,

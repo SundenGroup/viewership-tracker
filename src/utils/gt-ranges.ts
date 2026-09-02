@@ -40,6 +40,12 @@ export function splitRangeByUtcDays(
   from: Date,
   to: Date,
   rolledThroughDay: string | null,
+  /**
+   * True when today's partial day has been rolled up within the last few
+   * minutes (the intraday pass): the trailing raw edge is then dropped and
+   * today is read from the rollup too, a few minutes stale at most.
+   */
+  todayRolled = false,
 ): UtcDaySplit {
   if (!(to.getTime() > from.getTime())) return { fullDays: null, rawEdges: [] };
   if (!rolledThroughDay) return { fullDays: null, rawEdges: [{ from, to }] };
@@ -47,7 +53,9 @@ export function splitRangeByUtcDays(
   const firstFull = utcMidnightAtOrAfter(from);
   // Exclusive end of the rolled span: the midnight after rolledThroughDay.
   const rolledEnd = new Date(Date.parse(`${rolledThroughDay}T00:00:00Z`) + DAY_MS);
-  const lastFull = new Date(Math.min(utcMidnightAtOrBefore(to).getTime(), rolledEnd.getTime()));
+  const toBoundary =
+    todayRolled && rolledThroughDay === toUtcDay(to) ? utcMidnightAtOrAfter(to) : utcMidnightAtOrBefore(to);
+  const lastFull = new Date(Math.min(toBoundary.getTime(), rolledEnd.getTime()));
 
   if (lastFull.getTime() <= firstFull.getTime()) {
     return { fullDays: null, rawEdges: [{ from, to }] };

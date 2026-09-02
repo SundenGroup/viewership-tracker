@@ -1,5 +1,6 @@
 import db from '../utils/db';
 import * as Snapshots from './game-tracker-snapshot';
+import { todayRollupFresh } from '../services/gt-day-rollup';
 import {
   BUCKET_EPOCH,
   BUCKET_ROLLUP_SECONDS,
@@ -44,7 +45,7 @@ export async function rangeAggregate(
   }
   const plat = platform ?? '*';
   const maxRow = await db('game_tracker_bucket_stats')
-    .where({ game_tracker_id: gameTrackerId, platform: plat })
+    .where({ game_tracker_id: gameTrackerId, platform: plat, language: '*' })
     .max<{ m: Date | null }>('bucket_ts as m')
     .first();
   if (!maxRow?.m) {
@@ -63,7 +64,7 @@ export async function rangeAggregate(
       SELECT date_bin(?::interval, bucket_ts, ?::timestamptz) AS ts,
              SUM(ccv_sum) AS ccv_sum, SUM(stream_sum) AS stream_sum, SUM(minutes) AS minutes
       FROM game_tracker_bucket_stats
-      WHERE game_tracker_id = ? AND platform = ? AND bucket_ts >= ? AND bucket_ts < ?
+      WHERE game_tracker_id = ? AND platform = ? AND language = '*' AND bucket_ts >= ? AND bucket_ts < ?
       GROUP BY 1
       `,
       [interval, BUCKET_EPOCH, gameTrackerId, plat, bucketFloor(fromTs), cutoff],
@@ -159,7 +160,7 @@ export async function rangeLeaderboardPage(
 ): Promise<{ rows: RangeLeaderboardRow[]; total: number; source: 'rollup' | 'raw'; from: Date }> {
   const fromTs = snapLongRangeStart(fromArg, toTs);
   const through = await rolledThroughDay(gameTrackerId);
-  const split = splitRangeByUtcDays(fromTs, toTs, through);
+  const split = splitRangeByUtcDays(fromTs, toTs, through, todayRollupFresh());
   if (!split.fullDays) {
     const [rows, total] = await Promise.all([
       Snapshots.rangeLeaderboard(gameTrackerId, fromTs, toTs, limit, opts),
@@ -314,63 +315,77 @@ export async function breakdown(
   platformFilter?: string | null,
 ): Promise<Breakdown & { from: Date }> {
   const fromTs = snapLongRangeStart(fromArg, toTs);
-  const through = await rolledThroughDay(gameTrackerId);
-  const split = splitRangeByUtcDays(fromTs, toTs, through);
-  if (!split.fullDays) {
+  const plat = platformFilter ?? '*';
+  const maxRow = await db('game_tracker_bucket_stats')
+    .where({ game_tracker_id: gameTrackerId, platform: plat, language: '*' })
+    .max<{ m: Date | null }>('bucket_ts as m')
+    .first();
+  if (!maxRow?.m) {
     const [platform, language] = await Promise.all([
       Snapshots.platformBreakdown(gameTrackerId, fromTs, toTs, platformFilter),
       Snapshots.languageBreakdown(gameTrackerId, fromTs, toTs, platformFilter),
     ]);
     return { platform, language, source: 'raw', from: fromTs };
   }
-  const bindings: Record<string, unknown> = {
-    tid: gameTrackerId,
-    fromDay: split.fullDays.fromDay,
-    toDay: split.fullDays.toDay,
-  };
-  const pfDays = platformFilter ? 'AND c.platform = :platform' : '';
-  const pfRaw = platformFilter ? 'AND platform = :platform' : '';
-  if (platformFilter) bindings.platform = platformFilter;
-  const edgeSqls = split.rawEdges.map((e, i) => {
-    bindings[`e${i}From`] = e.from;
-    bindings[`e${i}To`] = e.to;
-    return `
-      SELECT platform::text AS platform, language, SUM(concurrent_viewers) AS ccv_minutes, MAX(concurrent_viewers) AS peak
-      FROM game_tracker_snapshots
-      WHERE game_tracker_id = :tid AND "timestamp" >= :e${i}From AND "timestamp" < :e${i}To ${pfRaw}
-      GROUP BY 1, 2`;
-  });
-  const result = await db.raw<{
-    rows: Array<{ platform: string; language: string | null; ccv_minutes: string; peak: string }>;
-  }>(
-    `
-    SELECT platform, language, SUM(ccv_minutes) AS ccv_minutes, MAX(peak) AS peak
-    FROM (
-      SELECT c.platform::text AS platform, c.language, SUM(d.ccv_minutes) AS ccv_minutes, MAX(d.peak_ccv) AS peak
-      FROM game_tracker_channel_day_stats d
-      JOIN channels c ON c.id = d.channel_id
-      WHERE d.game_tracker_id = :tid AND d.day >= :fromDay::date AND d.day < :toDay::date ${pfDays}
-      GROUP BY 1, 2
-      ${edgeSqls.map((s) => `UNION ALL ${s}`).join('\n')}
-    ) u
-    GROUP BY 1, 2
-    `,
-    bindings,
-  );
+  const rolledEnd = new Date(new Date(maxRow.m).getTime() + BUCKET_ROLLUP_SECONDS * 1000);
+  const cutoff = new Date(Math.min(rolledEnd.getTime(), toTs.getTime()));
+
+  // Rolled part: platform shares come from the language='*' rows, language
+  // shares from the platform-scoped rows (platform '*' unless filtered).
   const byPlatform = new Map<string, { total: number; peak: number }>();
   const byLanguage = new Map<string | null, { total: number; peak: number }>();
-  for (const r of result.rows) {
-    const total = Number(r.ccv_minutes);
-    const peak = Number(r.peak);
-    const p = byPlatform.get(r.platform) ?? { total: 0, peak: 0 };
-    p.total += total;
-    p.peak = Math.max(p.peak, peak);
-    byPlatform.set(r.platform, p);
-    const lang = r.language ? r.language.toLowerCase() : null;
-    const l = byLanguage.get(lang) ?? { total: 0, peak: 0 };
-    l.total += total;
-    l.peak = Math.max(l.peak, peak);
-    byLanguage.set(lang, l);
+  const add = (map: Map<string | null, { total: number; peak: number }>, key: string | null, total: number, peak: number) => {
+    const cur = map.get(key) ?? { total: 0, peak: 0 };
+    cur.total += total;
+    cur.peak = Math.max(cur.peak, peak);
+    map.set(key, cur);
+  };
+  if (cutoff.getTime() > fromTs.getTime()) {
+    const rolled = await db.raw<{
+      rows: Array<{ platform: string; language: string; ccv_sum: string; ccv_max: string }>;
+    }>(
+      `
+      SELECT platform, language, SUM(ccv_sum) AS ccv_sum, MAX(ccv_max) AS ccv_max
+      FROM game_tracker_bucket_stats
+      WHERE game_tracker_id = ?
+        AND bucket_ts >= ? AND bucket_ts < ?
+        AND (
+          (language = '*' AND platform <> '*' ${platformFilter ? 'AND platform = ?' : ''})
+          OR (platform = ? AND language <> '*')
+        )
+      GROUP BY 1, 2
+      `,
+      platformFilter
+        ? [gameTrackerId, bucketFloor(fromTs), cutoff, platformFilter, plat]
+        : [gameTrackerId, bucketFloor(fromTs), cutoff, plat],
+    );
+    for (const r of rolled.rows) {
+      const total = Number(r.ccv_sum);
+      const peak = Number(r.ccv_max);
+      if (r.language === '*') add(byPlatform as Map<string | null, { total: number; peak: number }>, r.platform, total, peak);
+      else add(byLanguage, r.language === '-' ? null : r.language, total, peak);
+    }
+  }
+  // Raw tail — the minutes the rollup has not reached yet (≤ a few minutes).
+  if (cutoff.getTime() < toTs.getTime()) {
+    const rawFrom = new Date(Math.max(cutoff.getTime(), fromTs.getTime()));
+    const tail = await db.raw<{
+      rows: Array<{ platform: string; language: string | null; ccv_sum: string; ccv_max: string }>;
+    }>(
+      `
+      SELECT platform::text AS platform, language, SUM(concurrent_viewers) AS ccv_sum, MAX(concurrent_viewers) AS ccv_max
+      FROM game_tracker_snapshots
+      WHERE game_tracker_id = ? AND "timestamp" >= ? AND "timestamp" < ? ${platformFilter ? 'AND platform = ?' : ''}
+      GROUP BY 1, 2
+      `,
+      platformFilter ? [gameTrackerId, rawFrom, toTs, platformFilter] : [gameTrackerId, rawFrom, toTs],
+    );
+    for (const r of tail.rows) {
+      const total = Number(r.ccv_sum);
+      const peak = Number(r.ccv_max);
+      add(byPlatform as Map<string | null, { total: number; peak: number }>, r.platform, total, peak);
+      add(byLanguage, r.language ? r.language.toLowerCase() : null, total, peak);
+    }
   }
   const platform = [...byPlatform.entries()]
     .map(([platform, v]) => ({ platform, total_ccv_minutes: v.total, peak: v.peak }))

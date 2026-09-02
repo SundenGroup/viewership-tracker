@@ -118,3 +118,20 @@ describe('snapLongRangeStart', () => {
     expect(snapLongRangeStart(from, to)).toEqual(from);
   });
 });
+
+describe('splitRangeByUtcDays with a fresh intraday rollup', () => {
+  it('reads today from day stats and drops the trailing raw edge', () => {
+    const from = new Date('2026-08-26T00:00:00Z');
+    const to = new Date('2026-09-02T06:30:00Z');
+    const split = splitRangeByUtcDays(from, to, '2026-09-02', true);
+    expect(split.fullDays).toEqual({ fromDay: '2026-08-26', toDay: '2026-09-03' });
+    expect(split.rawEdges).toEqual([]);
+  });
+  it('keeps the raw edge when the rollup is stale', () => {
+    const from = new Date('2026-08-26T00:00:00Z');
+    const to = new Date('2026-09-02T06:30:00Z');
+    const split = splitRangeByUtcDays(from, to, '2026-09-02', false);
+    expect(split.fullDays).toEqual({ fromDay: '2026-08-26', toDay: '2026-09-02' });
+    expect(split.rawEdges).toEqual([{ from: new Date('2026-09-02T00:00:00Z'), to }]);
+  });
+});

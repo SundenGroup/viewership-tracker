@@ -27,7 +27,7 @@ import { ReportAgent } from './agent/report-agent';
 import { ViewershipWebSocketServer } from './api/websocket';
 import { getPushNotifier } from './services/push-notifier';
 import { scoreSessions, sessionIdsEndedWithin } from './services/stream-health';
-import { rollupRecentDays } from './services/gt-day-rollup';
+import { rollupRecentDays, rollupToday } from './services/gt-day-rollup';
 import { rollupRecentBuckets } from './services/gt-bucket-rollup';
 import { repairUnfinalizedSessions } from './models/stream-session';
 import { purgeExpiredRawSnapshots } from './services/raw-retention';
@@ -302,6 +302,23 @@ async function bootstrap(): Promise<void> {
         }
       }, { timezone: 'Etc/UTC', noOverlap: true, name: 'gt-day-rollup-early' }),
     );
+
+    // Today's partial day, every 5 minutes, so week/month leaderboards read
+    // it from day stats instead of scanning today's raw rows per request.
+    maintenanceTasks.push(
+      cron.schedule('*/5 * * * *', async () => {
+        try {
+          await rollupToday();
+        } catch (err) {
+          logger.error('[GTRollup] intraday rollup failed', { error: (err as Error).message });
+        }
+      }, { timezone: 'Etc/UTC', noOverlap: true, name: 'gt-day-rollup-today' }),
+    );
+    setTimeout(() => {
+      rollupToday().catch((err) =>
+        logger.error('[GTRollup] boot intraday rollup failed', { error: (err as Error).message }),
+      );
+    }, 30_000);
 
     // 10-minute bucket rollup for the Trends timeline — every 2 minutes,
     // re-rolling the last half hour (src/services/gt-bucket-rollup.ts).
