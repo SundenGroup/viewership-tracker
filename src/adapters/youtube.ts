@@ -1,4 +1,5 @@
 import { gateMultiStreamIds } from '../utils/multi-stream-ownership';
+import { extractLiveTileIds } from '../utils/youtube-live-tiles';
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -480,6 +481,17 @@ export class YouTubeAdapter implements PlatformAdapter {
       const liveVideoIds: string[] = [];
       const seenIds = new Set<string>();
 
+      // Strategy 0: the current lockupViewModel tiles, one id per tile.
+      // The badge-then-scan-backwards heuristics below resolved two of
+      // three badges to the same id on this markup (GeoGuessr C-stream,
+      // 2026-09-02); per-tile parsing is exact when the tiles are present.
+      for (const vid of extractLiveTileIds(html)) {
+        if (!seenIds.has(vid)) {
+          seenIds.add(vid);
+          liveVideoIds.push(vid);
+        }
+      }
+
       // Strategy 1: Look for videoRenderer items with LIVE overlay badges.
       // YouTube marks live streams with thumbnailOverlays containing "LIVE" style.
       // The previous regex used `[^}]*?` between videoId and thumbnailOverlays,
@@ -489,7 +501,7 @@ export class YouTubeAdapter implements PlatformAdapter {
       // PUBGEsports /streams page 2026-05-02).
       const videoRendererRegex = /"videoRenderer":\{"videoId":"([a-zA-Z0-9_-]{11})"[\s\S]{0,10000}?"thumbnailOverlays":\[[\s\S]{0,2000}?"style":"LIVE"/g;
       let match;
-      while ((match = videoRendererRegex.exec(html)) !== null) {
+      while (liveVideoIds.length === 0 && (match = videoRendererRegex.exec(html)) !== null) {
         if (!seenIds.has(match[1])) {
           seenIds.add(match[1]);
           liveVideoIds.push(match[1]);
