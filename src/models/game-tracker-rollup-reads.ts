@@ -1,4 +1,5 @@
 import db from '../utils/db';
+import logger from '../utils/logger';
 import * as Snapshots from './game-tracker-snapshot';
 import { todayRollupFresh } from '../services/gt-day-rollup';
 import {
@@ -33,6 +34,14 @@ async function rolledThroughDay(gameTrackerId: string): Promise<string | null> {
 
 // ── Timeline ───────────────────────────────────────────────────────────
 
+let rollupWarnedAt = 0;
+function warnRollupFallback(what: string, err: unknown): void {
+  // Once a minute at most — a missing migration would otherwise log per request.
+  if (Date.now() - rollupWarnedAt < 60_000) return;
+  rollupWarnedAt = Date.now();
+  logger.warn(`[GTRollupReads] ${what} fell back to raw: ${(err as Error).message}`);
+}
+
 export async function rangeAggregate(
   gameTrackerId: string,
   fromTs: Date,
@@ -43,6 +52,22 @@ export async function rangeAggregate(
   if (!servableFromBucketRollup(bucketSeconds)) {
     return Snapshots.rangeAggregate(gameTrackerId, fromTs, toTs, bucketSeconds, platform);
   }
+  try {
+    return await rangeAggregateFromRollup(gameTrackerId, fromTs, toTs, bucketSeconds, platform);
+  } catch (err) {
+    // A broken or not-yet-migrated rollup degrades to slow, never to an error.
+    warnRollupFallback('timeline', err);
+    return Snapshots.rangeAggregate(gameTrackerId, fromTs, toTs, bucketSeconds, platform);
+  }
+}
+
+async function rangeAggregateFromRollup(
+  gameTrackerId: string,
+  fromTs: Date,
+  toTs: Date,
+  bucketSeconds: number,
+  platform?: string | null,
+): Promise<Array<{ ts: Date; total_ccv: number; stream_count: number }>> {
   const plat = platform ?? '*';
   const maxRow = await db('game_tracker_bucket_stats')
     .where({ game_tracker_id: gameTrackerId, platform: plat, language: '*' })
@@ -159,15 +184,32 @@ export async function rangeLeaderboardPage(
   opts: { language?: string | null; platform?: string | null; offset?: number } = {},
 ): Promise<{ rows: RangeLeaderboardRow[]; total: number; source: 'rollup' | 'raw'; from: Date }> {
   const fromTs = snapLongRangeStart(fromArg, toTs);
-  const through = await rolledThroughDay(gameTrackerId);
-  const split = splitRangeByUtcDays(fromTs, toTs, through, todayRollupFresh());
-  if (!split.fullDays) {
+  const rawPage = async () => {
     const [rows, total] = await Promise.all([
       Snapshots.rangeLeaderboard(gameTrackerId, fromTs, toTs, limit, opts),
       Snapshots.countRangeLeaderboard(gameTrackerId, fromTs, toTs, opts),
     ]);
-    return { rows, total, source: 'raw', from: fromTs };
+    return { rows, total, source: 'raw' as const, from: fromTs };
+  };
+  const through = await rolledThroughDay(gameTrackerId);
+  const split = splitRangeByUtcDays(fromTs, toTs, through, todayRollupFresh());
+  if (!split.fullDays) return rawPage();
+  try {
+    return await rangeLeaderboardFromDayStats(gameTrackerId, fromTs, toTs, limit, opts, split);
+  } catch (err) {
+    warnRollupFallback('range leaderboard', err);
+    return rawPage();
   }
+}
+
+async function rangeLeaderboardFromDayStats(
+  gameTrackerId: string,
+  fromTs: Date,
+  toTs: Date,
+  limit: number,
+  opts: { language?: string | null; platform?: string | null; offset?: number },
+  split: ReturnType<typeof splitRangeByUtcDays> & { fullDays: NonNullable<ReturnType<typeof splitRangeByUtcDays>['fullDays']> },
+): Promise<{ rows: RangeLeaderboardRow[]; total: number; source: 'rollup'; from: Date }> {
 
   const bindings: Record<string, unknown> = {
     tid: gameTrackerId,
@@ -315,6 +357,24 @@ export async function breakdown(
   platformFilter?: string | null,
 ): Promise<Breakdown & { from: Date }> {
   const fromTs = snapLongRangeStart(fromArg, toTs);
+  try {
+    return await breakdownFromRollup(gameTrackerId, fromTs, toTs, platformFilter);
+  } catch (err) {
+    warnRollupFallback('breakdown', err);
+    const [platform, language] = await Promise.all([
+      Snapshots.platformBreakdown(gameTrackerId, fromTs, toTs, platformFilter),
+      Snapshots.languageBreakdown(gameTrackerId, fromTs, toTs, platformFilter),
+    ]);
+    return { platform, language, source: 'raw', from: fromTs };
+  }
+}
+
+async function breakdownFromRollup(
+  gameTrackerId: string,
+  fromTs: Date,
+  toTs: Date,
+  platformFilter?: string | null,
+): Promise<Breakdown & { from: Date }> {
   const plat = platformFilter ?? '*';
   const maxRow = await db('game_tracker_bucket_stats')
     .where({ game_tracker_id: gameTrackerId, platform: plat, language: '*' })
