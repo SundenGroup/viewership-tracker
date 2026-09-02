@@ -267,7 +267,7 @@ export function DiscoverSearch({ slug, ask, placeholder }: Props) {
           {rows !== null && rows.length === 0 && (
             <div style={{ padding: 14, fontSize: 12, color: 'var(--fg-muted)' }}>
               No channel or title matches in the last 30 days.
-              {questionish && ' Looks like a question — try Ask below.'}
+              {questionish && ' Looks like a question. Try Ask below.'}
             </div>
           )}
           {rows !== null && rows.length > 0 && (

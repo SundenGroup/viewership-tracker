@@ -637,7 +637,7 @@ function InlineRowEditor({
             <span>
               Multi-stream channel{' '}
               <span style={{ color: 'var(--fg-dim)' }}>
-                — channel hosts more than one simultaneous live broadcast
+                channel hosts more than one simultaneous live broadcast
               </span>
             </span>
           </label>
@@ -661,7 +661,7 @@ function InlineRowEditor({
             <span>
               Track via YouTube Data API{' '}
               <span style={{ color: 'var(--fg-dim)' }}>
-                — recommended; avoids /live foreign-attribution and /streams
+                recommended; avoids /live foreign-attribution and /streams
                 regex flakiness. Costs ~6.6K quota units per 5-hour broadcast.
               </span>
             </span>

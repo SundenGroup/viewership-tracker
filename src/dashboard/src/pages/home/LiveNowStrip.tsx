@@ -44,7 +44,7 @@ export function LiveNowStrip({ canEdit }: { canEdit: boolean }) {
     };
   }, []);
 
-  if (failed === true) return null; // old backend — hide rather than error
+  if (failed === true) return null; // old backend, hide rather than error
   if (failed === 'error') {
     return (
       <div style={{ fontSize: 12.5, color: 'var(--warn)', marginBottom: 20 }}>
@@ -56,7 +56,7 @@ export function LiveNowStrip({ canEdit }: { canEdit: boolean }) {
   if (entries.length === 0) {
     return (
       <div style={{ fontSize: 12.5, color: 'var(--fg-dim)', marginBottom: 20 }}>
-        Nothing live right now — <Link to="/discover" style={{ color: 'var(--red)' }}>see who's streaming your games</Link>.
+        Nothing live right now: <Link to="/discover" style={{ color: 'var(--red)' }}>see who's streaming your games</Link>.
       </div>
     );
   }

@@ -304,7 +304,7 @@ export function DiscoverStreamPage() {
                 lineHeight: 1.1,
               }}
             >
-              {chan?.display_name ?? '…'} —{' '}
+              {chan?.display_name ?? '…'} ·{' '}
               {start.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
             </h1>
             <Row gap={8} wrap align="center" style={{ fontSize: 11.5, color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)' }}>
@@ -804,7 +804,7 @@ function StreamHealthPanel({
         {evidence?.rawScore != null && (
           <>Red-flag rules adjusted this score from a base of {evidence.rawScore}. </>
         )}
-        C means typical — D and F appear only when red flags are detected. Signals, not proof.
+        C means typical: D and F appear only when red flags are detected. Signals, not proof.
       </div>
     </Section>
   );

@@ -13,14 +13,14 @@ export function QuickNavCards({ canExplore }: { canExplore: boolean }) {
     {
       to: '/explore',
       title: 'Explore',
-      desc: 'Post-event analysis — peaks, averages, viewed hours and per-channel overlays over any range.',
+      desc: 'Post-event analysis: peaks, averages, viewed hours and per-channel overlays over any range.',
       icon: <IconGrid size={18} />,
       show: canExplore,
     },
     {
       to: '/discover',
       title: 'Discover',
-      desc: 'Live game trackers — who is streaming your games across Twitch, Kick and YouTube right now.',
+      desc: 'Live game trackers: who is streaming your games across Twitch, Kick, YouTube, SOOP and TikTok right now.',
       icon: <IconGlobe size={18} />,
       show: true,
     },

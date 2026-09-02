@@ -44,7 +44,7 @@ const FORMAT_TILES: Array<{
 }> = [
   { id: 'csv', label: 'CSV', sub: 'Tabular export · per-channel rows' },
   { id: 'json', label: 'JSON', sub: 'Raw DB export, integrations' },
-  { id: 'html', label: 'HTML', sub: 'Static report — trigger render job' },
+  { id: 'html', label: 'HTML', sub: 'Static report: trigger render job' },
 ];
 
 const GRANULARITY_TILES: Array<{
@@ -56,7 +56,7 @@ const GRANULARITY_TILES: Array<{
   {
     id: 'per_minute',
     label: 'Per minute',
-    sub: 'One row per channel per minute — deduped, matches the dashboard. Safe to sum.',
+    sub: 'One row per channel per minute. Deduped, matches the dashboard. Safe to sum.',
   },
   {
     id: 'minute_totals',
@@ -73,7 +73,7 @@ const GRANULARITY_TILES: Array<{
   {
     id: 'raw',
     label: 'Raw polls',
-    sub: 'Every poll (~2 rows/channel/min). Forensic grain — dedup before summing.',
+    sub: 'Every poll (~2 rows/channel/min). Forensic grain. Dedup before summing.',
     adminOnly: true,
   },
 ];
@@ -554,19 +554,19 @@ export function ExportDialog({
   }> = [
     {
       id: 'current',
-      label: `Current view — ${scopeLabelCurrent} · ${viewGroupLabel}`,
+      label: `Current view: ${scopeLabelCurrent} · ${viewGroupLabel}`,
       sub: "What's shown on the dashboard right now",
     },
     {
       id: 'series',
-      label: `Entire series — ${seriesDetail?.name ?? 'Series'}`,
+      label: `Entire series: ${seriesDetail?.name ?? 'Series'}`,
       sub: 'All stages, all days, all channels',
     },
     {
       id: 'stage',
       label: currentStage
-        ? `Stage — ${currentStage.name}`
-        : 'Stage — (none selected)',
+        ? `Stage: ${currentStage.name}`
+        : 'Stage: (none selected)',
       sub: 'All days in the current stage',
       disabled: !currentStage,
     },
@@ -574,16 +574,16 @@ export function ExportDialog({
       id: 'multi_stage',
       label:
         selectedStageIds.length === 0
-          ? 'Multiple stages — pick from list'
-          : `Multiple stages — ${selectedStageIds.length} selected`,
+          ? 'Multiple stages: pick from list'
+          : `Multiple stages: ${selectedStageIds.length} selected`,
       sub: 'Combine 2+ stages into one export (flattened aggregation)',
       disabled: !seriesDetail || seriesDetail.stages.length < 2,
     },
     {
       id: 'day',
       label: currentDay
-        ? `Day only — ${currentDay.label}`
-        : 'Day only — (none selected)',
+        ? `Day only: ${currentDay.label}`
+        : 'Day only: (none selected)',
       sub: 'This broadcast day',
       disabled: !currentDay,
     },
@@ -1238,7 +1238,7 @@ export function ExportDialog({
                           style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}
                         >
                           Opens the redesigned report in a new tab. Rendered
-                          live against the API — always fresh, no waiting.
+                          live against the API. Always fresh, no waiting.
                         </span>
                       </Col>
                     </label>
@@ -1328,7 +1328,7 @@ export function ExportDialog({
                       >
                         <span style={{ color: 'var(--fg-dim)' }}>+</span> Compare against another event
                         <span style={{ color: 'var(--fg-dim)', fontSize: 10.5 }}>
-                          — % chips vs a baseline of your choice
+                          % chips vs a baseline of your choice
                         </span>
                       </button>
                     ) : (
@@ -1538,7 +1538,7 @@ export function ExportDialog({
                     paddingLeft: 2,
                   }}
                 >
-                  Share with external parties — no login required.
+                  Share with external parties. No login required.
                 </div>
               </div>
             )}

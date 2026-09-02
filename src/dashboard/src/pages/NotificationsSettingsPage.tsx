@@ -34,7 +34,7 @@ const EVENT_DESCRIPTORS: EventDescriptor[] = [
   {
     key: 'broadcast_ending',
     label: 'Broadcast about to end',
-    description: '~10 minutes before scheduled end — useful for extending if running over.',
+    description: '~10 minutes before scheduled end. Useful for extending if running over.',
   },
   {
     key: 'polling_stalled',
@@ -44,7 +44,7 @@ const EVENT_DESCRIPTORS: EventDescriptor[] = [
   {
     key: 'quota_exhausted',
     label: 'YouTube quota exhausted',
-    description: 'Daily quota fully consumed — discovery falls back to scraping.',
+    description: 'Daily quota fully consumed. Discovery falls back to scraping.',
   },
   {
     key: 'discovery_candidate',
@@ -173,7 +173,7 @@ export function NotificationsSettingsPage() {
     }
     try {
       const n = new Notification('Local test notification', {
-        body: 'Direct from this tab — no server, no push pipeline. If you see this, OS permissions are fine.',
+        body: 'Direct from this tab. No server, no push pipeline. If you see this, OS permissions are fine.',
         icon: '/favicon-192.png',
         tag: 'local-test',
       });
@@ -181,7 +181,7 @@ export function NotificationsSettingsPage() {
         window.focus();
         n.close();
       };
-      setTestFlash('Local test fired. If you see a banner, OS-level permissions are working — any failure with "Send server test" is in the push pipeline (SW or FCM).');
+      setTestFlash('Local test fired. If you see a banner, OS-level permissions are working. Any failure with "Send server test" is in the push pipeline (SW or FCM).');
       setTimeout(() => setTestFlash(null), 12_000);
     } catch (err) {
       setError(`Local notification failed: ${(err as Error).message}`);
@@ -371,12 +371,12 @@ export function NotificationsSettingsPage() {
                 Two ways to test, useful for diagnosing if a notification doesn't arrive:
                 <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
                   <li>
-                    <strong>Local test</strong> — fires <code>new Notification(…)</code> from this
+                    <strong>Local test</strong> fires <code>new Notification(…)</code> from this
                     tab directly. Skips the server, the Service Worker, and Google's push gateway.
                     If this doesn't appear, the problem is at the browser or OS permission layer.
                   </li>
                   <li style={{ marginTop: 4 }}>
-                    <strong>Server test</strong> — full pipeline: server signs a Web Push payload
+                    <strong>Server test</strong> runs the full pipeline: server signs a Web Push payload
                     with VAPID, sends it to Google's FCM, FCM forwards to Chrome, Chrome wakes the
                     Service Worker, the SW calls <code>showNotification(…)</code>. Tests every link.
                   </li>
@@ -568,7 +568,7 @@ function EventHistoryCard() {
         </select>
       </div>
       <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginBottom: 12 }}>
-        Everything the system emitted — recorded server-side even when no device was subscribed,
+        Everything the system emitted. Recorded server-side even when no device was subscribed,
         so dismissed or missed notifications can be reviewed here. Kept 90 days.
       </div>
 
@@ -578,7 +578,7 @@ function EventHistoryCard() {
 
       {events.length === 0 && !loading && !histError && (
         <div style={{ fontSize: 12.5, color: 'var(--fg-dim)', padding: '8px 0' }}>
-          No events recorded yet. History starts from today — earlier notifications predate the log.
+          No events recorded yet. History starts from today. Earlier notifications predate the log.
         </div>
       )}
 

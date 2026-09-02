@@ -367,7 +367,7 @@ export function AddChannelDialog({
                     checked={multiStream}
                     onChange={(e) => setMultiStream(e.target.checked)}
                   />
-                  Multi-stream channel — track all simultaneous live streams
+                  Multi-stream channel: track all simultaneous live streams
                 </label>
               )}
             </>

@@ -149,7 +149,7 @@ export function ExploreCompareEvents() {
             Compare events
           </h1>
           <p style={{ fontSize: 13, color: 'var(--fg-muted)', margin: 0 }}>
-            Two series, aligned day by day — same numbers as the partner reports.
+            Two series, aligned day by day. Same numbers as the partner reports.
           </p>
         </Col>
 

@@ -327,7 +327,7 @@ export function DiscoverDetailPage() {
                 {detail.tiktok_category_slug && (
                   <Row gap={6} align="center">
                     <PlatformPip id="tiktok" size={12} />
-                    <span title="TikTok's category feed is region-personalized sampling — best-effort coverage, not the full category">
+                    <span title="TikTok's category feed is region-personalized sampling. Best-effort coverage, not the full category">
                       {detail.tiktok_category_name ?? detail.tiktok_category_slug} · sampled
                     </span>
                   </Row>
@@ -639,7 +639,7 @@ function NewFacesRail({ slug, onReview }: { slug: string; onReview?: () => void 
               paddingTop: 8,
             }}
           >
-            YouTube channels count only after review — a missing number beats a wrong one.
+            YouTube channels count only after review. A missing number beats a wrong one.
             {onReview && (
               <>
                 {' '}
@@ -858,7 +858,7 @@ function LiveTab({
         />
         {platform === 'tiktok' && (shown?.length ?? 0) > 0 && (
           <div style={{ fontSize: 11, color: 'var(--fg-dim)', padding: '8px 0 0' }}>
-            TikTok's category feed is region-personalized sampling — this column shows the
+            TikTok's category feed is region-personalized sampling. This column shows the
             streams it surfaces to us, not the full category.
           </div>
         )}
@@ -1024,7 +1024,7 @@ function RecentlyDiscoveredStrip({ slug }: { slug: string }) {
           <Link
             key={r.channel_id}
             to={`/discover/${slug}/channel/${r.channel_id}`}
-            aria-label={`${r.display_name} — discovered ${fmtRelative(r.joined_at)}, peak ${fmtCompact(r.peak)}`}
+            aria-label={`${r.display_name}: discovered ${fmtRelative(r.joined_at)}, peak ${fmtCompact(r.peak)}`}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -1111,12 +1111,12 @@ export function LeaderboardTable({
           <th style={{ ...th, width: 60 }}>Lang</th>
           {showRangeStats && <th style={{ ...th, textAlign: 'right', width: 70 }}>Days</th>}
           {showRangeStats && (
-            <th style={{ ...th, textAlign: 'right', width: 90 }} title="Airtime — hours the channel was live">
+            <th style={{ ...th, textAlign: 'right', width: 90 }} title="Airtime: hours the channel was live">
               Hours live
             </th>
           )}
           {showRangeStats && (
-            <th style={{ ...th, textAlign: 'right', width: 104 }} title="Avg viewers × hours live — total audience time">
+            <th style={{ ...th, textAlign: 'right', width: 104 }} title="Avg viewers × hours live: total audience time">
               Hours watched
             </th>
           )}
@@ -1131,7 +1131,7 @@ export function LeaderboardTable({
               title={
                 showRangeGrade
                   ? 'Median grade across the completed broadcasts inside this range'
-                  : 'Grade of the channel\'s last completed broadcast (30 days) — live sessions are scored after they end, and only once three broadcasts have been scored'
+                  : 'Grade of the channel\'s last completed broadcast (30 days): live sessions are scored after they end, and only once three broadcasts have been scored'
               }
             >
               {showRangeGrade ? 'Grade' : 'Last grade'}
@@ -1285,8 +1285,8 @@ export function LeaderboardTable({
                     score={row.last_score}
                     noGradeTitle={
                       row.avg_ccv != null && row.avg_ccv < 50
-                        ? `Not scored — averages ${Math.round(row.avg_ccv)} viewers here (scoring starts at 50)`
-                        : 'No scored broadcast in this range — a session is scored when it ends with 50+ avg viewers, 30+ minutes, and chat watched for half the stream'
+                        ? `Not scored: averages ${Math.round(row.avg_ccv)} viewers here (scoring starts at 50)`
+                        : 'No scored broadcast in this range. A session is scored when it ends with 50+ avg viewers, 30+ minutes, and chat watched for half the stream'
                     }
                   />
                 </td>

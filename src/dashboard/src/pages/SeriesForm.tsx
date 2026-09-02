@@ -497,17 +497,17 @@ export function SeriesFormPage({
         updateField('discovery_game_ids_twitch', result.twitch[0].id);
         parts.push(`Twitch ${result.twitch[0].id}`);
       } else if (result.twitch.length > 1) {
-        parts.push(`Twitch: ${result.twitch.length} matches — pick below`);
+        parts.push(`Twitch: ${result.twitch.length} matches, pick below`);
       }
       if (result.kick.length === 1 && result.kick[0]) {
         updateField('discovery_game_ids_kick', result.kick[0].id);
         parts.push(`Kick ${result.kick[0].id}`);
       } else if (result.kick.length > 1) {
-        parts.push(`Kick: ${result.kick.length} matches — pick below`);
+        parts.push(`Kick: ${result.kick.length} matches, pick below`);
       }
       setLookupMsg('Found: ' + (parts.length > 0 ? parts.join(' · ') : 'no matches'));
     } catch (e) {
-      setLookupMsg('Lookup failed — ' + (e instanceof Error ? e.message : 'unknown error'));
+      setLookupMsg('Lookup failed: ' + (e instanceof Error ? e.message : 'unknown error'));
     } finally {
       setLookingUp(false);
     }

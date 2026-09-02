@@ -770,7 +770,7 @@ export function EditorDesktop({
           style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}
         >
           <Row justify="space-between" style={{ flexWrap: 'wrap', gap: 8 }}>
-            <div className="eyebrow">Concurrent viewers — live</div>
+            <div className="eyebrow">Concurrent viewers: live</div>
             <Row gap={6}>
               <Pill tone="live">● {model.liveChannelCount} channels live</Pill>
               {pollingStatus?.lastPollTime && (
@@ -1131,7 +1131,7 @@ export function EditorDesktop({
         <CollapsibleSection
           storageKey="ct-leaderboard"
           eyebrow="Leaderboard"
-          title={`${model.leaderboard.length} tracked channels — click any column to sort`}
+          title={`${model.leaderboard.length} tracked channels: click any column to sort`}
         >
           <div
             style={{
@@ -1551,7 +1551,7 @@ export function EditorDesktop({
                       fontSize: 10.5,
                       lineHeight: 1.5,
                     }}
-                    title="Relay pushes for these channels were far above their Helix slice — the scraper switches them to the per-channel popover extractor automatically."
+                    title="Relay pushes for these channels were far above their Helix slice. The scraper switches them to the per-channel popover extractor automatically."
                   >
                     <span style={{ fontWeight: 600 }}>Cohost suspects:</span>{' '}
                     {relayHealth.cohostSuspects.join(', ')}
@@ -1910,7 +1910,7 @@ function DayQARail({ dayId, dayLabel }: { dayId: string | null; dayLabel: string
           style={{ width: '100%' }}
           title={dayId ? `Run QA on ${dayLabel}` : 'Select a broadcast day first'}
         >
-          {busy ? 'Checking…' : dayId ? `Run QA — ${dayLabel}` : 'Select a day first'}
+          {busy ? 'Checking…' : dayId ? `Run QA: ${dayLabel}` : 'Select a day first'}
         </button>
         {error && <div style={{ fontSize: 10.5, color: 'var(--danger)' }}>{error}</div>}
         {result && (
@@ -1943,7 +1943,7 @@ function DayQARail({ dayId, dayLabel }: { dayId: string | null; dayLabel: string
               result.outsideScheduleRows === 0
                 ? 'No data outside the scheduled window'
                 : `${result.outsideScheduleRows} rows outside schedule (±15m)`,
-              'Possible post-stream tail — consider trimming',
+              'Possible post-stream tail: consider trimming',
             )}
             {checkRow(
               result.cohostSuspectPairs.length === 0,

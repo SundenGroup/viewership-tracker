@@ -78,15 +78,15 @@ export function useDiscoverAsk({
           setError(
             serverMessage ??
               (e.status === 429
-                ? 'Ask limit reached — try again in a little while.'
+                ? 'Ask limit reached: try again in a little while.'
                 : e.status === 501
                   ? 'Ask isn’t configured on this server.'
                   : e.status === 502
-                    ? 'The AI backend is unavailable — simple leaderboard questions still work.'
-                    : 'Ask hit a snag — try again.'),
+                    ? 'The AI backend is unavailable. Simple leaderboard questions still work.'
+                    : 'Ask hit a snag. Try again.'),
           );
         } else {
-          setError('Ask hit a snag — try again.');
+          setError('Ask hit a snag. Try again.');
         }
       } finally {
         setPending(false);

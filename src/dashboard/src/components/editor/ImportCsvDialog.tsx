@@ -316,7 +316,7 @@ export function ImportCsvDialog({
                     {
                       id: 'discover' as const,
                       label: 'Discover game-tracker',
-                      sub: 'Per-minute Helix data — cohost repair & gap fills',
+                      sub: 'Per-minute Helix data: cohost repair & gap fills',
                     },
                   ]
                 ).map((s) => {
@@ -361,7 +361,7 @@ export function ImportCsvDialog({
             </Field>
 
             {/* Channel picker */}
-            <Field label={selectedChannel ? `Channel — ${selectedChannel.display_name}` : 'Channel'}>
+            <Field label={selectedChannel ? `Channel: ${selectedChannel.display_name}` : 'Channel'}>
               <input
                 type="text"
                 placeholder="Search channels…"
@@ -435,7 +435,7 @@ export function ImportCsvDialog({
                 </select>
               </Field>
               {source === 'csv' ? (
-                <Field label={fileName ? `CSV file — ${fileName}` : 'CSV file'}>
+                <Field label={fileName ? `CSV file: ${fileName}` : 'CSV file'}>
                   <input
                     type="file"
                     accept=".csv,text/csv"
@@ -516,14 +516,14 @@ export function ImportCsvDialog({
             <div style={{ fontSize: 10.5, color: 'var(--fg-dim)', marginTop: -8 }}>
               {source === 'csv'
                 ? 'Times without a date in the CSV (e.g. Twitch\'s "10:30 AM") use the date above, interpreted in the selected timezone. "From/To" trims the import to a local-time window (e.g. start at 11:00).'
-                : 'Leave From/To empty to cover the whole scheduled broadcast window. Set them (local time in the selected timezone, on the date above) to target a specific stretch — e.g. a 16:00–16:22 crash gap.'}
+                : 'Leave From/To empty to cover the whole scheduled broadcast window. Set them (local time in the selected timezone, on the date above) to target a specific stretch. E.g. a 16:00–16:22 crash gap.'}
             </div>
 
             {source === 'csv' && (
-              <Field label="Stream start — VOD URL or time (for 'position (seconds)' exports)">
+              <Field label="Stream start: VOD URL or time (for 'position (seconds)' exports)">
                 <input
                   type="text"
-                  placeholder='e.g. https://www.youtube.com/watch?v=… — or "10:01:23" (in the timezone above), or full ISO'
+                  placeholder='e.g. https://www.youtube.com/watch?v=…, or "10:01:23" (in the timezone above), or full ISO'
                   value={streamAnchor}
                   onChange={(e) => {
                     setStreamAnchor(e.target.value);
@@ -551,7 +551,7 @@ export function ImportCsvDialog({
                 }}
               >
                 <div style={{ fontWeight: 600, marginBottom: 6 }}>
-                  Preview — nothing written yet
+                  Preview: nothing written yet
                 </div>
                 <Col gap={4} style={{ fontSize: 11.5 }}>
                   <span>
@@ -598,7 +598,7 @@ export function ImportCsvDialog({
                 }}
               >
                 <div style={{ fontWeight: 600, marginBottom: 6 }}>
-                  Preview — nothing written yet
+                  Preview: nothing written yet
                 </div>
                 <Col gap={4} style={{ fontSize: 11.5 }}>
                   <span>

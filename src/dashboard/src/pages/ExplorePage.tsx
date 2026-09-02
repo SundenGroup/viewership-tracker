@@ -705,7 +705,7 @@ function ExploreScopedView({
       else if (cur.length < MAX_OVERLAY_CHANNELS) cur.push(cid);
       else {
         // Say WHY nothing happened instead of silently ignoring the click.
-        setCapNotice(`Overlay limit reached (${MAX_OVERLAY_CHANNELS}) — deselect a channel first.`);
+        setCapNotice(`Overlay limit reached (${MAX_OVERLAY_CHANNELS}): deselect a channel first.`);
         window.setTimeout(() => setCapNotice(null), 3500);
         return;
       }
@@ -951,7 +951,7 @@ function ExploreScopedView({
                       borderRadius: 5,
                     }}
                   >
-                    <option value="">— none —</option>
+                    <option value="">(none)</option>
                     {compareOptions.map((o) => (
                       <option key={o.id} value={o.id}>
                         {o.label}
@@ -966,7 +966,7 @@ function ExploreScopedView({
                 type="button"
                 className="btn btn-xs"
                 onClick={() => navigate('/explore/compare')}
-                title="Two events, day-aligned — peaks, averages, hours watched"
+                title="Two events, day-aligned: peaks, averages, hours watched"
                 style={{ cursor: 'pointer' }}
               >
                 Compare events
@@ -993,7 +993,7 @@ function ExploreScopedView({
         >
         <Section
           eyebrow="Timeline"
-          title="Concurrent viewers — interactive"
+          title="Concurrent viewers: interactive"
           right={
             <Pill>
               {scopePillLabel({
@@ -1357,7 +1357,7 @@ function ExploreScopedView({
                   type="button"
                   className="btn btn-xs"
                   onClick={() => setShapeMetricsOn((v) => !v)}
-                  title="Add per-channel curve-shape columns (stability, minutes ranked #1, consistency) — loads the full per-channel time-series for this scope"
+                  title="Add per-channel curve-shape columns (stability, minutes ranked #1, consistency). Loads the full per-channel time-series for this scope"
                 >
                   {shapeMetricsOn ? 'Shape ✓' : 'Shape'}
                 </button>
@@ -1552,7 +1552,7 @@ function ExploreScopedView({
             {shapeMetricsOn && (
               <>
                 <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="stability" align="right">
-                  <span title="Coefficient of variation — lower = steadier curve">Var%</span>
+                  <span title="Coefficient of variation: lower = steadier curve">Var%</span>
                 </SortHeader>
                 <SortHeader sort={lb.sort as string} dir={lb.dir} onClick={lb.toggle as (k: string) => void} id="minutesAt1" align="right">
                   <span title="Minutes this channel was the single biggest in the scope">Min @#1</span>
@@ -1750,7 +1750,7 @@ function ChannelTableTotals({
       <div
         className="tabular"
         style={{ textAlign: 'right' }}
-        title="Combined peak — max of (sum of every channel's CCV at the same minute). Top single-channel peak shown below."
+        title="Combined peak: max of (sum of every channel's CCV at the same minute). Top single-channel peak shown below."
       >
         {fmtN(combinedPeak)}
         <div style={{ fontSize: 10, color: 'var(--fg-dim)', fontWeight: 400 }}>
@@ -1760,7 +1760,7 @@ function ChannelTableTotals({
       <div
         className="tabular"
         style={{ textAlign: 'right' }}
-        title="Combined average — average across live minutes of (sum of every channel's CCV). Excludes minutes with zero combined CCV."
+        title="Combined average: average across live minutes of (sum of every channel's CCV). Excludes minutes with zero combined CCV."
       >
         {fmtN(combinedAvg)}
         <div style={{ fontSize: 10, color: 'var(--fg-dim)', fontWeight: 400 }}>
@@ -1770,7 +1770,7 @@ function ChannelTableTotals({
       <div
         className="tabular"
         style={{ textAlign: 'right' }}
-        title="Sum of viewed-hours across all visible channels — genuinely additive."
+        title="Sum of viewed-hours across all visible channels. Genuinely additive."
       >
         {fmtN(Math.round(sumHours))}
       </div>
@@ -2630,7 +2630,7 @@ function AllChannelsAtTimestampPanel({
             {expanded
               ? `Showing all ${sortable.sorted.length} channels`
               : sortable.sorted.length > 8
-                ? `Showing top 8 of ${sortable.sorted.length} — scroll for more or expand to fit all`
+                ? `Showing top 8 of ${sortable.sorted.length}: scroll for more or expand to fit all`
                 : `${sortable.sorted.length} channel${sortable.sorted.length === 1 ? '' : 's'}`}
           </span>
           {sortable.sorted.length > 8 && (
@@ -2712,9 +2712,9 @@ function buildChartDescription({
         ? `${stageName ?? 'stage'}`
         : `${dayLabel ?? 'day'}`;
   if (selectedChannels.length === 0) {
-    return `${scopeText} — concurrent viewers across ${channelCount} tracked channel${channelCount === 1 ? '' : 's'}.`;
+    return `${scopeText}: concurrent viewers across ${channelCount} tracked channel${channelCount === 1 ? '' : 's'}.`;
   }
-  return `${scopeText} — overlay of ${selectedChannels.length} selected channel${selectedChannels.length === 1 ? '' : 's'}: ${selectedChannels.slice(0, 4).join(', ')}.`;
+  return `${scopeText}: overlay of ${selectedChannels.length} selected channel${selectedChannels.length === 1 ? '' : 's'}: ${selectedChannels.slice(0, 4).join(', ')}.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -2997,7 +2997,7 @@ function SavedViewsMenu() {
           </Row>
           {views.length === 0 ? (
             <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
-              No saved views yet (saved on this browser only) — set up scope, filters and overlays, then
+              No saved views yet (saved on this browser only). Set up scope, filters and overlays, then
               save the state under a name.
             </div>
           ) : (

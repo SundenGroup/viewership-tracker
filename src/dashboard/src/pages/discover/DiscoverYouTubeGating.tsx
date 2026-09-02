@@ -164,12 +164,12 @@ export function DiscoverYouTubeGating({
     if (res.promoted && res.promoted.promoted > 0) {
       return (
         `Backfilled ${fmtHeldMinutes(res.promoted.minutes)} of held viewership retroactively` +
-        (res.promoted.skipped > 0 ? ` — ${res.promoted.skipped} non-matching held rows discarded.` : '.')
+        (res.promoted.skipped > 0 ? `; ${res.promoted.skipped} non-matching held rows discarded.` : '.')
       );
     }
     if (res.promoted && res.promoted.skipped > 0) {
       return (
-        `None of the held streams matched this game's vocabulary — ${res.promoted.skipped} held rows discarded. ` +
+        `None of the held streams matched this game's vocabulary: ${res.promoted.skipped} held rows discarded. ` +
         `If that title should count, add its wording to the matching rules.`
       );
     }
@@ -221,7 +221,7 @@ export function DiscoverYouTubeGating({
       const failed = res.results.filter((r) => !r.ok || r.promotion_error);
       setNotice(
         `${decision === 'reset' ? 'Reset' : decision === 'allow' ? 'Now tracking' : 'Excluded'} ${res.applied} of ${res.total} channel${res.total === 1 ? '' : 's'}` +
-          (failed.length > 0 ? ` — ${failed.length} need a look (see server logs).` : '.'),
+          (failed.length > 0 ? `; ${failed.length} need a look (see server logs).` : '.'),
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Bulk decision failed');
@@ -342,7 +342,7 @@ export function DiscoverYouTubeGating({
         }}
       >
         <span style={{ color: 'var(--warn)', fontWeight: 600 }}>{counts.pending}</span>
-        YouTube {counts.pending === 1 ? 'channel is' : 'channels are'} waiting for review — not
+        YouTube {counts.pending === 1 ? 'channel is' : 'channels are'} waiting for review, not
         being counted until you decide.
         <span style={{ marginLeft: 'auto', color: 'var(--red)', fontWeight: 500 }}>Open the Review tab →</span>
       </button>
@@ -429,7 +429,7 @@ export function DiscoverYouTubeGating({
     >
       {!data?.enabled && data && (
         <div style={{ fontSize: 12, color: 'var(--warn)' }}>
-          YouTube tracking is off for this tracker — decisions here take effect once it's enabled.
+          YouTube tracking is off for this tracker. Decisions here take effect once it's enabled.
         </div>
       )}
 
@@ -456,8 +456,8 @@ export function DiscoverYouTubeGating({
           discards it. Holds are kept while a channel keeps appearing; a channel not seen for 14 days
           loses them.
           <br />
-          <b>Track matching</b> — a variety streamer: only their streams whose title matches this
-          game count. <b>Track all</b> — a dedicated channel (an org or a tournament channel):
+          <b>Track matching</b> is for a variety streamer: only their streams whose title matches this
+          game count. <b>Track all</b> is for a dedicated channel (an org or a tournament channel):
           everything they stream in Gaming counts.
           {!editing && (cfg.include?.length || cfg.exclude?.length) ? (
             <>
@@ -479,16 +479,16 @@ export function DiscoverYouTubeGating({
             Comma-separated.
           </div>
           <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
-            {listField('include', 'Include', 'Names and abbreviations for this game — the main matching list')}
+            {listField('include', 'Include', 'Names and abbreviations for this game. The main matching list')}
             {listField('strongPhrases', 'Strong phrases', 'Distinctive enough to auto-approve an unknown channel')}
-            {listField('strongTags', 'Strong tags', 'Exact creator tags — corroborate identity, never the stream')}
+            {listField('strongTags', 'Strong tags', 'Exact creator tags: corroborate identity, never the stream')}
             {listField('exclude', 'Exclude', 'In the title → dropped, even from an approved channel')}
             {listField('queries', 'Discovery searches', 'What we search YouTube Live for (free, no quota)')}
           </div>
           <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
             {numField('autoAllowWeakBelowCcv', 'Auto-allow below', 'Weak matches under this CCV skip review (0 = review everything)')}
             {numField('alwaysReviewAboveCcv', 'Always review above', 'Above this CCV a human confirms, however strong the match')}
-            {numField('discoveryIntervalSeconds', 'Discovery every (s)', 'Live-search scrape cadence — 120s floor')}
+            {numField('discoveryIntervalSeconds', 'Discovery every (s)', 'Live-search scrape cadence: 120s floor')}
             {numField('maxRoster', 'Max roster', 'Ceiling on streams polled per cycle')}
           </div>
           <Row gap={8}>
@@ -676,7 +676,7 @@ export function DiscoverYouTubeGating({
                           '. Approve → counted retroactively. Exclude → discarded.'
                         }
                       >
-                        {fmtHeldMinutes(r.held_minutes!)} of viewership banked — nothing lost while you decide
+                        {fmtHeldMinutes(r.held_minutes!)} of viewership banked: nothing lost while you decide
                       </div>
                     )}
                     {r.decision === 'allow' && (
@@ -698,7 +698,7 @@ export function DiscoverYouTubeGating({
                           disabled={busy != null}
                           onClick={() => void decide(r.channel_identifier, 'allow', 'matching')}
                           style={{ cursor: 'pointer', color: 'var(--live)' }}
-                          title="Count only this channel's streams that match this game — use for variety streamers"
+                          title="Count only this channel's streams that match this game. Use for variety streamers"
                         >
                           Track matching
                         </button>
@@ -710,7 +710,7 @@ export function DiscoverYouTubeGating({
                           disabled={busy != null}
                           onClick={() => void decide(r.channel_identifier, 'allow', 'all')}
                           style={{ cursor: 'pointer', color: 'var(--live)' }}
-                          title="Count everything this channel streams in Gaming — use for an org or tournament channel that only broadcasts this game"
+                          title="Count everything this channel streams in Gaming. Use for an org or tournament channel that only broadcasts this game"
                         >
                           Track all
                         </button>

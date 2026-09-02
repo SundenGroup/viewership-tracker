@@ -61,17 +61,17 @@ export function healthSentence(grade: string): string {
     case 'B':
       return 'healthier than most streams its size';
     case 'C':
-      return 'typical — nothing flagged';
+      return 'typical, nothing flagged';
     case 'D':
       return 'red flags found on recent broadcasts';
     default:
-      return 'serious red flags — open a stream for the evidence';
+      return 'serious red flags, open a stream for the evidence';
   }
 }
 
 /** One copy of the evidence-gate copy (channel pill + stream page). */
 export function collectingHealthCopy(scored: number, required: number): string {
-  return `Collecting health data — ${scored}/${required} streams scored`;
+  return `Collecting health data: ${scored}/${required} streams scored`;
 }
 
 /**
@@ -544,7 +544,7 @@ export function DiscoverChannelPage() {
                 color: 'var(--fg-muted)',
               }}
             >
-              No streams in the last {RANGES[rangeKey].label} — pick a longer range.
+              No streams in the last {RANGES[rangeKey].label}. Pick a longer range.
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
@@ -610,7 +610,7 @@ export function DiscoverChannelPage() {
           channel={data.channel}
         />
         <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
-          Click a stream for its full receipt. D and F are reserved for real red flags — a small stream with nothing wrong floors at C.
+          Click a stream for its full receipt. D and F are reserved for real red flags. A small stream with nothing wrong floors at C.
         </div>
         {sessionsData != null && sessionsData.total > sessionsData.rows.length && (
           <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>

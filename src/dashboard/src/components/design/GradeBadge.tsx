@@ -24,12 +24,12 @@ export function noGradeReason(
   minutesLive?: number | null,
 ): string {
   if (avgCcv != null && avgCcv < 50) {
-    return `Not scored — averaged ${Math.round(avgCcv)} viewers (scoring starts at 50)`;
+    return `Not scored: averaged ${Math.round(avgCcv)} viewers (scoring starts at 50)`;
   }
   if (minutesLive != null && minutesLive < 30) {
-    return `Not scored — ${Math.round(minutesLive)} min live (scoring starts at 30)`;
+    return `Not scored: ${Math.round(minutesLive)} min live (scoring starts at 30)`;
   }
-  return 'Not scored — chat was not watched for enough of this stream (the collector follows the top ~600 live channels)';
+  return 'Not scored: chat was not watched for enough of this stream (the collector follows the top ~600 live channels)';
 }
 
 export function GradeBadge({
@@ -47,7 +47,7 @@ export function GradeBadge({
   if (!grade) {
     return (
       <span
-        title={noGradeTitle ?? 'Not scored yet — health is computed after each broadcast'}
+        title={noGradeTitle ?? 'Not scored yet: health is computed after each broadcast'}
         style={{ fontSize: 11, color: 'var(--fg-dim)' }}
       >
         —

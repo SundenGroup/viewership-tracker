@@ -142,15 +142,15 @@ export function useExploreAsk({
         setError(
           serverMessage ??
             (e.status === 429
-              ? 'Ask limit reached — try again in a little while.'
+              ? 'Ask limit reached: try again in a little while.'
               : e.status === 501
                 ? 'Ask isn’t configured on this server.'
                 : e.status === 502
-                  ? 'The AI backend is unavailable — simple filter questions still work.'
-                  : 'Ask hit a snag — try again.'),
+                  ? 'The AI backend is unavailable. Simple filter questions still work.'
+                  : 'Ask hit a snag. Try again.'),
         );
       } else {
-        setError('Ask hit a snag — try again.');
+        setError('Ask hit a snag. Try again.');
       }
     } finally {
       setPending(false);
@@ -231,7 +231,7 @@ export function ExploreAskBox({ ask }: { ask: ExploreAskController }) {
             if (e.key === 'Enter') ask.submit();
             if (e.key === 'Escape') (e.currentTarget as HTMLInputElement).blur();
           }}
-          placeholder={'Ask this view — e.g. "show Russian watch parties"  ⌘K'}
+          placeholder={'Ask this view: e.g. "show Russian watch parties"  ⌘K'}
           aria-label="Ask this view"
           style={{
             flex: 1,

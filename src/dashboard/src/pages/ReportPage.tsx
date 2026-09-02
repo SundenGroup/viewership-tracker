@@ -1716,7 +1716,7 @@ function DetailedReport({
       {/* Section 06 — leaderboard */}
       <Section
         eyebrow="Leaderboard"
-        title={`All ${model.leaderboard.length} tracked channels — sort any column`}
+        title={`All ${model.leaderboard.length} tracked channels: sort any column`}
       >
         <Leaderboard channels={model.leaderboard} />
       </Section>

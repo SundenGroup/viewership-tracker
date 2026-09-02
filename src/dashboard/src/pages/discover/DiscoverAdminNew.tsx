@@ -113,7 +113,7 @@ export function DiscoverAdminNew() {
 
   const handleSubmit = async () => {
     if (RESERVED_SLUGS.includes(slug.trim().toLowerCase())) {
-      setError(`"${slug.trim()}" is a reserved URL — pick another slug.`);
+      setError(`"${slug.trim()}" is a reserved URL. Pick another slug.`);
       return;
     }
     if (!name.trim() || !slug.trim()) {
@@ -291,7 +291,7 @@ export function DiscoverAdminNew() {
           />
           <p style={{ fontSize: 11, color: 'var(--fg-dim)', marginTop: 4 }}>
             The path after tiktok.com/live/ (pasting the full URL works too). TikTok has no
-            category search API and its feed is region-personalized sampling — the column is
+            category search API and its feed is region-personalized sampling. The column is
             best-effort, not the full category. Captured by the residential relay.
           </p>
           {tiktokSlug.trim() && (

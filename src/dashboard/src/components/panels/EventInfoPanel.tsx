@@ -41,7 +41,7 @@ export function EventInfoPanel({ series, loading }: EventInfoPanelProps) {
         {series.start_date && (
           <div className="text-xs text-gray-500">
             {formatDate(series.start_date)}
-            {series.end_date && ` — ${formatDate(series.end_date)}`}
+            {series.end_date && ` – ${formatDate(series.end_date)}`}
           </div>
         )}
 

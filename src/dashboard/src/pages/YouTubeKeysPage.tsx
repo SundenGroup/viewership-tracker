@@ -388,7 +388,7 @@ export function YouTubeKeysPage() {
               placeholder="e.g. PUBG · primary"
             />
           </FormField>
-          <FormField label="Partner (optional — leave blank for a shared/fallback key)">
+          <FormField label="Partner (optional: leave blank for a shared/fallback key)">
             <TextInput
               value={createForm.partner}
               onChange={(e) => setCreateForm({ ...createForm, partner: e.target.value })}
