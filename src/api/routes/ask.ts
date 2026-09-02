@@ -168,12 +168,12 @@ router.post('/explore/:seriesId', requireRole('admin', 'editor'), async (req: Re
       return;
     }
     if (!checkUserLimit(userId)) {
-      res.status(429).json({ error: 'Ask limit reached — try again in a bit (30 questions per hour)' });
+      res.status(429).json({ error: 'Ask limit reached. Try again in a bit (30 questions per hour)' });
       return;
     }
     if (!checkGlobalLimit()) {
       logger.warn('[Ask] Global daily budget exhausted', { limit: GLOBAL_LIMIT_PER_DAY });
-      res.status(429).json({ error: 'Ask is taking a breather — the daily question budget is used up' });
+      res.status(429).json({ error: 'Ask is taking a breather. The daily question budget is used up' });
       return;
     }
 
@@ -294,12 +294,12 @@ router.post('/discover/:slug', async (req: Request, res: Response, next: NextFun
       return;
     }
     if (!checkUserLimit(userId)) {
-      res.status(429).json({ error: 'Ask limit reached — try again in a bit (30 questions per hour)' });
+      res.status(429).json({ error: 'Ask limit reached. Try again in a bit (30 questions per hour)' });
       return;
     }
     if (!checkGlobalLimit()) {
       logger.warn('[Ask] Global daily budget exhausted', { limit: GLOBAL_LIMIT_PER_DAY });
-      res.status(429).json({ error: 'Ask is taking a breather — the daily question budget is used up' });
+      res.status(429).json({ error: 'Ask is taking a breather. The daily question budget is used up' });
       return;
     }
 

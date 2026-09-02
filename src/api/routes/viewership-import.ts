@@ -279,7 +279,7 @@ export async function resolveAnchor(
     if (!pt) return { error: `Could not parse streamStart "${streamStart}"` };
     const anchorDate = pt.date ?? date;
     if (!anchorDate) {
-      return { error: 'streamStart has no date part — set the CSV date or pass a full ISO datetime' };
+      return { error: 'streamStart has no date part. Set the CSV date or pass a full ISO datetime' };
     }
     const anchor = pt.utc
       ? new Date(Date.UTC(

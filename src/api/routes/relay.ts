@@ -483,7 +483,7 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
     if (newSuspects.length > 0) {
       getPushNotifier()
         .notify('data_anomaly', {
-          title: 'Stream Together detected — overlay suppressed',
+          title: 'Stream Together detected: overlay suppressed',
           body:
             `${newSuspects.join('; ')}. Helix values kept; the scraper switches ` +
             'these channels to the per-channel popover extractor automatically.',

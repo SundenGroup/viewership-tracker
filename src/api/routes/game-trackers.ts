@@ -377,7 +377,7 @@ async function applyGatingDecision(
       logger.error(`[YTGating] promotion failed for ${channelIdentifier} on ${tracker.slug}`, {
         error: (err as Error).message,
       });
-      return { ok: true, decision, row, promotion_error: 'held data could not be promoted — see server logs' };
+      return { ok: true, decision, row, promotion_error: 'held data could not be promoted. See server logs' };
     }
   }
   const discarded = await QuarantineModel.discardChannel(tracker.id, channelIdentifier)
