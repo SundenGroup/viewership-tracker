@@ -195,7 +195,7 @@ export async function rangeLeaderboardPage(
   const split = splitRangeByUtcDays(fromTs, toTs, through, todayRollupFresh());
   if (!split.fullDays) return rawPage();
   try {
-    return await rangeLeaderboardFromDayStats(gameTrackerId, fromTs, toTs, limit, opts, split);
+    return await rangeLeaderboardFromDayStats(gameTrackerId, fromTs, toTs, limit, opts, split.fullDays, split.rawEdges);
   } catch (err) {
     warnRollupFallback('range leaderboard', err);
     return rawPage();
@@ -208,20 +208,21 @@ async function rangeLeaderboardFromDayStats(
   toTs: Date,
   limit: number,
   opts: { language?: string | null; platform?: string | null; offset?: number },
-  split: ReturnType<typeof splitRangeByUtcDays> & { fullDays: NonNullable<ReturnType<typeof splitRangeByUtcDays>['fullDays']> },
+  fullDays: { fromDay: string; toDay: string },
+  rawEdges: Array<{ from: Date; to: Date }>,
 ): Promise<{ rows: RangeLeaderboardRow[]; total: number; source: 'rollup'; from: Date }> {
 
   const bindings: Record<string, unknown> = {
     tid: gameTrackerId,
-    fromDay: split.fullDays.fromDay,
-    toDay: split.fullDays.toDay,
+    fromDay: fullDays.fromDay,
+    toDay: fullDays.toDay,
     limit,
     offset: Math.max(0, opts.offset ?? 0),
     winFrom: fromTs,
     winTo: toTs,
   };
   const edgeSqls: string[] = [];
-  split.rawEdges.forEach((e, i) => {
+  rawEdges.forEach((e, i) => {
     const key = `e${i}`;
     bindings[`${key}From`] = e.from;
     bindings[`${key}To`] = e.to;
