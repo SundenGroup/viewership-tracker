@@ -8,8 +8,15 @@ jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # update.sh takes a full pre-deploy pg_dump first (about 11 minutes on the
+    # current database); 10 minutes used to kill the job before the pull.
+    timeout-minutes: 40
     steps:
+      - name: Check out the release
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
@@ -19,5 +26,10 @@ jobs:
 
       - name: Deploy
         run: |
+          # The server's git remote is HTTPS with no credentials, so it cannot pull
+          # from GitHub by itself. The runner pushes the release into the server's
+          # repo over SSH (refs/heads/deploy-inbox) and update.sh fast-forwards to it.
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no"
+          git push --force root@${{ secrets.DROPLET_IP }}:/opt/clutch-viewership-tracker "$GITHUB_SHA:refs/heads/deploy-inbox"
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@${{ secrets.DROPLET_IP }} \
             'bash /opt/clutch-viewership-tracker/deploy/update.sh'

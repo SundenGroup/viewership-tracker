@@ -37,7 +37,14 @@ ls -t "$BACKUP_DIR"/pre-deploy-*.sql.gz 2>/dev/null | tail -n +11 | xargs -r rm 
 echo "  Retained last 10 backups"
 
 echo "▸ Pulling latest code..."
-git pull origin main
+# The server cannot fetch from GitHub (HTTPS remote, no credentials). The deploy
+# workflow (or a developer) pushes the release into refs/heads/deploy-inbox over
+# SSH first; fast-forward to it. Falls back to a plain pull if no inbox exists.
+if git rev-parse --verify -q deploy-inbox > /dev/null; then
+  git merge --ff-only deploy-inbox
+else
+  git pull origin main
+fi
 
 echo "▸ Installing backend dependencies..."
 npm install --production=false
