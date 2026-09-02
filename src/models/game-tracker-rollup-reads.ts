@@ -6,6 +6,7 @@ import {
   bucketFloor,
   mergeBucketParts,
   servableFromBucketRollup,
+  snapLongRangeStart,
   splitRangeByUtcDays,
   type BucketPart,
 } from '../utils/gt-ranges';
@@ -151,11 +152,12 @@ function rawEdgeSql(paramIndexHint: string): string {
  */
 export async function rangeLeaderboardPage(
   gameTrackerId: string,
-  fromTs: Date,
+  fromArg: Date,
   toTs: Date,
   limit: number,
   opts: { language?: string | null; platform?: string | null; offset?: number } = {},
-): Promise<{ rows: RangeLeaderboardRow[]; total: number; source: 'rollup' | 'raw' }> {
+): Promise<{ rows: RangeLeaderboardRow[]; total: number; source: 'rollup' | 'raw'; from: Date }> {
+  const fromTs = snapLongRangeStart(fromArg, toTs);
   const through = await rolledThroughDay(gameTrackerId);
   const split = splitRangeByUtcDays(fromTs, toTs, through);
   if (!split.fullDays) {
@@ -163,7 +165,7 @@ export async function rangeLeaderboardPage(
       Snapshots.rangeLeaderboard(gameTrackerId, fromTs, toTs, limit, opts),
       Snapshots.countRangeLeaderboard(gameTrackerId, fromTs, toTs, opts),
     ]);
-    return { rows, total, source: 'raw' };
+    return { rows, total, source: 'raw', from: fromTs };
   }
 
   const bindings: Record<string, unknown> = {
@@ -268,7 +270,7 @@ export async function rangeLeaderboardPage(
     };
   });
   const total = result.rows.length > 0 ? Number(result.rows[0]?.total ?? 0) : await countIdent(bindings, filterSql, edgeSqls);
-  return { rows, total, source: 'rollup' };
+  return { rows, total, source: 'rollup', from: fromTs };
 }
 
 // A page past the end still needs the total for "Page X of Y".
@@ -307,10 +309,11 @@ export interface Breakdown {
 
 export async function breakdown(
   gameTrackerId: string,
-  fromTs: Date,
+  fromArg: Date,
   toTs: Date,
   platformFilter?: string | null,
-): Promise<Breakdown> {
+): Promise<Breakdown & { from: Date }> {
+  const fromTs = snapLongRangeStart(fromArg, toTs);
   const through = await rolledThroughDay(gameTrackerId);
   const split = splitRangeByUtcDays(fromTs, toTs, through);
   if (!split.fullDays) {
@@ -318,7 +321,7 @@ export async function breakdown(
       Snapshots.platformBreakdown(gameTrackerId, fromTs, toTs, platformFilter),
       Snapshots.languageBreakdown(gameTrackerId, fromTs, toTs, platformFilter),
     ]);
-    return { platform, language, source: 'raw' };
+    return { platform, language, source: 'raw', from: fromTs };
   }
   const bindings: Record<string, unknown> = {
     tid: gameTrackerId,
@@ -375,7 +378,7 @@ export async function breakdown(
   const language = [...byLanguage.entries()]
     .map(([language, v]) => ({ language, total_ccv_minutes: v.total, peak: v.peak }))
     .sort((a, b) => b.total_ccv_minutes - a.total_ccv_minutes);
-  return { platform, language, source: 'rollup' };
+  return { platform, language, source: 'rollup', from: fromTs };
 }
 
 // ── Per-channel range facts (exact, raw — one channel is cheap) ────────

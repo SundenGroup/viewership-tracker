@@ -104,3 +104,17 @@ describe('bucket helpers', () => {
     expect(bucketFloor(new Date('2026-09-02T06:37:59Z')).toISOString()).toBe('2026-09-02T06:30:00.000Z');
   });
 });
+
+describe('snapLongRangeStart', () => {
+  const { snapLongRangeStart } = jest.requireActual('../../src/utils/gt-ranges');
+  it('snaps a 7-day window to the UTC midnight of its first day', () => {
+    const to = new Date('2026-09-02T06:30:00Z');
+    const from = new Date('2026-08-26T06:30:00Z');
+    expect(snapLongRangeStart(from, to).toISOString()).toBe('2026-08-26T00:00:00.000Z');
+  });
+  it('leaves shorter windows exact', () => {
+    const to = new Date('2026-09-02T06:30:00Z');
+    const from = new Date('2026-09-01T06:30:00Z');
+    expect(snapLongRangeStart(from, to)).toEqual(from);
+  });
+});

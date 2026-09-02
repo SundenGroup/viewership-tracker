@@ -143,3 +143,18 @@ export function classifyTrend(
   if (ratio >= riseRatio) return { cls: 'riser', ratio };
   return null;
 }
+
+/**
+ * Windows of a week or more are snapped down to the UTC midnight of their
+ * first day: the partial first day is the one part of a long range that
+ * still has to be read from raw minute rows (up to a day of cold data),
+ * and "last 7 days" as 7 full days plus today is what readers expect.
+ * Shorter windows stay exact.
+ */
+export const DAY_SNAP_MIN_HOURS = 7 * 24;
+
+export function snapLongRangeStart(from: Date, to: Date): Date {
+  const hours = (to.getTime() - from.getTime()) / 3_600_000;
+  if (hours < DAY_SNAP_MIN_HOURS) return from;
+  return utcMidnightAtOrBefore(from);
+}

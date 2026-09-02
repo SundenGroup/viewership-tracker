@@ -45,9 +45,10 @@ export async function trendsV2(
   const baselineTo = curFromDay; // exclusive
   const baselineFrom = toUtcDay(new Date(Date.parse(`${curFromDay}T00:00:00Z`) - 7 * 86_400_000));
 
-  // Current-window peak: raw for short windows, day stats + raw today otherwise.
+  // Current-window peak: raw for short windows; a day or more reads the
+  // rolled-up days plus raw for today (so "24h" is yesterday + today).
   const curSql =
-    hours <= 48
+    hours < 24
       ? `
       SELECT channel_id, MAX(concurrent_viewers) AS peak
       FROM game_tracker_snapshots

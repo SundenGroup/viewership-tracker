@@ -660,7 +660,9 @@ router.get('/:slug/breakdown', async (req: Request, res: Response, next: NextFun
       return;
     }
     const b = await RollupReads.breakdown(tracker.id, fromTs, toTs, platformFilter);
-    res.json({ from: fromTs, to: toTs, platform: b.platform, language: b.language, source: b.source });
+    // `from` is the effective start — windows of a week or more snap to the
+    // UTC midnight of their first day (see snapLongRangeStart).
+    res.json({ from: b.from, to: toTs, platform: b.platform, language: b.language, source: b.source });
   } catch (err) {
     next(err);
   }
@@ -910,7 +912,7 @@ router.get('/:slug/range-leaderboard', async (req: Request, res: Response, next:
     });
     const { rows, total } = page;
     if (rows.length === 0) {
-      res.json({ from: fromTs, to: toTs, total, rows: [], source: page.source });
+      res.json({ from: page.from, to: toTs, total, rows: [], source: page.source });
       return;
     }
     const channelIds = rows.map((r) => r.channel_id);
@@ -923,7 +925,7 @@ router.get('/:slug/range-leaderboard', async (req: Request, res: Response, next:
     ]);
     const channelMap = new Map(channels.map((c) => [c.id, c]));
     res.json({
-      from: fromTs,
+      from: page.from,
       to: toTs,
       total,
       source: page.source,
