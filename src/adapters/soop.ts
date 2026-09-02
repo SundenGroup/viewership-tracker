@@ -96,11 +96,12 @@ export function mapSoopSearchItem(b: SoopSearchBroadcast): DiscoveredStream | nu
     gameName: b.broad_cate_name ?? null,
     startedAt: soopKstToIso(b.broad_start),
     streamId: b.broad_no != null ? String(b.broad_no) : undefined,
+    platformCategoryId: b.broad_cate_no ?? null,
   };
 }
 
 /** categoryContentsList item → DiscoveredStream. */
-export function mapSoopCategoryItem(b: SoopCategoryBroadcast): DiscoveredStream | null {
+export function mapSoopCategoryItem(b: SoopCategoryBroadcast, cateNo?: string): DiscoveredStream | null {
   if (!b.user_id) return null;
   const viewers = Number(b.view_cnt ?? 0);
   return {
@@ -112,6 +113,8 @@ export function mapSoopCategoryItem(b: SoopCategoryBroadcast): DiscoveredStream 
     gameName: null, // caller overlays the tracker's category name
     startedAt: soopKstToIso(b.broad_start),
     streamId: b.broad_no != null ? String(b.broad_no) : undefined,
+    // Listed under this category by construction.
+    platformCategoryId: cateNo ?? null,
   };
 }
 
@@ -344,7 +347,7 @@ export class SoopAdapter implements PlatformAdapter {
         const body = res?.data;
         if (!body || String(body.result) !== '1' || !Array.isArray(body.data?.list)) break;
         out.push(
-          ...body.data.list.map(mapSoopCategoryItem).filter(
+          ...body.data.list.map((b) => mapSoopCategoryItem(b, cateNo)).filter(
             (x): x is DiscoveredStream => x !== null,
           ),
         );

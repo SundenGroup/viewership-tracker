@@ -31,6 +31,8 @@ export interface DiscoveredStream {
   gameName?: string | null;
   startedAt?: string | null;
   streamId?: string | null;
+  /** Platform category code the stream is listed under (SOOP: broad_cate_no). */
+  platformCategoryId?: string | null;
 }
 
 export interface PlatformAdapter {
@@ -41,7 +43,7 @@ export interface PlatformAdapter {
   searchLiveStreams(
     gameId?: string,
     keywords?: string[],
-    categoryIds?: string[],
+    platformCategoryIds?: string[],
     /** Partner string from tournament_series.partner — only consulted by
      *  the YouTube adapter for partner-tagged API key routing. Other
      *  adapters ignore this. */

@@ -3,6 +3,7 @@ import logger from '../utils/logger';
 import { config } from '../utils/config';
 import { normalizeLanguageCode } from '../utils/language';
 import { keywordMatches } from '../utils/keyword-match';
+import { soopStreamInCategory } from '../utils/soop-discovery-gate';
 import type { AdapterRegistry, PlatformName } from '../adapters';
 import type { DiscoveredStream } from '../adapters/types';
 import type { TournamentSeries } from '../models/tournament-series';
@@ -374,6 +375,7 @@ export class DiscoveryService {
     let alreadyTracked = 0;
     let belowThreshold = 0;
     let blocked = 0;
+    let soopOffCategory = 0;
 
     // Helper: check if a stream title/channel name matches any discovery keyword.
     // Used to avoid storing metadata from non-relevant concurrent streams
@@ -386,6 +388,14 @@ export class DiscoveryService {
     for (const { platform, streams } of searchResults) {
       for (const stream of streams) {
         discovered++;
+
+        // SOOP's keyword search spans every category on the platform, so a
+        // hit only counts inside the series' configured SOOP category
+        // (discovery_game_ids.soop). No category configured → no SOOP hits.
+        if (platform === 'soop' && !soopStreamInCategory(stream, gameIds.soop)) {
+          soopOffCategory++;
+          continue;
+        }
 
         const lookupKey = `${platform}:${normIdent(stream.channelIdentifier)}`;
 
@@ -654,7 +664,7 @@ export class DiscoveryService {
 
     logger.info(
       `[Discovery] Cycle for ${series.name}: ${discovered} discovered, ${added} added, ${resurfaced} resurfaced, ` +
-      `${alreadyTracked} already tracked, ${belowThreshold} below threshold, ${blocked} blocked, ${duration}ms`,
+      `${alreadyTracked} already tracked, ${belowThreshold} below threshold, ${blocked} blocked, ${soopOffCategory} SOOP off-category, ${duration}ms`,
     );
 
     const result: DiscoveryResult = {
