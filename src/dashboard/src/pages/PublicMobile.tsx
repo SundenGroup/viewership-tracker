@@ -820,6 +820,7 @@ export function PublicMobile({
                 hours={model.viewedHours}
                 days={Math.max(1, seriesInfo.stages.reduce((a, s) => a + s.broadcast_days.length, 0))}
                 timeSeries={timeline.total}
+                timeSeriesIntervalSeconds={mode === 'live' ? 60 : 300}
                 showBroadcastTime
               />
             </section>

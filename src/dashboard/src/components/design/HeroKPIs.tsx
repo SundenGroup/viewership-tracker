@@ -57,6 +57,7 @@ export function HeroKPIs({
   timezone,
   peakIncludeDate,
   showBroadcastTime = false,
+  timeSeriesIntervalSeconds = 60,
 }: {
   variant?: HeroKPIVariant;
   peak: number | null;
@@ -91,6 +92,9 @@ export function HeroKPIs({
    *  per-minute buckets) instead of the 24/7-equivalent ballpark. The
    *  external reports and the public series view opt in. */
   showBroadcastTime?: boolean;
+  /** Bucket size of `timeSeries` in seconds — broadcast time is bucket count × this.
+   *  The public mobile view fetches 5-minute buckets for completed events. */
+  timeSeriesIntervalSeconds?: number;
 }) {
   const sizes = SIZES[variant];
 
@@ -104,8 +108,11 @@ export function HeroKPIs({
   // Ballpark: "24/7 equivalent viewer" baseline — hours / (days * 24)
   const avgEqViewers = days > 0 ? Math.round(safeHours / (days * 24)) : 0;
 
-  // Total broadcast time — non-zero minutes in the (per-minute) series.
-  const broadcastMinutes = showBroadcastTime && timeSeries ? timeSeries.filter((v) => v > 0).length : 0;
+  // Total broadcast time — non-zero buckets × bucket length (in minutes).
+  const broadcastMinutes =
+    showBroadcastTime && timeSeries
+      ? Math.round((timeSeries.filter((v) => v > 0).length * Math.max(1, timeSeriesIntervalSeconds)) / 60)
+      : 0;
   const broadcastTimeLabel =
     broadcastMinutes > 0
       ? `${Math.floor(broadcastMinutes / 60)}h ${String(broadcastMinutes % 60).padStart(2, '0')}m`

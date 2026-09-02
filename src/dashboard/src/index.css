@@ -240,3 +240,9 @@
 @media (pointer: coarse) {
   .segmented button { min-height: 36px; }
 }
+/* Narrow screens: exclusive-choice controls wrap instead of pushing the page sideways */
+@media (max-width: 700px) {
+  .segmented { flex-wrap: wrap; max-width: 100%; }
+  .discover-tabbar > * { max-width: 100%; }
+  .discover-hero > * { max-width: 100%; }
+}
