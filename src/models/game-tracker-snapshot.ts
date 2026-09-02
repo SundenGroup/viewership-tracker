@@ -107,6 +107,7 @@ export async function leaderboardAt(
   at: Date,
   windowSeconds = 120,
   limit = 50,
+  offset = 0,
 ): Promise<
   Array<{
     channel_id: string;
@@ -144,8 +145,9 @@ export async function leaderboardAt(
         [gameTrackerId, fromTs, at],
       ),
     )
-    .orderBy('s.concurrent_viewers', 'desc')
-    .limit(limit);
+    .orderBy([{ column: 's.concurrent_viewers', order: 'desc' }, { column: 's.channel_id', order: 'asc' }])
+    .limit(limit)
+    .offset(Math.max(0, offset));
 }
 
 export async function rangeLeaderboard(

@@ -1,3 +1,4 @@
+import type { Knex } from 'knex';
 import db from '../utils/db';
 
 /**
@@ -218,7 +219,13 @@ export async function upsertLiveBatch(rows: UpsertLiveSession[]): Promise<number
              (stream_sessions.titles -> (jsonb_array_length(stream_sessions.titles) - 1)) ->> 'title'
         THEN stream_sessions.titles || EXCLUDED.titles
         ELSE stream_sessions.titles
-      END
+      END,
+      -- A resurrected session is live again: its old grade described a
+      -- window that is no longer the whole broadcast, so it is cleared and
+      -- re-scored after the next close.
+      health_score = CASE WHEN stream_sessions.status = 'ended' THEN NULL ELSE stream_sessions.health_score END,
+      health_grade = CASE WHEN stream_sessions.status = 'ended' THEN NULL ELSE stream_sessions.health_grade END,
+      health_evidence = CASE WHEN stream_sessions.status = 'ended' THEN NULL ELSE stream_sessions.health_evidence END
     `,
     [
       batch.map((r) => r.game_tracker_id),
@@ -239,19 +246,89 @@ export async function upsertLiveBatch(rows: UpsertLiveSession[]): Promise<number
  * (ended_at = last snapshot we saw). Returns the closed ids so the
  * caller can compute finals for exactly those rows.
  */
-export async function closeStale(gameTrackerId: string): Promise<string[]> {
-  const result = await db.raw<{ rows: Array<{ id: string }> }>(
+export async function closeStale(
+  gameTrackerId: string,
+  excludePlatforms: string[] = [],
+  trx?: Knex.Transaction,
+): Promise<string[]> {
+  // A platform whose feed failed this cycle (quota, outage) produced no
+  // snapshots — its sessions are silent because WE went quiet, so they
+  // are left open rather than ended over a truncated window.
+  const result = await (trx ?? db).raw<{ rows: Array<{ id: string }> }>(
     `
-    UPDATE stream_sessions
+    UPDATE stream_sessions ss
     SET status = 'ended', ended_at = last_seen_at
-    WHERE status = 'live'
-      AND game_tracker_id = ?
-      AND last_seen_at < now() - interval '10 minutes'
+    WHERE ss.status = 'live'
+      AND ss.game_tracker_id = ?
+      AND ss.last_seen_at < now() - interval '10 minutes'
+      AND (
+        cardinality(?::text[]) = 0
+        OR NOT EXISTS (
+          SELECT 1 FROM channels c
+          WHERE c.id = ss.channel_id AND c.platform::text = ANY(?::text[])
+        )
+      )
     RETURNING id
     `,
-    [gameTrackerId],
+    [gameTrackerId, excludePlatforms, excludePlatforms],
   );
   return result.rows.map((r) => r.id);
+}
+
+/**
+ * Close + finalize in ONE transaction, so a finalize failure rolls the
+ * close back and the sessions are retried next cycle instead of being
+ * left 'ended' with zero finals forever (the old two-statement path lost
+ * 21 sessions in 30 days that way). Deadlocks / serialization failures
+ * are retried a couple of times before the error is surfaced.
+ */
+export async function closeAndFinalizeStale(
+  gameTrackerId: string,
+  excludePlatforms: string[] = [],
+): Promise<string[]> {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await db.transaction(async (trx) => {
+        const ids = await closeStale(gameTrackerId, excludePlatforms, trx);
+        if (ids.length > 0) await finalizeSessions(ids, trx);
+        return ids;
+      });
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      const retryable = code === '40P01' || code === '40001';
+      if (!retryable || attempt >= MAX_ATTEMPTS) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+    }
+  }
+}
+
+/**
+ * Repair pass for sessions that ended without finals (minutes_live = 0
+ * although a peak was recorded): recompute them from the raw tables.
+ * Idempotent; sessions whose raw rows were purged simply stay at zero.
+ * Returns how many of the candidates now carry finals.
+ */
+export async function repairUnfinalizedSessions(limit = 500): Promise<{ candidates: number; repaired: number }> {
+  const found = await db.raw<{ rows: Array<{ id: string }> }>(
+    `
+    SELECT id FROM stream_sessions
+    WHERE status = 'ended'
+      AND ended_at IS NOT NULL
+      AND minutes_live = 0
+      AND peak_ccv > 0
+      AND ended_at < now() - interval '15 minutes'
+      AND ended_at >= now() - interval '60 days'
+    ORDER BY ended_at DESC
+    LIMIT ?
+    `,
+    [limit],
+  );
+  const ids = found.rows.map((r) => r.id);
+  if (ids.length === 0) return { candidates: 0, repaired: 0 };
+  await finalizeSessions(ids);
+  const after = await db(TABLE).whereIn('id', ids).where('minutes_live', '>', 0).count<{ n: string }[]>('* as n');
+  return { candidates: ids.length, repaired: Number(after[0]?.n ?? 0) };
 }
 
 /**
@@ -269,16 +346,19 @@ export async function closeStale(gameTrackerId: string): Promise<string[]> {
  *     that predate the tracking or had no chat evidence)
  *   - followers_end = latest follower snapshot ≤ ended_at + 10 min
  */
-export async function finalizeSessions(ids: string[]): Promise<void> {
+export async function finalizeSessions(ids: string[], trx?: Knex.Transaction): Promise<void> {
   if (ids.length === 0) return;
-  await db.raw(
+  await (trx ?? db).raw(
     `
     WITH closed AS (
-      SELECT id, game_tracker_id, channel_id, started_at, ended_at
+      SELECT id, game_tracker_id, channel_id, stream_id, started_at, ended_at
       FROM stream_sessions
       WHERE id = ANY(?::uuid[]) AND ended_at IS NOT NULL
     ),
     per_minute AS (
+      -- Joined on stream_id as well: a channel running two streams at
+      -- once (main + map view) must not hand both sessions the bigger
+      -- stream's curve.
       SELECT c.id AS session_id,
              date_trunc('minute', s."timestamp") AS minute,
              MAX(s.concurrent_viewers) AS ccv
@@ -286,6 +366,7 @@ export async function finalizeSessions(ids: string[]): Promise<void> {
       JOIN game_tracker_snapshots s
         ON s.game_tracker_id = c.game_tracker_id
        AND s.channel_id = c.channel_id
+       AND s.stream_id = c.stream_id
        AND s."timestamp" >= c.started_at
        AND s."timestamp" <= c.ended_at
       GROUP BY c.id, date_trunc('minute', s."timestamp")
@@ -398,7 +479,12 @@ export async function sessionTimeline(
   channelId: string,
   fromTs: Date,
   toTs: Date,
+  streamId?: string | null,
 ): Promise<Array<{ ts: Date; ccv: number }>> {
+  const streamSql = streamId ? 'AND stream_id = ?' : '';
+  const params: unknown[] = streamId
+    ? [gameTrackerId, channelId, fromTs, toTs, streamId]
+    : [gameTrackerId, channelId, fromTs, toTs];
   const result = await db.raw<{ rows: Array<{ ts: Date; ccv: number }> }>(
     `
     SELECT date_trunc('minute', "timestamp") AS ts,
@@ -408,10 +494,11 @@ export async function sessionTimeline(
       AND channel_id = ?
       AND "timestamp" >= ?
       AND "timestamp" <= ?
+      ${streamSql}
     GROUP BY ts
     ORDER BY ts ASC
     `,
-    [gameTrackerId, channelId, fromTs, toTs],
+    params,
   );
   return result.rows.map((r) => ({ ts: r.ts, ccv: Number(r.ccv) }));
 }
@@ -696,6 +783,7 @@ export async function lastGradesFor(
     WHERE game_tracker_id = ?
       AND channel_id = ANY(?)
       AND health_grade IS NOT NULL
+      AND started_at >= now() - interval '30 days'
     ORDER BY channel_id, started_at DESC
     `,
     [gameTrackerId, channelIds],
@@ -706,6 +794,31 @@ export async function lastGradesFor(
       { grade: r.health_grade, score: r.health_score != null ? Number(r.health_score) : null },
     ]),
   );
+}
+
+/**
+ * Scored sessions per channel in the last 30 days — the evidence gate
+ * input, so list endpoints can suppress a grade that rests on a single
+ * broadcast exactly like the per-channel endpoints do.
+ */
+export async function scoredSessionCounts30d(
+  gameTrackerId: string,
+  channelIds: string[],
+): Promise<Map<string, number>> {
+  if (channelIds.length === 0) return new Map();
+  const { rows } = await db.raw<{ rows: Array<{ channel_id: string; n: string }> }>(
+    `
+    SELECT channel_id, COUNT(*) AS n
+    FROM stream_sessions
+    WHERE game_tracker_id = ?
+      AND channel_id = ANY(?)
+      AND health_score IS NOT NULL
+      AND started_at >= now() - interval '30 days'
+    GROUP BY channel_id
+    `,
+    [gameTrackerId, channelIds],
+  );
+  return new Map(rows.map((r) => [r.channel_id, Number(r.n)]));
 }
 
 /** Start time of each channel's CURRENT live session (for uptime columns). */

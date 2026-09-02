@@ -214,3 +214,88 @@ export async function reset(gameTrackerId: string, channelIdentifier: string): P
       updated_at: new Date(),
     });
 }
+
+// ── Review queue paging ──────────────────────────────────────────────────
+
+export interface ListPageOptions {
+  decision?: GatingDecision;
+  /** Substring match on channel name / identifier / sample title. */
+  q?: string | null;
+  /** Exact stored reason (one cluster from reasonClusters()). */
+  reason?: string | null;
+  minCcv?: number | null;
+  limit: number;
+  offset: number;
+  sort?: 'ccv' | 'seen' | 'name';
+}
+
+/**
+ * One page of the review queue with the total, so 195 pending rows are
+ * not one endless list. Sorted by peak seen (desc) unless told otherwise.
+ */
+export async function listPage(
+  gameTrackerId: string,
+  opts: ListPageOptions,
+): Promise<{ rows: GameTrackerYouTubeChannel[]; total: number }> {
+  const base = db(TABLE).where('game_tracker_id', gameTrackerId);
+  if (opts.decision) base.where('decision', opts.decision);
+  if (opts.reason) base.where('reason', opts.reason);
+  if (opts.minCcv != null && opts.minCcv > 0) base.where('sample_ccv', '>=', opts.minCcv);
+  if (opts.q && opts.q.trim()) {
+    const like = `%${opts.q.trim().replace(/[%_]/g, (m) => `\\${m}`)}%`;
+    base.where((qb) => {
+      qb.whereILike('display_name', like)
+        .orWhereILike('channel_identifier', like)
+        .orWhereILike('sample_title', like);
+    });
+  }
+  const countQ = base.clone().count<{ n: string }[]>('* as n');
+  const rowsQ = base.clone();
+  switch (opts.sort) {
+    case 'seen':
+      rowsQ.orderBy([{ column: 'last_seen_at', order: 'desc', nulls: 'last' }]);
+      break;
+    case 'name':
+      rowsQ.orderByRaw('LOWER(COALESCE(display_name, channel_identifier)) ASC');
+      break;
+    default:
+      rowsQ.orderBy([
+        { column: 'sample_ccv', order: 'desc', nulls: 'last' },
+        { column: 'last_seen_at', order: 'desc' },
+      ]);
+  }
+  rowsQ.limit(opts.limit).offset(opts.offset);
+  const [countRows, rows] = await Promise.all([countQ, rowsQ]);
+  return { rows, total: Number(countRows[0]?.n ?? 0) };
+}
+
+/**
+ * Distinct stored reasons for one decision bucket with their counts —
+ * the review queue's reason filter and the "apply to all with this
+ * reason" bulk action are built on it.
+ */
+export async function reasonClusters(
+  gameTrackerId: string,
+  decision: GatingDecision,
+): Promise<Array<{ reason: string; count: number }>> {
+  const rows = await db(TABLE)
+    .where({ game_tracker_id: gameTrackerId, decision })
+    .whereNotNull('reason')
+    .select('reason')
+    .count<{ reason: string; count: string }[]>('* as count')
+    .groupBy('reason')
+    .orderBy('count', 'desc');
+  return rows.map((r) => ({ reason: r.reason, count: Number(r.count) }));
+}
+
+/** Channel identifiers for every row in a decision bucket with this reason (bulk actions). */
+export async function identifiersForReason(
+  gameTrackerId: string,
+  decision: GatingDecision,
+  reason: string,
+): Promise<string[]> {
+  return db(TABLE)
+    .where({ game_tracker_id: gameTrackerId, decision, reason })
+    .orderBy([{ column: 'sample_ccv', order: 'desc', nulls: 'last' }])
+    .pluck('channel_identifier');
+}

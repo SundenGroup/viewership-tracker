@@ -349,7 +349,7 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
         FROM unnest(?::uuid[], ?::text[]) AS t(tracker_id, band)
       ),
       sess AS (
-        SELECT s.id, s.game_tracker_id, s.channel_id, ch.platform::text AS platform,
+        SELECT s.id, s.game_tracker_id, s.channel_id, s.stream_id, ch.platform::text AS platform,
                s.started_at, s.ended_at,
                s.avg_ccv, s.ccv_minutes, s.followers_start, s.followers_end,
                (${BAND_SQL}) AS band,
@@ -391,6 +391,7 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
         JOIN game_tracker_snapshots g
           ON g.game_tracker_id = se.game_tracker_id
          AND g.channel_id = se.channel_id
+         AND g.stream_id = se.stream_id
          AND g."timestamp" >= se.started_at
          AND g."timestamp" <= se.ended_at
         GROUP BY se.id, se.channel_id, date_trunc('minute', g."timestamp")

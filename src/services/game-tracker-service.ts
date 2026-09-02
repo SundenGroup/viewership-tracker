@@ -172,6 +172,10 @@ export class GameTrackerService {
 
     const slug = tracker.slug;
     const liveStreams: PlatformStream[] = [];
+    // Platforms whose feed failed or came back incomplete this cycle. Their
+    // channels are neither bumped towards a mismatch drop nor closed as
+    // stale sessions — silence caused by us is not a stream ending.
+    const failedPlatforms = new Set<string>();
 
     // Twitch + Kick run in parallel; either platform can be left
     // unconfigured (null game/category id = skip this platform).
@@ -189,6 +193,7 @@ export class GameTrackerService {
               });
             }
           } catch (err) {
+            failedPlatforms.add('twitch');
             logger.warn(`[GameTracker:${slug}] Twitch fetch failed`, {
               error: (err as Error).message,
             });
@@ -209,6 +214,7 @@ export class GameTrackerService {
               });
             }
           } catch (err) {
+            failedPlatforms.add('kick');
             logger.warn(`[GameTracker:${slug}] Kick fetch failed`, {
               error: (err as Error).message,
             });
@@ -231,7 +237,8 @@ export class GameTrackerService {
             });
           }
         } catch (err) {
-          logger.warn(`[GameTracker:${tracker.slug}] Soop fetch failed`, {
+          failedPlatforms.add('soop');
+            logger.warn(`[GameTracker:${tracker.slug}] Soop fetch failed`, {
             error: (err as Error).message,
           });
         }
@@ -266,7 +273,8 @@ export class GameTrackerService {
             });
           }
         } catch (err) {
-          logger.warn(`[GameTracker:${tracker.slug}] TikTok buffer read failed`, {
+          failedPlatforms.add('tiktok');
+            logger.warn(`[GameTracker:${tracker.slug}] TikTok buffer read failed`, {
             error: (err as Error).message,
           });
         }
@@ -285,6 +293,7 @@ export class GameTrackerService {
           }
           try {
             const { streams, result: ytResult } = await yt.collect(tracker);
+            if (ytResult.degraded) failedPlatforms.add('youtube');
             for (const s of streams) liveStreams.push({ platform: 'youtube', stream: s });
             logger.info(
               `[GameTracker:${slug}] youtube: roster ${ytResult.rosterSize} → live ${ytResult.liveFound} ` +
@@ -292,6 +301,7 @@ export class GameTrackerService {
                 `${ytResult.quotaCalls} quota unit(s)${ytResult.discoveryRan ? ' + discovery' : ''}`,
             );
           } catch (err) {
+            failedPlatforms.add('youtube');
             logger.warn(`[GameTracker:${slug}] YouTube fetch failed`, {
               error: (err as Error).message,
             });
@@ -453,8 +463,30 @@ export class GameTrackerService {
     }
 
     // ── Bump mismatch / drop streams that disappeared this cycle ──────
+    // Channels on a platform whose feed failed this cycle are skipped —
+    // ~3 quota-denied cycles used to soft-drop the whole YouTube roster.
+    const skipBumpChannelIds = new Set<string>();
+    if (failedPlatforms.size > 0) {
+      const unmatched = activeAssignments
+        .filter((a) => !matchedChannelIds.has(a.channel_id))
+        .map((a) => a.channel_id);
+      if (unmatched.length > 0) {
+        const rows = await this.db('channels')
+          .whereIn('id', unmatched)
+          .whereIn('platform', [...failedPlatforms])
+          .select<Array<{ id: string }>>('id');
+        for (const r of rows) skipBumpChannelIds.add(r.id);
+      }
+      if (skipBumpChannelIds.size > 0) {
+        logger.warn(
+          `[GameTracker:${slug}] ${[...failedPlatforms].join('/')} feed failed — ` +
+            `${skipBumpChannelIds.size} channel(s) not bumped this cycle`,
+        );
+      }
+    }
     for (const assignment of activeAssignments) {
       if (matchedChannelIds.has(assignment.channel_id)) continue;
+      if (skipBumpChannelIds.has(assignment.channel_id)) continue;
       const newCount = await GameTrackerChannelModel.bumpMismatch(assignment.id);
       result.bumpedMismatch++;
       if (newCount >= tracker.mismatch_threshold_cycles) {
@@ -474,7 +506,7 @@ export class GameTrackerService {
     await this.pollFollowersSafe(slug, eligible, existingChannels);
 
     // ── Stream session lifecycle (upsert live rows, close stale) ──────
-    await this.updateStreamSessionsSafe(slug, tracker.id, snapshotsToInsert);
+    await this.updateStreamSessionsSafe(slug, tracker.id, snapshotsToInsert, [...failedPlatforms]);
 
     // ── Cache streamer profile pics on first sighting ─────────────────
     // Twitch only — Kick's public API doesn't expose user profile pics
@@ -652,6 +684,7 @@ export class GameTrackerService {
     slug: string,
     trackerId: string,
     snapshots: GameTrackerSnapshotModel.InsertSnapshot[],
+    failedPlatforms: string[] = [],
   ): Promise<void> {
     try {
       const withStream = snapshots.filter((s) => s.stream_id);
@@ -669,13 +702,14 @@ export class GameTrackerService {
           })),
         );
       }
-      const closedIds = await StreamSessionModel.closeStale(trackerId);
+      // Close + finalize run in one transaction: a finalize failure rolls
+      // the close back and the sessions are retried next cycle.
+      const closedIds = await StreamSessionModel.closeAndFinalizeStale(trackerId, failedPlatforms);
       if (closedIds.length > 0) {
-        await StreamSessionModel.finalizeSessions(closedIds);
         logger.info(`[GameTracker:${slug}] closed ${closedIds.length} stream session(s)`);
       }
     } catch (err) {
-      logger.warn(`[GameTracker:${slug}] stream session pass failed`, {
+      logger.error(`[GameTracker:${slug}] stream session pass failed`, {
         error: (err as Error).message,
       });
     }

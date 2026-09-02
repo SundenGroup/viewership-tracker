@@ -28,6 +28,8 @@ import { ViewershipWebSocketServer } from './api/websocket';
 import { getPushNotifier } from './services/push-notifier';
 import { scoreSessions, sessionIdsEndedWithin } from './services/stream-health';
 import { rollupRecentDays } from './services/gt-day-rollup';
+import { rollupRecentBuckets } from './services/gt-bucket-rollup';
+import { repairUnfinalizedSessions } from './models/stream-session';
 import { purgeExpiredRawSnapshots } from './services/raw-retention';
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
@@ -287,7 +289,57 @@ async function bootstrap(): Promise<void> {
       }, { timezone: 'Etc/UTC', noOverlap: true, name: 'gt-day-rollup' }),
     );
     logger.info('[CVT] Game-tracker daily rollup scheduled (daily 04:20 UTC)');
+
+    // Yesterday is also rolled right after midnight so the day-stats fast
+    // paths (range leaderboard, breakdown, trends) cover it from 00:10 UTC
+    // instead of 04:20; the 04:20 pass re-rolls it idempotently.
+    maintenanceTasks.push(
+      cron.schedule('10 0 * * *', async () => {
+        try {
+          await rollupRecentDays(1);
+        } catch (err) {
+          logger.error('[GTRollup] post-midnight rollup failed', { error: (err as Error).message });
+        }
+      }, { timezone: 'Etc/UTC', noOverlap: true, name: 'gt-day-rollup-early' }),
+    );
+
+    // 10-minute bucket rollup for the Trends timeline — every 2 minutes,
+    // re-rolling the last half hour (src/services/gt-bucket-rollup.ts).
+    maintenanceTasks.push(
+      cron.schedule('*/2 * * * *', async () => {
+        try {
+          await rollupRecentBuckets();
+        } catch (err) {
+          logger.error('[GTBuckets] rollup failed', { error: (err as Error).message });
+        }
+      }, { timezone: 'Etc/UTC', noOverlap: true, name: 'gt-bucket-rollup' }),
+    );
+    setTimeout(() => {
+      rollupRecentBuckets().catch((err) =>
+        logger.error('[GTBuckets] boot rollup failed', { error: (err as Error).message }),
+      );
+    }, 15_000);
+    logger.info('[CVT] Game-tracker bucket rollup scheduled (every 2 min)');
   }
+
+  // ── 10d-2. Stream session repair sweep ─────────────────────────────────
+  // Sessions that ended without finals (the pre-transaction close path
+  // could lose them) are recomputed from raw: once on boot, then daily.
+  const runSessionRepair = async (label: string) => {
+    try {
+      const r = await repairUnfinalizedSessions();
+      if (r.candidates > 0) {
+        logger.info(`[SessionRepair] ${label}: ${r.repaired}/${r.candidates} session(s) repaired`);
+      }
+    } catch (err) {
+      logger.error(`[SessionRepair] ${label} failed`, { error: (err as Error).message });
+    }
+  };
+  setTimeout(() => void runSessionRepair('boot'), 60_000);
+  maintenanceTasks.push(
+    cron.schedule('30 4 * * *', () => runSessionRepair('daily'),
+      { timezone: 'Etc/UTC', noOverlap: true, name: 'session-repair' }),
+  );
 
   // ── 10e. Raw-snapshot retention purge (cron) ───────────────────────────
   // Nightly at 04:40 UTC deletes game_tracker_snapshots older than each

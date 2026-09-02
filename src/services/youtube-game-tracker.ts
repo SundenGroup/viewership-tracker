@@ -152,6 +152,8 @@ export interface YouTubeCycleResult {
   held: number;
   discoveryRan: boolean;
   quotaCalls: number;
+  /** The videos.list pass could not fetch every batch (quota / outage) — the roster is incomplete, not empty. */
+  degraded: boolean;
 }
 
 interface GateOutcome {
@@ -420,7 +422,7 @@ export class YouTubeGameTracker {
     const cfg = (tracker.youtube_config ?? {}) as YouTubeTrackerConfig;
     const result: YouTubeCycleResult = {
       rosterSize: 0, liveFound: 0, allowed: 0, pending: 0, denied: 0,
-      held: 0, discoveryRan: false, quotaCalls: 0,
+      held: 0, discoveryRan: false, quotaCalls: 0, degraded: false,
     };
 
     // ── 1. Roster ──────────────────────────────────────────────────────
@@ -466,6 +468,11 @@ export class YouTubeGameTracker {
     // ── 2. Track ───────────────────────────────────────────────────────
     const live = await this.adapter.getLiveVideos(ids);
     result.liveFound = live.length;
+    result.degraded =
+      (this.adapter as { lastVideoDetailsDegraded?: boolean }).lastVideoDetailsDegraded === true;
+    if (result.degraded) {
+      logger.warn(`[YT:${tracker.slug}] videos.list incomplete this cycle — roster kept, sessions left open`);
+    }
 
     // ── 3. Gate ────────────────────────────────────────────────────────
     const streams: DiscoveredStream[] = [];

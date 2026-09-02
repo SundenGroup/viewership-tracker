@@ -16,8 +16,10 @@ import db from '../utils/db';
 
 const TABLE = 'game_tracker_youtube_quarantine';
 
-/** How long held rows survive with nobody deciding. */
+/** A channel nobody has seen live for this long loses its held rows. */
 export const QUARANTINE_TTL_DAYS = 14;
+/** Hard cap: even a channel that keeps streaming while pending never banks more than this. */
+export const QUARANTINE_MAX_DAYS = 60;
 
 export interface HeldSnapshot {
   id: string;
@@ -63,12 +65,34 @@ export async function discardChannel(
     .delete();
 }
 
-/** TTL sweep — held rows nobody ruled on age out tracker-wide. */
+/**
+ * TTL sweep, per CHANNEL: a channel that has not been seen live for
+ * QUARANTINE_TTL_DAYS loses everything it banked; a channel still being
+ * seen keeps its full history (the queue promises "banked while you
+ * decide"), capped at QUARANTINE_MAX_DAYS so nothing grows forever.
+ */
 export async function sweep(gameTrackerId: string): Promise<number> {
-  return db(TABLE)
-    .where('game_tracker_id', gameTrackerId)
-    .where('timestamp', '<', new Date(Date.now() - QUARANTINE_TTL_DAYS * 86_400_000))
-    .delete();
+  const result = await db.raw<{ rowCount: number }>(
+    `
+    DELETE FROM ${TABLE} q
+    WHERE q.game_tracker_id = ?
+      AND (
+        q."timestamp" < ?
+        OR NOT EXISTS (
+          SELECT 1 FROM ${TABLE} n
+          WHERE n.game_tracker_id = q.game_tracker_id
+            AND n.channel_identifier = q.channel_identifier
+            AND n."timestamp" >= ?
+        )
+      )
+    `,
+    [
+      gameTrackerId,
+      new Date(Date.now() - QUARANTINE_MAX_DAYS * 86_400_000),
+      new Date(Date.now() - QUARANTINE_TTL_DAYS * 86_400_000),
+    ],
+  );
+  return result.rowCount;
 }
 
 export interface HeldStats {

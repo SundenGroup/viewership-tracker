@@ -1258,14 +1258,23 @@ export class YouTubeAdapter implements PlatformAdapter {
 
   // ── Bulk video details fetch ──────────────────────────────────────────
 
+  /**
+   * True when the last getVideoDetails() call could not fetch every batch
+   * (quota denied, or a request failed after retries). The game tracker
+   * reads it to tell "these streams ended" from "we could not look".
+   */
+  public lastVideoDetailsDegraded = false;
+
   private async getVideoDetails(videoIds: string[]): Promise<YouTubeVideoItem[]> {
     if (videoIds.length === 0) return [];
 
     const batches = chunk(videoIds, MAX_VIDEO_IDS_PER_REQUEST);
     const allItems: YouTubeVideoItem[] = [];
+    this.lastVideoDetailsDegraded = false;
 
     for (const batch of batches) {
       if (!this.consumeQuota(QUOTA_COST.videosList, 'getVideoDetails')) {
+        this.lastVideoDetailsDegraded = true;
         break;
       }
 
@@ -1284,6 +1293,8 @@ export class YouTubeAdapter implements PlatformAdapter {
 
       if (result) {
         allItems.push(...result.items);
+      } else {
+        this.lastVideoDetailsDegraded = true;
       }
     }
 
