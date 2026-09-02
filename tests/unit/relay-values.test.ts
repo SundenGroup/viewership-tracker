@@ -1,4 +1,5 @@
 import { normalizeRelayViewers, detectBleedIdentifiers } from '../../src/utils/relay-values';
+import { looksLikeCombinedBadge, sharesCombinedNumber } from '../../src/utils/relay-values';
 
 describe('normalizeRelayViewers', () => {
   it('accepts plain integers and rounds floats', () => {
@@ -47,5 +48,32 @@ describe('detectBleedIdentifiers', () => {
     expect(detectBleedIdentifiers([
       { identifier: 'a', viewers: null }, { identifier: 'b', viewers: null }, { identifier: 'c', viewers: null },
     ]).size).toBe(0);
+  });
+});
+
+describe('looksLikeCombinedBadge', () => {
+  it('flags the absolute jumps the old rule caught', () => {
+    expect(looksLikeCombinedBadge(9102, 504)).toBe(true);
+    // +621 on 10.7K is below both rules: that case is caught by sharesCombinedNumber
+    expect(looksLikeCombinedBadge(11309, 10688)).toBe(false);
+  });
+  it('flags a 1.5× badge on a mid-size channel (Dimeax 815 vs Helix 494)', () => {
+    expect(looksLikeCombinedBadge(815, 494)).toBe(true);
+    expect(looksLikeCombinedBadge(700, 494)).toBe(false); // Helix lag, not a co-stream
+  });
+  it('ignores tiny channels where a handful of viewers doubles the number', () => {
+    expect(looksLikeCombinedBadge(30, 12)).toBe(false);
+  });
+});
+
+describe('sharesCombinedNumber', () => {
+  it('matches the host whose badge equals a flagged combined value', () => {
+    expect(sharesCombinedNumber(9020, [8999])).toBe(true); // BastiGHG next to Dimeax's 8999
+    expect(sharesCombinedNumber(11459, [11411])).toBe(true);
+  });
+  it('does not match unrelated channels or small numbers', () => {
+    expect(sharesCombinedNumber(8300, [8999])).toBe(false);
+    expect(sharesCombinedNumber(900, [900])).toBe(false); // below the floor
+    expect(sharesCombinedNumber(9020, [])).toBe(false);
   });
 });

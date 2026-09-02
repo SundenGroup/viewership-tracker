@@ -93,7 +93,13 @@ export function setRelayBroadcast(fn: RelayBroadcastFn): void {
 // vs. writing hours of combined-badge inflation. Every inflation case
 // we've repaired was 2–10x the slice.
 const COHOST_SUSPECT_TTL_MS = 30 * 60_000;
-import { normalizeRelayViewers, detectBleedIdentifiers, MAX_PLAUSIBLE_RELAY_CCV } from '../../utils/relay-values';
+import {
+  normalizeRelayViewers,
+  detectBleedIdentifiers,
+  looksLikeCombinedBadge,
+  sharesCombinedNumber,
+  MAX_PLAUSIBLE_RELAY_CCV,
+} from '../../utils/relay-values';
 const cohostSuspects = new Map<string, number>(); // identifier(lower) -> expiry epoch ms
 
 /** Returns true when this is a NEW suspect (not already active). */
@@ -116,9 +122,6 @@ function activeCohostSuspects(): string[] {
   return [...cohostSuspects.keys()];
 }
 
-function looksLikeCombinedBadge(relayViewers: number, helixViewers: number): boolean {
-  return relayViewers > Math.max(helixViewers * 2, helixViewers + 500);
-}
 
 // ── Relay health (observability) ─────────────────────────────────────────
 //
@@ -428,6 +431,12 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
     }
 
     let bled = 0;
+    // Pass 1: pair every pushed value with its Helix rows for this poll.
+    const pending: Array<{
+      identifier: string;
+      relayViewers: number;
+      rows: Array<{ id: string; concurrent_viewers: number }>;
+    }> = [];
     for (const input of channels) {
       const identifier = (input.identifier || '').toLowerCase();
       const relayViewers = normalizeRelayViewers(input.viewers);
@@ -448,21 +457,50 @@ router.post('/twitch', requireRelayToken, async (req: Request, res: Response, ne
 
       if (rows.length === 0) continue;
       matched++;
+      pending.push({ identifier, relayViewers, rows });
+    }
 
-      // Browser scraper data is real per-minute — more accurate than the API's
-      // 3-5 minute stepped cache. Always use the scraper value (replace, not max)
-      // — UNLESS it looks like a Stream Together combined badge (far above the
-      // Helix slice it would replace). Then keep Helix and flag the channel so
-      // the scraper switches it to the per-channel popover extractor.
+    // Pass 2: Stream Together detection. A badge far above its own Helix
+    // value is a combined count; every other channel in this push whose
+    // badge shows the same combined number is a co-participant, inflated
+    // by the same amount however small it looks next to its own audience.
+    const directSuspects = new Set<string>();
+    const flaggedCombined: number[] = [];
+    for (const p of pending) {
+      const helixViewers = Math.max(...p.rows.map((r) => Number(r.concurrent_viewers) || 0));
+      if (looksLikeCombinedBadge(p.relayViewers, helixViewers)) {
+        directSuspects.add(p.identifier);
+        flaggedCombined.push(p.relayViewers);
+      }
+    }
+    const sharedSuspects = new Set<string>();
+    for (const p of pending) {
+      if (directSuspects.has(p.identifier)) continue;
+      if (sharesCombinedNumber(p.relayViewers, flaggedCombined)) sharedSuspects.add(p.identifier);
+    }
+
+    // Pass 3: write. Browser scraper data is real per-minute — more accurate
+    // than the API's 3-5 minute stepped cache — so the scraper value replaces
+    // Helix, UNLESS the channel is a Stream Together suspect: then Helix is
+    // kept and the channel is flagged so the scraper switches it to the
+    // per-channel popover extractor.
+    for (const p of pending) {
+      const { identifier, relayViewers, rows } = p;
+      const isSuspect = directSuspects.has(identifier) || sharedSuspects.has(identifier);
       for (const row of rows) {
         const helixViewers = Number(row.concurrent_viewers) || 0;
-        if (looksLikeCombinedBadge(relayViewers, helixViewers)) {
+        if (isSuspect) {
           if (markCohostSuspect(identifier)) {
-            newSuspects.push(`${identifier} (${relayViewers} vs helix ${helixViewers})`);
+            newSuspects.push(
+              sharedSuspects.has(identifier)
+                ? `${identifier} (${relayViewers}, same combined number as a flagged channel; helix ${helixViewers})`
+                : `${identifier} (${relayViewers} vs helix ${helixViewers})`,
+            );
           }
           suspected++;
           logger.warn(
-            `[Relay] Twitch: ${identifier} relay=${relayViewers} vs helix=${helixViewers} — combined-badge suspect, keeping Helix value`,
+            `[Relay] Twitch: ${identifier} relay=${relayViewers} vs helix=${helixViewers}, ` +
+              `${sharedSuspects.has(identifier) ? 'shares a flagged combined number' : 'combined-badge suspect'}, keeping Helix value`,
           );
           continue;
         }
