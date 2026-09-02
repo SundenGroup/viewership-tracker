@@ -5,20 +5,20 @@ import {
   Row,
   RangePill,
   Section,
-  IconFilter,
   IconDownload,
   RangeControl,
   LoadingBlock,
   EmptyState,
+  SegmentedControl,
   resolveRange,
   parseRangeKey,
   type RangeKey,
 } from '@/components/design';
 import { downloadCsv, csvStamp } from '@/utils/csv';
+import { RetentionNote } from '@/components/discover/RetentionNote';
 import { LeaderboardTable, FreshnessIndicator, type LeaderboardRow } from './DiscoverDetailPage';
 
 const POLL_INTERVAL_MS = 30_000;
-type PlatformFilter = 'all' | 'twitch' | 'kick' | 'youtube';
 type SortKey = 'ccv' | 'lang';
 
 /** Every window this surface supports — shares the ?range vocabulary with Trends. */
@@ -29,12 +29,14 @@ const PAGE_SIZE = 50;
 export function DiscoverChannelsTab({
   slug,
   platform,
-  onPlatformChange,
+  retainRawDays,
 }: {
   slug: string;
   /** Shared page-level filter (also drives Live + Trends). */
   platform: string;
-  onPlatformChange: (p: string) => void;
+  onPlatformChange?: (p: string) => void;
+  /** Tracker's raw retention, for the note under long ranges. */
+  retainRawDays?: number | null;
 }) {
   // Filters/pagination are mirrored into URL search params so views are
   // shareable — state initializes from the URL on mount, then a sync
@@ -57,7 +59,7 @@ export function DiscoverChannelsTab({
     return Number.isFinite(raw) && raw > 1 ? Math.floor(raw) - 1 : 0;
   });
   const [total, setTotal] = useState<number | null>(null);
-  const [rangeLangOptions, setRangeLangOptions] = useState<string[]>([]);
+  const [langOptions, setLangOptions] = useState<string[]>([]);
 
   // State → URL (replace, merged) so pasted links reproduce the view.
   // Defaults are omitted to keep URLs clean; page is 1-based in the URL.
@@ -90,6 +92,7 @@ export function DiscoverChannelsTab({
     () => resolveRange(dateMode, fromDate, toDate),
     [dateMode, fromDate, toDate],
   );
+  const rangeHours = range ? (range.to.getTime() - range.from.getTime()) / 3_600_000 : 0;
 
   const rangeKey = range ? `${range.from.toISOString()}|${range.to.toISOString()}` : 'now';
 
@@ -105,16 +108,17 @@ export function DiscoverChannelsTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rangeKey, lang, platform]);
 
-  // Range mode: load the full language list for the dropdown (independent of
-  // the active language filter, which is now applied server-side).
+  // Language list for the dropdown, independent of the active filter:
+  // the range's breakdown, or the last 24h when looking at "now".
   useEffect(() => {
-    if (!range) return;
     let cancelled = false;
+    const to = range?.to ?? new Date();
+    const from = range?.from ?? new Date(to.getTime() - 24 * 3_600_000);
     api
-      .getGameTrackerBreakdown(slug, range.from, range.to)
+      .getGameTrackerBreakdown(slug, from, to)
       .then((b) => {
         if (cancelled) return;
-        setRangeLangOptions(
+        setLangOptions(
           b.language.map((l) => l.language?.toLowerCase()).filter((x): x is string => !!x).sort(),
         );
       })
@@ -129,13 +133,20 @@ export function DiscoverChannelsTab({
     setError(null);
 
     if (!range) {
-      // Live "active now" leaderboard — polls; filters applied client-side.
+      // Live board — server-side platform/language filters + paging, so
+      // every live channel is reachable (the plain call stops at 200).
       const refresh = () =>
         api
-          .getGameTrackerLeaderboard(slug, undefined, 200)
+          .getGameTrackerLeaderboardPage(slug, {
+            limit: PAGE_SIZE,
+            offset: page * PAGE_SIZE,
+            platform: platform !== 'all' ? platform : undefined,
+            language: lang !== 'all' ? lang : undefined,
+          })
           .then((r) => {
             if (cancelled) return;
-            setRows(r);
+            setRows(r.rows);
+            setTotal(r.total);
             setLastUpdatedAt(Date.now());
           })
           .catch((err: Error) => !cancelled && setError(err.message));
@@ -185,27 +196,10 @@ export function DiscoverChannelsTab({
     };
   }, [slug, rangeKey, range, lang, platform, page]);
 
-  // Language dropdown options: full range list in range mode; derived from the
-  // live set otherwise.
-  const languages = useMemo(() => {
-    if (range) return rangeLangOptions;
-    const set = new Set<string>();
-    for (const r of rows ?? []) if (r.language) set.add(r.language.toLowerCase());
-    return [...set].sort();
-  }, [range, rangeLangOptions, rows]);
-
-  // Live mode filters client-side; range mode is already filtered server-side.
-  // Sort is applied client-side either way (reorders the current page).
+  // Filters are server-side in both modes; sort reorders the current page.
   const filtered = useMemo(() => {
-    let out = rows ?? [];
-    if (!range) {
-      out = out.filter(
-        (r) =>
-          (platform === 'all' || r.platform === platform) &&
-          (lang === 'all' || (r.language?.toLowerCase() ?? '') === lang),
-      );
-    }
-    out = [...out].sort((a, b) => {
+    const out = [...(rows ?? [])];
+    out.sort((a, b) => {
       if (sort === 'lang') {
         const la = a.language?.toLowerCase() ?? '~';
         const lb = b.language?.toLowerCase() ?? '~';
@@ -215,12 +209,11 @@ export function DiscoverChannelsTab({
       return b.concurrent_viewers - a.concurrent_viewers;
     });
     return out;
-  }, [rows, platform, lang, sort, range]);
+  }, [rows, sort]);
 
-  // Prefer the server total ("Page X of Y"); fall back to the page-full
-  // heuristic when an older backend omits it.
   const pageCount = total != null ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : null;
-  const hasNextPage = !!range && (pageCount != null ? page + 1 < pageCount : (rows?.length ?? 0) === PAGE_SIZE);
+  const hasNextPage = pageCount != null ? page + 1 < pageCount : (rows?.length ?? 0) === PAGE_SIZE;
+  const hasFilters = platform !== 'all' || lang !== 'all';
 
   // Export the rows as currently displayed (filters + sort applied).
   const exportCsv = () => {
@@ -249,7 +242,7 @@ export function DiscoverChannelsTab({
         `${slug}-channels-live-${csvStamp()}.csv`,
         ['rank', 'channel', 'platform', 'language', 'ccv', 'stream_title'],
         filtered.map((r, i) => [
-          i + 1,
+          i + 1 + page * PAGE_SIZE,
           r.channel?.display_name ?? r.channel_id,
           r.platform,
           r.language,
@@ -260,16 +253,23 @@ export function DiscoverChannelsTab({
     }
   };
 
+  const countLabel =
+    total != null
+      ? range
+        ? `${total.toLocaleString('en-US')} streamers`
+        : `${total.toLocaleString('en-US')} live${hasFilters ? ' with these filters' : ''}`
+      : null;
+
   return (
     <Section
       title="All channels"
-      eyebrow={range ? 'OVER RANGE' : 'ACTIVE NOW'}
+      eyebrow={range ? 'Over range' : 'Live now'}
       compact
       right={
-        <Row gap={6} align="center">
-          <span style={{ fontSize: 11, color: 'var(--fg-dim)', marginLeft: 6 }}>
-            {range ? `${filtered.length} on page ${page + 1}` : `${filtered.length} live${filtered.length === 200 ? ' (top 200)' : ''}`}
-          </span>
+        <Row gap={8} align="center">
+          {countLabel && (
+            <span className="tabular" style={{ fontSize: 11, color: 'var(--fg-dim)' }}>{countLabel}</span>
+          )}
           {!range && <FreshnessIndicator at={lastUpdatedAt} />}
           <button
             type="button"
@@ -283,7 +283,7 @@ export function DiscoverChannelsTab({
         </Row>
       }
     >
-      {/* Toolbar: date range + language + sort */}
+      {/* Toolbar: window · language · sort — one row, one vocabulary */}
       <Row gap={14} align="center" style={{ flexWrap: 'wrap' }}>
         <RangeControl
           options={RANGE_CHOICES}
@@ -300,16 +300,21 @@ export function DiscoverChannelsTab({
             Language
           </span>
           <select
+            className="pill-select"
+            data-active={lang !== 'all'}
             value={lang}
             onChange={(e) => setLang(e.target.value)}
-            style={dateInputStyle}
+            aria-label="Language"
           >
             <option value="all">All</option>
-            {languages.map((l) => (
+            {langOptions.map((l) => (
               <option key={l} value={l}>
                 {l.toUpperCase()}
               </option>
             ))}
+            {lang !== 'all' && !langOptions.includes(lang) && (
+              <option value={lang}>{lang.toUpperCase()}</option>
+            )}
           </select>
         </Row>
 
@@ -317,14 +322,20 @@ export function DiscoverChannelsTab({
           <span className="eyebrow" style={{ fontSize: 10, color: 'var(--fg-muted)' }}>
             Sort
           </span>
-          <RangePill active={sort === 'ccv'} onClick={() => setSort('ccv')}>
-            Viewers
-          </RangePill>
-          <RangePill active={sort === 'lang'} onClick={() => setSort('lang')}>
-            Lang
-          </RangePill>
+          <SegmentedControl
+            ariaLabel="Sort"
+            size="sm"
+            value={sort}
+            onChange={setSort}
+            options={[
+              { value: 'ccv', label: 'Viewers' },
+              { value: 'lang', label: 'Language' },
+            ]}
+          />
         </Row>
       </Row>
+
+      <RetentionNote retainRawDays={retainRawDays} hours={rangeHours} />
 
       {dateMode === 'custom' && !range && (
         <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
@@ -333,19 +344,14 @@ export function DiscoverChannelsTab({
       )}
       {error && <div style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</div>}
 
-      {/* Table sits within the section padding (no edge bleed) so its left
-          and right line up with the header + the rest of the page — matching
-          the Live/overview leaderboard. Loading first, empty only after the
-          fetch actually returned empty. */}
+      {/* Loading first, empty only after the fetch actually returned empty. */}
       {rows === null && !error && !(dateMode === 'custom' && !range) ? (
         <LoadingBlock />
       ) : filtered.length === 0 && rows !== null ? (
         <EmptyState>
           {range
-            ? 'No channels streamed in this window' +
-              (platform !== 'all' || lang !== 'all' ? ' with these filters.' : '.')
-            : 'No channels are live right now' +
-              (platform !== 'all' || lang !== 'all' ? ' with these filters.' : '.')}
+            ? 'No channels streamed in this window' + (hasFilters ? ' with these filters.' : '.')
+            : 'No channels are live right now' + (hasFilters ? ' with these filters.' : '.')}
         </EmptyState>
       ) : (
         <LeaderboardTable
@@ -354,21 +360,23 @@ export function DiscoverChannelsTab({
           metricLabel={range ? 'Peak viewers' : 'Viewers'}
           showRangeStats={!!range}
           showRangeGrade={!!range}
-          rankOffset={range ? page * PAGE_SIZE : 0}
+          showUptime={!range}
+          rankOffset={page * PAGE_SIZE}
+          sticky
         />
       )}
 
-      {/* Pagination — range mode only (live "now" is a single small set). */}
-      {range && (page > 0 || hasNextPage) && (
+      {/* Pagination — both modes; the live board is no longer capped at 200. */}
+      {(page > 0 || hasNextPage) && (
         <Row gap={10} align="center" justify="center">
           {page > 0 && (
             <RangePill active={false} onClick={() => setPage((p) => Math.max(0, p - 1))}>
               ‹ Prev
             </RangePill>
           )}
-          <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+          <span className="tabular" style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
             Page {page + 1}{pageCount != null ? ` of ${pageCount}` : ''}
-            {total != null ? ` · ${total.toLocaleString('en-US')} streamers` : ''}
+            {countLabel ? ` · ${countLabel}` : ''}
           </span>
           {hasNextPage && (
             <RangePill active={false} onClick={() => setPage((p) => p + 1)}>
@@ -380,12 +388,3 @@ export function DiscoverChannelsTab({
     </Section>
   );
 }
-
-const dateInputStyle: React.CSSProperties = {
-  padding: '4px 8px',
-  fontSize: 12,
-  borderRadius: 6,
-  border: '1px solid var(--border)',
-  background: 'var(--bg-sunken)',
-  color: 'var(--fg)',
-};

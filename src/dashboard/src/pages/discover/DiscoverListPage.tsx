@@ -93,7 +93,7 @@ export function DiscoverListPage() {
             Discover
           </h1>
           <p style={{ color: 'var(--fg-muted)', fontSize: 13, margin: 0 }}>
-            Continuous viewership tracking per game across Twitch, Kick and YouTube.
+            Continuous viewership tracking per game across Twitch, Kick, YouTube, SOOP and TikTok.
           </p>
         </Col>
         <Row gap={8} align="center">
@@ -234,38 +234,15 @@ export function DiscoverListPage() {
                   )}
                 </Row>
               </Row>
-              <Col gap={6} style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
-                {t.twitch_game_name && (
-                  <Row gap={6} align="center">
-                    <PlatformPip id="twitch" size={11} />
-                    <span>{t.twitch_game_name}</span>
-                  </Row>
-                )}
-                {t.kick_category_slug && (
-                  <Row gap={6} align="center">
-                    <PlatformPip id="kick" size={11} />
-                    <span>{t.kick_category_slug}</span>
-                  </Row>
-                )}
-                {t.youtube_enabled && (
-                  <Row gap={6} align="center">
-                    <PlatformPip id="youtube" size={11} />
-                    <span>{t.name}</span>
-                  </Row>
-                )}
-                {t.tiktok_category_slug && (
-                  <Row gap={6} align="center">
-                    <PlatformPip id="tiktok" size={12} />
-                    <span>{t.tiktok_category_name ?? 'TikTok'}</span>
-                  </Row>
-                )}
-                {t.soop_category_id && (
-                  <Row gap={6} align="center">
-                    <PlatformPip id="soop" size={11} />
-                    <span>{t.soop_category_name ?? t.soop_category_id}</span>
-                  </Row>
-                )}
-              </Col>
+              {/* Which platforms this tracker reads — the category names
+                  themselves are on the tracker page. */}
+              <Row gap={5} align="center" wrap style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+                {t.twitch_game_name && <PlatformPip id="twitch" size={12} />}
+                {t.kick_category_slug && <PlatformPip id="kick" size={12} />}
+                {t.youtube_enabled && <PlatformPip id="youtube" size={12} />}
+                {t.soop_category_id && <PlatformPip id="soop" size={12} />}
+                {t.tiktok_category_slug && <PlatformPip id="tiktok" size={12} />}
+              </Row>
               <TrackerPulseStrip pulse={pulse[t.slug]} />
               {isAdmin && (
                 <Row gap={10} style={{ marginTop: 12, fontSize: 11, color: 'var(--fg-dim)' }}>
@@ -345,15 +322,18 @@ function TrackerPulseStrip({ pulse }: { pulse: TrackerPulse | null | undefined }
           vectorEffect="non-scaling-stroke"
         />
       </svg>
-      <Row gap={14} style={{ fontSize: 11.5, color: 'var(--fg-muted)' }} wrap>
-        <span>
-          <b style={{ color: 'var(--fg)', fontVariantNumeric: 'tabular-nums' }}>{fmtCompact(stats.now)}</b> now
+      <Row gap={14} align="baseline" wrap style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+          <b className="tabular" style={{ color: 'var(--fg)', fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1 }}>
+            {fmtCompact(stats.now)}
+          </b>
+          <span>live now</span>
         </span>
         <span>
-          <b style={{ color: 'var(--fg)', fontVariantNumeric: 'tabular-nums' }}>{fmtCompact(stats.peak24)}</b> 24h peak
+          <b className="tabular" style={{ color: 'var(--fg)' }}>{fmtCompact(stats.peak24)}</b> 24h peak
         </span>
         <span>
-          <b style={{ color: 'var(--fg)', fontVariantNumeric: 'tabular-nums' }}>{fmtCompact(stats.peak7d)}</b> 7d peak
+          <b className="tabular" style={{ color: 'var(--fg)' }}>{fmtCompact(stats.peak7d)}</b> 7d peak
         </span>
       </Row>
       {split.length > 1 && (

@@ -165,7 +165,7 @@ export function DiscoverAdminNew() {
       <p style={{ marginTop: 6, color: 'var(--fg-muted)', fontSize: 13, marginBottom: 24 }}>
         {isEdit
           ? 'Update this tracker’s name, platform mappings, threshold or status. Re-search only if you need to change the platform IDs.'
-          : 'Continuously track all live streams of a game across Twitch, Kick and YouTube. Fill in the details and pick the right platform IDs.'}
+          : 'Continuously track all live streams of a game across Twitch, Kick, YouTube, SOOP and TikTok. Fill in the details and pick the right platform IDs.'}
       </p>
 
       {loading && (
@@ -222,19 +222,20 @@ export function DiscoverAdminNew() {
         {(twitchPick || kickPick || soopPick) && (
           <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
             {twitchPick && (
-              <span style={currentPickStyle}>
-                Twitch: <strong>{twitchPick.name}</strong>{' '}
-                <span style={{ color: 'var(--fg-dim)', fontFamily: 'monospace' }}>#{twitchPick.id}</span>
-              </span>
+              <PickChip label="Twitch" name={twitchPick.name} id={twitchPick.id} onClear={() => setTwitchPick(null)} />
             )}
             {kickPick && (
-              <span style={currentPickStyle}>
-                Kick: <strong>{kickPick.name}</strong>{' '}
-                <span style={{ color: 'var(--fg-dim)', fontFamily: 'monospace' }}>#{kickPick.id}</span>
-              </span>
+              <PickChip label="Kick" name={kickPick.name} id={kickPick.id} onClear={() => setKickPick(null)} />
+            )}
+            {soopPick && (
+              <PickChip label="SOOP" name={soopPick.name} id={soopPick.id} onClear={() => setSoopPick(null)} />
             )}
           </div>
         )}
+        <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+          YouTube has no category to pick: its streams are matched by title rules and reviewed per channel,
+          from the tracker's Review tab.
+        </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             type="text"
@@ -374,7 +375,7 @@ export function DiscoverAdminNew() {
               ? 'Save changes'
               : 'Create tracker'}
         </button>
-        {!submitting && (!name.trim() || !slug.trim() || (!twitchPick && !kickPick)) && (
+        {!submitting && (!name.trim() || !slug.trim() || (!twitchPick && !kickPick && !soopPick && !tiktokSlug.trim())) && (
           <span style={{ alignSelf: 'center', fontSize: 11, color: 'var(--fg-dim)' }}>
             {!name.trim() || !slug.trim()
               ? 'Name and slug are required.'
@@ -453,6 +454,43 @@ const lbl: React.CSSProperties = {
   letterSpacing: '0.05em',
   marginBottom: 4,
 };
+
+/** A chosen platform category, with a way to drop it again. */
+function PickChip({
+  label,
+  name,
+  id,
+  onClear,
+}: {
+  label: string;
+  name: string;
+  id: string | number;
+  onClear: () => void;
+}) {
+  return (
+    <span style={{ ...currentPickStyle, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      {label}: <strong>{name}</strong>{' '}
+      <span style={{ color: 'var(--fg-dim)', fontFamily: 'monospace' }}>#{id}</span>
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label={`Remove ${label} category`}
+        title={`Remove ${label} category`}
+        style={{
+          border: 'none',
+          background: 'transparent',
+          color: 'var(--fg-dim)',
+          cursor: 'pointer',
+          padding: '0 2px',
+          fontSize: 13,
+          lineHeight: 1,
+        }}
+      >
+        ×
+      </button>
+    </span>
+  );
+}
 
 const currentPickStyle: React.CSSProperties = {
   fontSize: 12,

@@ -1104,9 +1104,36 @@ export function sendTestPush() {
   return request<PushSendResult>('/api/push/test', { method: 'POST' });
 }
 
+export interface OpsEvent {
+  id: string;
+  created_at: string;
+  event_type: string;
+  title: string;
+  body: string;
+  url: string | null;
+  urgent: boolean;
+  sent: number;
+  failed: number;
+  pruned: number;
+}
+
+/** Server-side history of every emitted notification (90-day retention). */
+export function getPushEvents(opts: { type?: string; limit?: number; before?: string } = {}) {
+  const params = new URLSearchParams();
+  if (opts.type) params.set('type', opts.type);
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', opts.before);
+  const qs = params.toString();
+  return request<{ events: OpsEvent[]; eventTypes: string[] }>(
+    `/api/push/events${qs ? `?${qs}` : ''}`,
+  );
+}
+
 // ── Live Game Tracker (Discover) ──────────────────────────────────────────
 
 export interface GameTracker {
+  /** Days of raw minute rows kept for this tracker (null = forever); older days come from daily rollups. */
+  retain_raw_days?: number | null;
   id: string;
   name: string;
   slug: string;
@@ -1201,13 +1228,65 @@ export interface YouTubeGatingResponse {
   config: YouTubeTrackerConfig;
   counts: Record<YouTubeGatingDecision, number>;
   rows: YouTubeGatingRow[];
+  /** Present when the request was paged (limit given). */
+  total?: number;
+  limit?: number;
+  offset?: number;
+  /** Stored reasons in the requested bucket, with counts — the filter + bulk basis. */
+  reasons?: Array<{ reason: string; count: number }>;
 }
 
-/** Review queue + decisions for a tracker's YouTube channels (admin). */
-export function getYouTubeGating(slug: string, decision?: YouTubeGatingDecision) {
-  const qs = decision ? `?decision=${decision}` : '';
+export interface YouTubeGatingListOptions {
+  limit?: number;
+  offset?: number;
+  q?: string;
+  reason?: string;
+  minCcv?: number;
+  sort?: 'ccv' | 'seen' | 'name';
+}
+
+/** Review queue + decisions for a tracker's YouTube channels (editors). */
+export function getYouTubeGating(
+  slug: string,
+  decision?: YouTubeGatingDecision,
+  opts: YouTubeGatingListOptions = {},
+) {
+  const params = new URLSearchParams();
+  if (decision) params.set('decision', decision);
+  if (opts.limit != null) params.set('limit', String(opts.limit));
+  if (opts.offset) params.set('offset', String(opts.offset));
+  if (opts.q) params.set('q', opts.q);
+  if (opts.reason) params.set('reason', opts.reason);
+  if (opts.minCcv) params.set('min_ccv', String(opts.minCcv));
+  if (opts.sort) params.set('sort', opts.sort);
+  const qs = params.toString();
   return request<YouTubeGatingResponse>(
-    `/api/game-trackers/${encodeURIComponent(slug)}/youtube/gating${qs}`,
+    `/api/game-trackers/${encodeURIComponent(slug)}/youtube/gating${qs ? `?${qs}` : ''}`,
+  );
+}
+
+export interface YouTubeGatingBulkResult {
+  decision: string;
+  applied: number;
+  total: number;
+  results: Array<{ channelIdentifier: string; ok: boolean; error?: string; promotion_error?: string }>;
+}
+
+/** One decision for many channels: an explicit list, or every channel in a bucket sharing a reason. */
+export function bulkDecideYouTubeGating(
+  slug: string,
+  body: {
+    decision: 'allow' | 'deny' | 'reset';
+    scope?: YouTubeGatingScope;
+    note?: string;
+    channelIdentifiers?: string[];
+    reason?: string;
+    fromDecision?: YouTubeGatingDecision;
+  },
+) {
+  return request<YouTubeGatingBulkResult>(
+    `/api/game-trackers/${encodeURIComponent(slug)}/youtube/gating/bulk`,
+    { method: 'POST', body: JSON.stringify(body) },
   );
 }
 
@@ -1355,6 +1434,8 @@ export interface GameTrackerChannelTimelineResponse {
   };
   timeline: GameTrackerChannelTimelineBucket[];
   sessions: GameTrackerChannelSession[];
+  /** Exact airtime inside [from, to) — what the "Hours live" tile shows. */
+  range_stats?: { minutes_live: number; days_streamed: number };
 }
 
 export interface GameTrackerSearchRow {
@@ -1430,6 +1511,28 @@ export function getGameTrackerLeaderboard(slug: string, at?: Date, limit = 50) {
   );
 }
 
+/**
+ * Paged live leaderboard — the plain call caps at 200 rows; this one
+ * returns `{ rows, total }` so the Channels tab can page past it, with
+ * platform/language applied server-side.
+ */
+export function getGameTrackerLeaderboardPage(
+  slug: string,
+  opts: { limit?: number; offset?: number; platform?: string; language?: string; at?: Date } = {},
+) {
+  const params = new URLSearchParams({
+    envelope: '1',
+    limit: String(opts.limit ?? 50),
+    offset: String(opts.offset ?? 0),
+  });
+  if (opts.at) params.set('at', opts.at.toISOString());
+  if (opts.platform && opts.platform !== 'all') params.set('platform', opts.platform);
+  if (opts.language && opts.language !== 'all') params.set('language', opts.language);
+  return request<{ rows: GameTrackerLeaderboardRow[]; total: number; limit: number; offset: number }>(
+    `/api/game-trackers/${slug}/leaderboard?${params.toString()}`,
+  );
+}
+
 export function getGameTrackerRange(
   slug: string,
   from: Date,
@@ -1496,10 +1599,38 @@ export interface GameTrackerTrendingRow {
   } | null;
 }
 
-/** Risers & anomalies: peak in the last N hours vs the N hours before. */
+export type GameTrackerTrendClass = 'riser' | 'new' | 'returning';
+
+/** Day-or-longer windows: a channel measured against its own 7-day baseline. */
+export interface GameTrackerTrendRow {
+  channel_id: string;
+  cur_peak: number;
+  /** Best daily peak over the 7 rolled-up days before the window; null = no baseline. */
+  baseline_peak: number | null;
+  ratio: number | null;
+  cls: GameTrackerTrendClass;
+  joined_at: string | null;
+  channel: GameTrackerTrendingRow['channel'];
+}
+
+export interface GameTrackerTrendingResponse {
+  hours: number;
+  /** Legacy shape (prev-window compare); for ≥24h windows it lists risers then newcomers. */
+  rows: GameTrackerTrendingRow[];
+  mode?: 'baseline';
+  baseline_days?: { fromDay: string; toDay: string };
+  risers?: GameTrackerTrendRow[];
+  newcomers?: GameTrackerTrendRow[];
+}
+
+/**
+ * Trends. Windows under 24h compare against the prior window (the Live
+ * rail); 24h and longer compare each channel against its own 7-day
+ * baseline and split risers from newcomers.
+ */
 export function getGameTrackerTrending(slug: string, hours = 24, limit = 20) {
   const params = new URLSearchParams({ hours: String(hours), limit: String(limit) });
-  return request<{ hours: number; rows: GameTrackerTrendingRow[] }>(
+  return request<GameTrackerTrendingResponse>(
     `/api/game-trackers/${slug}/trending?${params.toString()}`,
   );
 }

@@ -202,7 +202,7 @@ export function DiscoverStreamPage() {
         <Breadcrumbs
           items={[
             { label: 'Discover', to: '/discover' },
-            { label: slug ?? '…', to: slug ? `/discover/${slug}?tab=channels` : undefined },
+            { label: slug ?? '…', to: slug ? `/discover/${slug}` : undefined },
             { label: 'Stream' },
           ]}
         />
@@ -216,7 +216,7 @@ export function DiscoverStreamPage() {
         <Breadcrumbs
           items={[
             { label: 'Discover', to: '/discover' },
-            { label: slug ?? '…', to: slug ? `/discover/${slug}?tab=channels` : undefined },
+            { label: slug ?? '…', to: slug ? `/discover/${slug}` : undefined },
             { label: 'Stream' },
           ]}
         />
@@ -277,7 +277,7 @@ export function DiscoverStreamPage() {
         <Breadcrumbs
           items={[
             { label: 'Discover', to: '/discover' },
-            { label: trackerName ?? slug ?? '…', to: slug ? `/discover/${slug}?tab=channels` : undefined },
+            { label: trackerName ?? slug ?? '…', to: slug ? `/discover/${slug}` : undefined },
             {
               label: chan?.display_name ?? 'Channel',
               to: slug && channelId ? `/discover/${slug}/channel/${channelId}` : undefined,
@@ -285,10 +285,6 @@ export function DiscoverStreamPage() {
             { label: start.toLocaleDateString([], { month: 'short', day: 'numeric' }) },
           ]}
         />
-        <Row gap={6} align="center">
-          <NavChevron to={prevTo} dir="prev" state={navState} />
-          <NavChevron to={nextTo} dir="next" state={navState} />
-        </Row>
       </Row>
 
       {/* Header */}

@@ -53,6 +53,22 @@ const RANGES: Record<RangePreset, { hours: number; bucketSeconds: number; label:
   '30d': { hours: 24 * 30, bucketSeconds: 3600, label: '30d' },
 };
 
+/** What a channel-level grade means, in one clause. */
+export function healthSentence(grade: string): string {
+  switch (grade) {
+    case 'A':
+      return 'top of its cohort on chat, curve and followers';
+    case 'B':
+      return 'healthier than most streams its size';
+    case 'C':
+      return 'typical — nothing flagged';
+    case 'D':
+      return 'red flags found on recent broadcasts';
+    default:
+      return 'serious red flags — open a stream for the evidence';
+  }
+}
+
 /** One copy of the evidence-gate copy (channel pill + stream page). */
 export function collectingHealthCopy(scored: number, required: number): string {
   return `Collecting health data — ${scored}/${required} streams scored`;
@@ -250,6 +266,7 @@ export function DiscoverChannelPage() {
   );
   const totalSessions = data?.sessions?.length ?? 0;
   const daysStreamed = useMemo(() => {
+    if (data?.range_stats) return data.range_stats.days_streamed;
     const cutoff = Date.now() - RANGES[rangeKey].hours * 3600_000;
     const days = new Set<string>();
     for (const r of sessionsData?.rows ?? []) {
@@ -257,11 +274,16 @@ export function DiscoverChannelPage() {
       if (!Number.isNaN(t) && t >= cutoff) days.add(new Date(t).toDateString());
     }
     return days.size;
-  }, [sessionsData, rangeKey]);
-  const totalMinutes = useMemo(
-    () => (data?.sessions ?? []).reduce((s, x) => s + x.minutes_live, 0),
-    [data],
-  );
+  }, [data, sessionsData, rangeKey]);
+  // Airtime inside the selected range — exact, from the server. The old
+  // tile summed the last 30 sessions whatever range was picked.
+  const totalMinutes = useMemo(() => {
+    if (data?.range_stats) return data.range_stats.minutes_live;
+    const cutoff = Date.now() - RANGES[rangeKey].hours * 3600_000;
+    return (data?.sessions ?? [])
+      .filter((x) => Date.parse(x.ended_at) >= cutoff)
+      .reduce((s, x) => s + x.minutes_live, 0);
+  }, [data, rangeKey]);
   const profilePic = (data?.channel?.metadata?.profile_image_url as string | undefined) ?? null;
 
   // Chat / follower aggregates over the session rows that overlap the
@@ -310,7 +332,7 @@ export function DiscoverChannelPage() {
         <Breadcrumbs
           items={[
             { label: 'Discover', to: '/discover' },
-            { label: trackerName ?? slug ?? '…', to: slug ? `/discover/${slug}?tab=channels` : undefined },
+            { label: trackerName ?? slug ?? '…', to: slug ? `/discover/${slug}` : undefined },
             { label: data?.channel?.display_name ?? 'Channel' },
           ]}
         />
@@ -324,7 +346,7 @@ export function DiscoverChannelPage() {
         <Breadcrumbs
           items={[
             { label: 'Discover', to: '/discover' },
-            { label: trackerName ?? slug ?? '…', to: slug ? `/discover/${slug}?tab=channels` : undefined },
+            { label: trackerName ?? slug ?? '…', to: slug ? `/discover/${slug}` : undefined },
             { label: 'Channel' },
           ]}
         />
@@ -339,7 +361,7 @@ export function DiscoverChannelPage() {
         <Breadcrumbs
           items={[
             { label: 'Discover', to: '/discover' },
-            { label: trackerName ?? slug ?? '…', to: slug ? `/discover/${slug}?tab=channels` : undefined },
+            { label: trackerName ?? slug ?? '…', to: slug ? `/discover/${slug}` : undefined },
             { label: data?.channel?.display_name ?? 'Channel' },
           ]}
         />
@@ -458,7 +480,11 @@ export function DiscoverChannelPage() {
           }
         />
         <StatBlock label={`Average · ${RANGES[rangeKey].label}`} value={fmtN(avgCcv)} />
-        <StatBlock label={`Hours live · ${RANGES[rangeKey].label}`} value={(totalMinutes / 60).toFixed(1)} />
+        <StatBlock
+          label={`Hours live · ${RANGES[rangeKey].label}`}
+          value={(totalMinutes / 60).toFixed(1)}
+          sub={totalMinutes > 0 ? `${fmtDuration(totalMinutes * 60_000)} on air in this range` : 'no airtime in this range'}
+        />
         <StatBlock
           label="Days streamed"
           value={`${daysStreamed} / ${RANGES[rangeKey].hours / 24 >= 1 ? Math.round(RANGES[rangeKey].hours / 24) : 1}`}
@@ -472,7 +498,7 @@ export function DiscoverChannelPage() {
           }
           sub={
             summary?.healthGrade30d != null
-              ? `median of ${summary.healthScoredSessions30d} scored broadcasts`
+              ? `${healthSentence(summary.healthGrade30d)} · median of ${summary.healthScoredSessions30d} scored broadcasts`
               : summary != null &&
                   summary.healthScoredSessions30d > 0 &&
                   summary.healthMinSessions != null
@@ -528,9 +554,11 @@ export function DiscoverChannelPage() {
                   dataKey="ts"
                   tickFormatter={(v: string) => {
                     const d = new Date(v);
-                    return rangeKey === '24h'
-                      ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                      : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+                    if (rangeKey === '24h') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    if (rangeKey === '7d') {
+                      return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+                    }
+                    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
                   }}
                   stroke="var(--fg-dim)"
                   fontSize={11}
@@ -569,7 +597,12 @@ export function DiscoverChannelPage() {
       </Section>
 
       {/* Recent sessions */}
-      <Section title="Streams" eyebrow="EVERY TRACKED SESSION · CLICK ONE FOR THE FULL RECEIPT">
+      <Section title="Streams" eyebrow="Every tracked session">
+        {(sessionsData?.rows ?? []).some((s) => s.status === 'live') && (
+          <div style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>
+            The live row updates as it goes; its average, chat totals and health are computed when the stream ends.
+          </div>
+        )}
         <SessionsTable
           sessions={sessionsData?.rows ?? null}
           slug={slug}
@@ -577,7 +610,7 @@ export function DiscoverChannelPage() {
           channel={data.channel}
         />
         <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
-          D and F are reserved for real red flags — a small stream with nothing wrong floors at C.
+          Click a stream for its full receipt. D and F are reserved for real red flags — a small stream with nothing wrong floors at C.
         </div>
         {sessionsData != null && sessionsData.total > sessionsData.rows.length && (
           <div style={{ fontSize: 11, color: 'var(--fg-dim)' }}>

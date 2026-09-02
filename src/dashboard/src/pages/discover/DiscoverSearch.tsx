@@ -166,13 +166,13 @@ export function DiscoverSearch({ slug, ask, placeholder }: Props) {
           placeholder={
             placeholder ??
             (ask
-              ? 'Search channels & titles, or ask — e.g. "top 10 turkish streamers in may"'
+              ? 'Search channels & titles, or ask a question'
               : 'Search titles or channels (e.g. "drops")')
           }
           aria-label={ask ? 'Search or ask about this game' : 'Search titles or channels'}
           style={{
             width: '100%',
-            padding: '8px 32px 8px 32px',
+            padding: '8px 64px 8px 32px',
             background: 'var(--bg-sunken)',
             border: '1px solid var(--border)',
             borderRadius: 6,
@@ -185,6 +185,30 @@ export function DiscoverSearch({ slug, ask, placeholder }: Props) {
           <span style={{ position: 'absolute', right: 10, display: 'inline-flex' }}>
             <PendingDots />
           </span>
+        ) : questionish ? (
+          // A visible way in — ⌘⏎ alone was a secret handshake.
+          <button
+            type="button"
+            onClick={() => submitAsk(query)}
+            title="Ask AI (⌘⏎)"
+            style={{
+              position: 'absolute',
+              right: 6,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '3px 8px',
+              borderRadius: 999,
+              border: '1px solid color-mix(in oklab, var(--info) 35%, transparent)',
+              background: 'color-mix(in oklab, var(--info) 12%, transparent)',
+              color: 'var(--info)',
+              fontSize: 11,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            <IconSparkle size={11} /> Ask
+          </button>
         ) : (
           query && (
             <button

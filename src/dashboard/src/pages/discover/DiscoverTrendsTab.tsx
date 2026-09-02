@@ -25,8 +25,10 @@ import {
   IconDownload,
   IconClock,
   RangeControl,
+  SegmentedControl,
 } from '@/components/design';
-import { fmtCompact, fmtN } from '@/design/format';
+import { fmtCompact, fmtN, fmtRelative } from '@/design/format';
+import { RetentionNote } from '@/components/discover/RetentionNote';
 import { downloadCsv, csvStamp } from '@/utils/csv';
 import { Avatar } from './DiscoverDetailPage';
 import { ChannelKpi } from './DiscoverChannelPage';
@@ -66,10 +68,13 @@ interface Selection {
 export function DiscoverTrendsTab({
   slug,
   platform = 'all',
+  retainRawDays,
 }: {
   slug: string;
   /** Shared page-level platform filter. */
   platform?: string;
+  /** Tracker's raw retention, for the note under long ranges. */
+  retainRawDays?: number | null;
 }) {
   // Range + chart selection are mirrored into URL search params (?range,
   // ?at / ?sel_from+?sel_to) so a pasted link reproduces the view. State
@@ -262,15 +267,20 @@ export function DiscoverTrendsTab({
           value={rangeKey}
           onChange={(k) => setRangeKey(k as RangePreset)}
         />
-        <Row gap={4} align="center" style={{ marginLeft: 'auto' }}>
-          <RangePill active={chartMode === 'total'} onClick={() => setChartMode('total')}>
-            Total
-          </RangePill>
-          <RangePill active={chartMode === 'platform'} onClick={() => setChartMode('platform')}>
-            By platform
-          </RangePill>
-        </Row>
+        <div style={{ marginLeft: 'auto' }}>
+          <SegmentedControl
+            ariaLabel="Chart mode"
+            size="sm"
+            value={chartMode}
+            onChange={setChartMode}
+            options={[
+              { value: 'total', label: 'Total' },
+              { value: 'platform', label: 'By platform' },
+            ]}
+          />
+        </div>
       </Row>
+      <RetentionNote retainRawDays={retainRawDays} hours={range.hours} />
 
       {error && (
         <Section style={{ color: 'var(--danger)' }}>{error}</Section>
@@ -490,24 +500,25 @@ const TRENDING_HOURS_OPTIONS = [
 ] as const;
 
 /**
- * Risers & anomalies — peak CCV in the last N hours vs the N hours
- * before. NEW = channel had no snapshots in the prior window; the amber
- * ×N pill flags a ≥3× spike over the prior peak.
+ * Trending — two lists, because they answer two different questions:
+ *   Risers          who beat their own 7-day baseline (by 1.5× or more)
+ *   New & returning who has no baseline at all this week
+ * The old single list ranked absolute gain over the previous window, so
+ * every channel that took a day off led it as "0 → 15K".
  */
 function TrendingSection({ slug, platform }: { slug: string; platform: string }) {
-  const navigate = useNavigate();
   const [hours, setHours] = useState<number>(24);
-  const [rows, setRows] = useState<GameTrackerTrendingRow[] | null>(null);
+  const [data, setData] = useState<api.GameTrackerTrendingResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setRows(null);
+    setData(null);
     setError(null);
     api
       .getGameTrackerTrending(slug, hours, 20)
       .then((res) => {
-        if (!cancelled) setRows(res.rows);
+        if (!cancelled) setData(res);
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message);
@@ -517,130 +528,162 @@ function TrendingSection({ slug, platform }: { slug: string; platform: string })
     };
   }, [slug, hours]);
 
-  const shown = useMemo(
-    () =>
-      platform === 'all'
-        ? (rows ?? [])
-        : (rows ?? []).filter((r) => (r.channel?.platform ?? '') === platform),
-    [rows, platform],
-  );
+  const scoped = <T extends { channel: { platform: string } | null }>(rows: T[]): T[] =>
+    platform === 'all' ? rows : rows.filter((r) => (r.channel?.platform ?? '') === platform);
+  const risers = scoped(data?.risers ?? []);
+  const newcomers = scoped(data?.newcomers ?? []);
+  const windowLabel = hours === 168 ? '7 days' : `${hours} hours`;
+  const scopeNote = platform === 'all' ? '' : ` on ${platform}`;
 
   return (
-    <Section
-      title="Trending"
-      eyebrow={`RISERS · LAST ${hours === 168 ? '7D' : `${hours}H`} VS PRIOR`}
-      compact
-      right={
-        <Row gap={4} align="center">
-          {TRENDING_HOURS_OPTIONS.map((opt) => (
-            <RangePill
-              key={opt.hours}
-              active={hours === opt.hours}
-              onClick={() => setHours(opt.hours)}
-            >
-              {opt.label}
-            </RangePill>
-          ))}
-        </Row>
-      }
-    >
-      {error && <div style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</div>}
-      {!error && rows === null && (
-        <div style={{ color: 'var(--fg-muted)', fontSize: 12 }}>Loading…</div>
-      )}
-      {rows !== null && shown.length === 0 && (
-        <div style={{ color: 'var(--fg-muted)', fontSize: 12, padding: '4px 0' }}>
-          {rows.length === 0
-            ? 'No risers in this window.'
-            : `No ${platform} risers in this window.`}
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+      <Section
+        title="Risers"
+        eyebrow={`Last ${windowLabel} vs their 7-day baseline`}
+        compact
+        right={
+          <Row gap={4} align="center">
+            {TRENDING_HOURS_OPTIONS.map((opt) => (
+              <RangePill key={opt.hours} active={hours === opt.hours} onClick={() => setHours(opt.hours)}>
+                {opt.label}
+              </RangePill>
+            ))}
+          </Row>
+        }
+      >
+        {error && <div style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</div>}
+        {!error && data === null && <div style={{ color: 'var(--fg-muted)', fontSize: 12 }}>Loading…</div>}
+        {data !== null && risers.length === 0 && (
+          <div style={{ color: 'var(--fg-muted)', fontSize: 12, padding: '4px 0' }}>
+            No channel beat its own baseline by 1.5× in this window{scopeNote}.
+          </div>
+        )}
+        {risers.length > 0 && <TrendTable rows={risers} kind="riser" slug={slug} />}
+        <div style={{ fontSize: 10.5, color: 'var(--fg-dim)', lineHeight: 1.5 }}>
+          Baseline = best daily peak over the previous 7 days (at least 100 viewers). Ranked by how many
+          times the baseline was beaten.
         </div>
-      )}
-      {rows !== null && shown.length > 0 && (
-        <TableScroll>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 480 }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid var(--border-faint)' }}>
-              <th style={{ ...miniTh, width: 30 }}>#</th>
-              <th style={miniTh}>Channel</th>
-              <th style={{ ...miniTh, textAlign: 'right', width: 140 }}>Prev → Now</th>
-              <th style={{ ...miniTh, textAlign: 'right', width: 80 }}>Δ</th>
-              <th style={{ ...miniTh, width: 70 }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((r, i) => {
-              const delta = r.cur_peak - r.prev_peak;
-              const spike = !r.is_new && r.prev_peak > 0 && r.cur_peak >= 3 * r.prev_peak;
-              const profilePic = r.channel?.metadata?.profile_image_url as string | undefined;
-              const open = () => navigate(`/discover/${slug}/channel/${r.channel_id}`);
-              return (
-                <tr
-                  key={r.channel_id}
-                  onClick={open}
-                  {...rowLinkProps(`Open ${r.channel?.display_name ?? 'channel'} details`, open)}
-                  style={{ borderBottom: '1px solid var(--border-faint)', cursor: 'pointer' }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'var(--bg-sunken)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'transparent';
-                  }}
-                >
-                  <td style={{ ...miniTd, color: 'var(--fg-dim)', fontFamily: 'var(--font-mono)' }}>
-                    {i + 1}
-                  </td>
-                  <td style={miniTd}>
-                    <Row gap={8} align="center">
-                      <Avatar
-                        src={profilePic ?? null}
-                        name={r.channel?.display_name ?? '?'}
-                        size={24}
-                      />
-                      <PlatformPip id={r.channel?.platform ?? 'twitch'} size={11} />
-                      <span style={{ fontWeight: 500, color: 'var(--fg)' }}>
-                        {r.channel?.display_name ?? r.channel_id.slice(0, 8)}
-                      </span>
-                    </Row>
-                  </td>
-                  <td style={{ ...miniTd, ...numericTd, color: 'var(--fg-muted)' }}>
-                    {fmtCompact(r.prev_peak)} →{' '}
-                    <span style={{ color: 'var(--fg)', fontWeight: 600 }}>
-                      {fmtCompact(r.cur_peak)}
+      </Section>
+      <Section title="New & returning" eyebrow="No baseline in the previous 7 days" compact>
+        {!error && data === null && <div style={{ color: 'var(--fg-muted)', fontSize: 12 }}>Loading…</div>}
+        {data !== null && newcomers.length === 0 && (
+          <div style={{ color: 'var(--fg-muted)', fontSize: 12, padding: '4px 0' }}>
+            Nobody new above 50 viewers in this window{scopeNote}.
+          </div>
+        )}
+        {newcomers.length > 0 && <TrendTable rows={newcomers} kind="newcomer" slug={slug} />}
+        <div style={{ fontSize: 10.5, color: 'var(--fg-dim)', lineHeight: 1.5 }}>
+          New = first seen by this tracker; returning = has history, but nothing in the last week.
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+function TrendTable({
+  rows,
+  kind,
+  slug,
+}: {
+  rows: api.GameTrackerTrendRow[];
+  kind: 'riser' | 'newcomer';
+  slug: string;
+}) {
+  const navigate = useNavigate();
+  return (
+    <TableScroll>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 320 }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--border-faint)' }}>
+            <th style={{ ...miniTh, width: 30 }}>#</th>
+            <th style={miniTh}>Channel</th>
+            {kind === 'riser' ? (
+              <>
+                <th style={{ ...miniTh, textAlign: 'right', width: 130 }}>Baseline → Now</th>
+                <th style={{ ...miniTh, textAlign: 'right', width: 64 }}></th>
+              </>
+            ) : (
+              <>
+                <th style={{ ...miniTh, textAlign: 'right', width: 80 }}>Peak</th>
+                <th style={{ ...miniTh, textAlign: 'right', width: 120 }}></th>
+              </>
+            )}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const profilePic = r.channel?.metadata?.profile_image_url as string | undefined;
+            const open = () => navigate(`/discover/${slug}/channel/${r.channel_id}`);
+            return (
+              <tr
+                key={r.channel_id}
+                onClick={open}
+                {...rowLinkProps(`Open ${r.channel?.display_name ?? 'channel'} details`, open)}
+                style={{ borderBottom: '1px solid var(--border-faint)', cursor: 'pointer' }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--bg-sunken)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <td style={{ ...miniTd, color: 'var(--fg-dim)', fontFamily: 'var(--font-mono)' }}>{i + 1}</td>
+                <td style={miniTd}>
+                  <Row gap={8} align="center" style={{ minWidth: 0 }}>
+                    <Avatar src={profilePic ?? null} name={r.channel?.display_name ?? '?'} size={24} />
+                    <PlatformPip id={r.channel?.platform ?? 'twitch'} size={11} />
+                    <span
+                      style={{
+                        fontWeight: 500,
+                        color: 'var(--fg)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {r.channel?.display_name ?? r.channel_id.slice(0, 8)}
                     </span>
-                  </td>
-                  <td
-                    style={{
-                      ...miniTd,
-                      ...numericTd,
-                      fontWeight: 600,
-                      color: delta >= 0 ? 'var(--live)' : 'var(--danger)',
-                    }}
-                  >
-                    {delta >= 0 ? '+' : ''}
-                    {fmtCompact(delta)}
-                  </td>
-                  <td style={{ ...miniTd, textAlign: 'right' }}>
-                    {r.is_new ? (
-                      // Neutral, not alarming — "no snapshots in the prior
-                      // window" is common for daily-broadcast games and the
-                      // red NEW badge on most rows read as a warning wall.
-                      <span title="No snapshots in the prior window — first appearance at this level">
-                        <Pill>new</Pill>
+                  </Row>
+                </td>
+                {kind === 'riser' ? (
+                  <>
+                    <td style={{ ...miniTd, ...numericTd, color: 'var(--fg-muted)' }}>
+                      {fmtCompact(r.baseline_peak ?? 0)} →{' '}
+                      <span style={{ color: 'var(--fg)', fontWeight: 600 }}>{fmtCompact(r.cur_peak)}</span>
+                    </td>
+                    <td style={{ ...miniTd, textAlign: 'right' }}>
+                      <span title={`Peak is ${(r.ratio ?? 0).toFixed(1)}× the 7-day baseline`}>
+                        <Pill tone={(r.ratio ?? 0) >= 3 ? 'warn' : 'live'}>×{(r.ratio ?? 0).toFixed(1)}</Pill>
                       </span>
-                    ) : spike ? (
-                      <span title={`Peak is ${(r.cur_peak / r.prev_peak).toFixed(1)}× the prior window's`}>
-                        <Pill tone="warn">×{(r.cur_peak / r.prev_peak).toFixed(1)}</Pill>
-                      </span>
-                    ) : null}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        </TableScroll>
-      )}
-    </Section>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td style={{ ...miniTd, ...numericTd, fontWeight: 600 }}>{fmtCompact(r.cur_peak)}</td>
+                    <td style={{ ...miniTd, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {r.cls === 'new' ? (
+                        <span title={r.joined_at ? `First seen ${fmtRelative(r.joined_at)}` : 'First seen by this tracker'}>
+                          <Pill tone="info">new</Pill>
+                          {r.joined_at && (
+                            <span style={{ marginLeft: 6, fontSize: 10.5, color: 'var(--fg-dim)' }}>
+                              {fmtRelative(r.joined_at)}
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span title="Has history on this tracker, but nothing in the previous 7 days">
+                          <Pill>returning</Pill>
+                        </span>
+                      )}
+                    </td>
+                  </>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </TableScroll>
   );
 }
 
@@ -933,12 +976,21 @@ function BreakdownPanel({
           title="Language"
           rows={breakdown.language.slice(0, 6).map((p) => ({
             key: p.language ?? 'unknown',
-            label: <span style={{ textTransform: 'uppercase', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{p.language ?? '—'}</span>,
+            label: (
+              <span style={{ textTransform: 'uppercase', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                {p.language ?? 'Unknown'}
+              </span>
+            ),
             value: Number(p.total_ccv_minutes),
             share: languageTotal > 0 ? Number(p.total_ccv_minutes) / languageTotal : 0,
           }))}
         />
       </div>
+      {breakdown.language.slice(0, 6).some((l) => !l.language) && (
+        <div style={{ fontSize: 10.5, color: 'var(--fg-dim)', lineHeight: 1.5 }}>
+          Unknown = streams without a language tag; TikTok's feed carries none.
+        </div>
+      )}
     </Section>
   );
 }

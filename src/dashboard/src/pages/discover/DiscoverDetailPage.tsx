@@ -23,23 +23,25 @@ import {
   Tab,
   PlatformPip,
   ChannelNameWithLink,
-  RangePill,
   TableScroll,
   rowLinkProps,
   thStyle,
   tdStyle,
+  stickyThStyle,
   IconBolt,
-  IconUsers,
-  IconEye,
-  IconTrophy,
   IconList,
   IconGrid,
-  IconChev,
+  IconCheck,
+  IconChevDown,
   IconDownload,
+  IconShare,
   LoadingBlock,
   DeltaChip,
   GradeBadge,
   StatBlock,
+  Breadcrumbs,
+  SegmentedControl,
+  BackToTop,
 } from '@/components/design';
 import { fmtN, fmtCompact, fmtRelative } from '@/design/format';
 import { downloadCsv, csvStamp } from '@/utils/csv';
@@ -49,7 +51,7 @@ import { GameArtTile } from '@/components/discover/GameArtTile';
 import { DiscoverChannelsTab } from './DiscoverChannelsTab';
 
 const POLL_INTERVAL_MS = 30_000;
-type TabKey = 'live' | 'trends' | 'channels';
+type TabKey = 'live' | 'trends' | 'channels' | 'review';
 
 /**
  * /discover/:slug — live game tracker page.
@@ -66,6 +68,9 @@ export function DiscoverDetailPage() {
 
   const [detail, setDetail] = useState<GameTrackerDetail | null>(null);
   const [leaderboard, setLeaderboard] = useState<GameTrackerLeaderboardRow[] | null>(null);
+  // Category mappings are operator detail — folded away until asked for.
+  const [showCategories, setShowCategories] = useState(false);
+  const [pendingReview, setPendingReview] = useState<number | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -160,6 +165,26 @@ export function DiscoverDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.twitch_game_id, detail?.kick_category_id, detail?.youtube_enabled, detail?.soop_category_id, detail?.tiktok_category_slug]);
 
+  // Review tab: editors see the YouTube queue as a tab of its own, with a
+  // pending badge — no more hunting for it behind the YouTube filter.
+  const canReview = isEditor && !!detail?.youtube_enabled;
+  useEffect(() => {
+    if (!slug || !canReview) return;
+    let cancelled = false;
+    const load = () =>
+      api
+        .getYouTubeGating(slug, 'pending', { limit: 1 })
+        .then((r) => !cancelled && setPendingReview(r.counts.pending))
+        .catch(() => {});
+    load();
+    const h = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(h);
+    };
+  }, [slug, canReview]);
+  const effectiveTab: TabKey = tab === 'review' && !canReview ? 'live' : tab;
+
   // A search takeover replaces the body — clear any lingering Ask card so
   // the two result surfaces never stack.
   useEffect(() => {
@@ -177,7 +202,7 @@ export function DiscoverDetailPage() {
   if (error) {
     return (
       <div style={{ padding: 32 }}>
-        <BackLink />
+        <Breadcrumbs items={[{ label: 'Discover', to: '/discover' }, { label: slug ?? 'Tracker' }]} />
         <Section style={{ marginTop: 20, color: 'var(--danger)' }}>{error}</Section>
       </div>
     );
@@ -185,128 +210,134 @@ export function DiscoverDetailPage() {
   if (!detail || !slug) {
     return (
       <div style={{ padding: 32, color: 'var(--fg-muted)' }}>
-        <BackLink />
+        <Breadcrumbs items={[{ label: 'Discover', to: '/discover' }, { label: slug ?? 'Tracker' }]} />
         <div style={{ marginTop: 20 }}>Loading…</div>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: '32px 24px 64px', maxWidth: 1320, margin: '0 auto' }}>
-      <BackLink />
+    <div className="discover-page" style={{ padding: '32px 24px 64px', maxWidth: 1320, margin: '0 auto' }}>
+      <Breadcrumbs items={[{ label: 'Discover', to: '/discover' }, { label: detail.name }]} />
 
-      {/* ── Hero — the page leads with WHAT this is; tools sit beside it
-             and wrap below on narrow screens ─────────────────────────── */}
-      <Row justify="space-between" align="flex-end" wrap style={{ marginTop: 14, marginBottom: 24, gap: 16 }}>
-        <Col gap={10} style={{ minWidth: 0 }}>
-          <Row gap={10} align="center" wrap>
-            <GameArtTile name={detail.name} twitchGameId={detail.twitch_game_id} />
-            <h1
-              style={{
-                fontFamily: 'var(--font-display, var(--font-sans))',
-                fontSize: 'clamp(28px, 6vw, 34px)',
-                fontWeight: 700,
-                color: 'var(--fg)',
-                margin: 0,
-                letterSpacing: '-0.02em',
-                lineHeight: 1,
-              }}
-            >
-              {detail.name}
-            </h1>
-            <Pill tone={detail.status === 'active' ? 'live' : 'default'}>
-              {detail.status === 'active'
-                ? '● Live'
-                : detail.status.charAt(0).toUpperCase() + detail.status.slice(1)}
-            </Pill>
-          </Row>
-          <Row gap={8} align="center" style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>
-            <span style={{ color: 'var(--live)' }}>●</span>
-            <span className="tabular">{fmtN(detail.active_channel_count)} channels live</span>
-            <span style={{ color: 'var(--fg-dim)' }}>·</span>
-            <span>discovery every {detail.discovery_interval_seconds ?? 60}s</span>
-          </Row>
-          <Row gap={14} wrap style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
-            {detail.twitch_game_name && (
-              <Row gap={6} align="center">
-                <PlatformPip id="twitch" size={12} />
-                <span>{detail.twitch_game_name}</span>
-              </Row>
-            )}
-            {detail.kick_category_slug && (
-              <Row gap={6} align="center">
-                <PlatformPip id="kick" size={12} />
-                <span>{detail.kick_category_slug}</span>
-              </Row>
-            )}
-            {/* YouTube has no category id to show — membership is decided by
-                our own gating rules, so name that instead of faking one. */}
-            {detail.youtube_enabled && (
-              <Row gap={6} align="center">
-                <PlatformPip id="youtube" size={12} />
-                <span title="YouTube streams are matched by title rules and reviewed per channel">
-                  {detail.name}
-                </span>
-              </Row>
-            )}
-            {detail.soop_category_id && (
-              <Row gap={6} align="center">
-                <PlatformPip id="soop" size={12} />
-                <span>{detail.soop_category_name ?? detail.soop_category_id}</span>
-              </Row>
-            )}
-            {detail.tiktok_category_slug && (
-              <Row gap={6} align="center">
-                <PlatformPip id="tiktok" size={12} />
-                <span title="TikTok's category feed is region-personalized sampling — best-effort coverage, not the full category">
-                  {detail.tiktok_category_name ?? detail.tiktok_category_slug} · sampled
-                </span>
-              </Row>
-            )}
-            {/* Polling config is operator detail — admins only */}
-            {isAdmin && (
-              <span>
-                <span style={{ color: 'var(--fg-dim)' }}>min CCV</span>{' '}
-                <span style={{ color: 'var(--fg)' }}>{detail.min_ccv_threshold}</span>
-                <span style={{ color: 'var(--fg-dim)' }}> · poll every </span>
-                <span style={{ color: 'var(--fg)' }}>{detail.polling_interval_seconds}s</span>
-              </span>
-            )}
-          </Row>
-        </Col>
-        <Row gap={8} align="center" wrap style={{ alignSelf: 'flex-start' }}>
-          {trackedPlatforms.length > 1 && (
-            <Row gap={4} align="center" className="card" style={{ padding: 3, borderRadius: 8 }}>
-              {(['all', ...trackedPlatforms]).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setPlatform(p)}
-                  aria-pressed={platform === p}
-                  title={p === 'all' ? 'All platforms' : p}
+      {/* ── Hero: name + status, one meta line, and the category mappings
+             folded away (operator detail). The platform filter lives in
+             the tab bar below, next to the tabs it scopes. ─────────── */}
+      <div className="discover-hero" style={{ marginTop: 14, marginBottom: 20 }}>
+        <Row justify="space-between" align="flex-start" wrap gap={12}>
+          <Col gap={8} style={{ minWidth: 0 }}>
+            <Row gap={10} align="center" wrap>
+              <GameArtTile name={detail.name} twitchGameId={detail.twitch_game_id} />
+              <h1
+                style={{
+                  fontFamily: 'var(--font-display, var(--font-sans))',
+                  fontSize: 'clamp(28px, 6vw, 34px)',
+                  fontWeight: 700,
+                  color: 'var(--fg)',
+                  margin: 0,
+                  letterSpacing: '-0.02em',
+                  lineHeight: 1,
+                }}
+              >
+                {detail.name}
+              </h1>
+              <Pill tone={detail.status === 'active' ? 'live' : 'default'}>
+                {detail.status === 'active'
+                  ? '● Live'
+                  : detail.status.charAt(0).toUpperCase() + detail.status.slice(1)}
+              </Pill>
+            </Row>
+            <Row gap={8} align="center" wrap style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>
+              <span style={{ color: 'var(--live)' }}>●</span>
+              <span className="tabular">{fmtN(detail.active_channel_count)} channels live</span>
+              <span style={{ color: 'var(--fg-dim)' }}>·</span>
+              <span>discovery every {detail.discovery_interval_seconds ?? 60}s</span>
+              <span style={{ color: 'var(--fg-dim)' }}>·</span>
+              <button
+                type="button"
+                onClick={() => setShowCategories((v) => !v)}
+                aria-expanded={showCategories}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: 0,
+                  border: 'none',
+                  background: 'transparent',
+                  color: 'var(--fg-muted)',
+                  font: 'inherit',
+                  cursor: 'pointer',
+                  textDecoration: 'underline dotted',
+                  textUnderlineOffset: 3,
+                }}
+              >
+                {trackedPlatforms.length} platform{trackedPlatforms.length === 1 ? '' : 's'}
+                <span
                   style={{
                     display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    padding: '5px 10px',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    borderRadius: 6,
-                    border: 'none',
-                    cursor: 'pointer',
-                    background: platform === p ? 'var(--bg-hover)' : 'transparent',
-                    color: platform === p ? 'var(--fg)' : 'var(--fg-muted)',
+                    transform: showCategories ? 'rotate(180deg)' : 'none',
+                    transition: 'transform 120ms',
                   }}
                 >
-                  {p === 'all' ? 'All' : <PlatformPip id={p} size={13} />}
-                  {p !== 'all' && <span style={{ textTransform: 'capitalize' }}>{p}</span>}
-                </button>
-              ))}
+                  <IconChevDown size={11} />
+                </span>
+              </button>
+              {isAdmin && (
+                <>
+                  <span style={{ color: 'var(--fg-dim)' }}>·</span>
+                  <span>
+                    <span style={{ color: 'var(--fg-dim)' }}>min CCV</span>{' '}
+                    <span style={{ color: 'var(--fg)' }}>{detail.min_ccv_threshold}</span>
+                    <span style={{ color: 'var(--fg-dim)' }}> · poll every </span>
+                    <span style={{ color: 'var(--fg)' }}>{detail.polling_interval_seconds}s</span>
+                  </span>
+                </>
+              )}
             </Row>
-          )}
+            {showCategories && (
+              <Row gap={14} wrap style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+                {detail.twitch_game_name && (
+                  <Row gap={6} align="center">
+                    <PlatformPip id="twitch" size={12} />
+                    <span>{detail.twitch_game_name}</span>
+                  </Row>
+                )}
+                {detail.kick_category_slug && (
+                  <Row gap={6} align="center">
+                    <PlatformPip id="kick" size={12} />
+                    <span>{detail.kick_category_slug}</span>
+                  </Row>
+                )}
+                {/* YouTube has no category id — membership is decided by our
+                    own title rules, reviewed per channel. */}
+                {detail.youtube_enabled && (
+                  <Row gap={6} align="center">
+                    <PlatformPip id="youtube" size={12} />
+                    <span title="YouTube streams are matched by title rules and reviewed per channel">
+                      title rules{canReview ? ' · reviewed in the Review tab' : ''}
+                    </span>
+                  </Row>
+                )}
+                {detail.soop_category_id && (
+                  <Row gap={6} align="center">
+                    <PlatformPip id="soop" size={12} />
+                    <span>{detail.soop_category_name ?? detail.soop_category_id}</span>
+                  </Row>
+                )}
+                {detail.tiktok_category_slug && (
+                  <Row gap={6} align="center">
+                    <PlatformPip id="tiktok" size={12} />
+                    <span title="TikTok's category feed is region-personalized sampling — best-effort coverage, not the full category">
+                      {detail.tiktok_category_name ?? detail.tiktok_category_slug} · sampled
+                    </span>
+                  </Row>
+                )}
+              </Row>
+            )}
+          </Col>
           <ShareViewButton />
         </Row>
-      </Row>
+      </div>
 
       {/* Ask results — answer card / refusal, between the hero and the
           tab bar (renders nothing when idle) */}
@@ -323,9 +354,11 @@ export function DiscoverDetailPage() {
           {/* ── Tab bar ─────────────────────────────────────────────── */}
           <Row
             gap={4}
+            align="center"
+            className="discover-tabbar"
             style={{
               marginBottom: 24,
-              paddingBottom: 0,
+              padding: '4px 0 6px',
               borderBottom: '1px solid var(--border)',
               position: 'sticky',
               top: 'var(--topnav-h)',
@@ -333,22 +366,63 @@ export function DiscoverDetailPage() {
               zIndex: 4,
             }}
           >
-            <Tab active={tab === 'live'} onClick={() => setTab('live')} icon={<IconBolt size={13} />}>
+            <Tab active={effectiveTab === 'live'} onClick={() => setTab('live')} icon={<IconBolt size={13} />}>
               Live
             </Tab>
-            <Tab active={tab === 'trends'} onClick={() => setTab('trends')} icon={<IconGrid size={13} />}>
+            <Tab active={effectiveTab === 'trends'} onClick={() => setTab('trends')} icon={<IconGrid size={13} />}>
               Trends
             </Tab>
-            <Tab active={tab === 'channels'} onClick={() => setTab('channels')} icon={<IconList size={13} />}>
+            <Tab active={effectiveTab === 'channels'} onClick={() => setTab('channels')} icon={<IconList size={13} />}>
               Channels
             </Tab>
-            <div style={{ marginLeft: 'auto', flex: '0 1 430px', minWidth: 220, paddingBottom: 6 }}>
+            {canReview && (
+              <Tab active={effectiveTab === 'review'} onClick={() => setTab('review')} icon={<IconCheck size={13} />}>
+                Review
+                {pendingReview != null && pendingReview > 0 && (
+                  <span
+                    className="tabular"
+                    style={{
+                      marginLeft: 2,
+                      padding: '0 6px',
+                      borderRadius: 999,
+                      fontSize: 10.5,
+                      fontWeight: 700,
+                      background: 'color-mix(in oklab, var(--warn) 18%, transparent)',
+                      color: 'var(--warn)',
+                    }}
+                  >
+                    {pendingReview}
+                  </span>
+                )}
+              </Tab>
+            )}
+            {/* Platform scope — one control for Live, Trends and Channels */}
+            {trackedPlatforms.length > 1 && effectiveTab !== 'review' && (
+              <div style={{ marginLeft: 10 }}>
+                <SegmentedControl
+                  ariaLabel="Platform"
+                  size="sm"
+                  value={platform}
+                  onChange={setPlatform}
+                  options={[
+                    { value: 'all', label: 'All', title: 'All platforms' },
+                    ...trackedPlatforms.map((p) => ({
+                      value: p,
+                      label: <span style={{ textTransform: 'capitalize' }}>{p}</span>,
+                      icon: <PlatformPip id={p} size={12} />,
+                      title: p,
+                    })),
+                  ]}
+                />
+              </div>
+            )}
+            <div className="discover-search" style={{ marginLeft: 'auto', flex: '0 1 400px', minWidth: 220 }}>
               <DiscoverSearch slug={slug ?? ''} ask={ask} />
             </div>
           </Row>
 
           {/* ── Tab content ──────────────────────────────────────────── */}
-          {tab === 'live' && (
+          {effectiveTab === 'live' && (
             <LiveTab
               slug={slug}
               totalCcvNow={totalCcvNow}
@@ -361,25 +435,27 @@ export function DiscoverDetailPage() {
               isAdmin={isAdmin}
               platform={platform}
               onViewAll={() => setTab('channels')}
+              onReview={canReview ? () => setTab('review') : undefined}
             />
           )}
-          {tab === 'trends' && <DiscoverTrendsTab slug={slug} platform={platform} />}
-          {tab === 'channels' && (
+          {effectiveTab === 'trends' && (
+            <DiscoverTrendsTab slug={slug} platform={platform} retainRawDays={detail.retain_raw_days ?? null} />
+          )}
+          {effectiveTab === 'channels' && (
             <Col gap={16}>
-              {isEditor && detail.youtube_enabled && (
-                <DiscoverYouTubeGating
-                  slug={slug}
-                  // Single-platform YouTube trackers have no platform pills,
-                  // so the queue must be reachable without the filter.
-                  expanded={
-                    platform === 'youtube' ||
-                    (trackedPlatforms.length === 1 && trackedPlatforms[0] === 'youtube')
-                  }
-                  onExpand={() => setPlatform('youtube')}
-                />
+              {canReview && (
+                <DiscoverYouTubeGating slug={slug} expanded={false} onExpand={() => setTab('review')} />
               )}
-              <DiscoverChannelsTab slug={slug} platform={platform} onPlatformChange={setPlatform} />
+              <DiscoverChannelsTab
+                slug={slug}
+                platform={platform}
+                onPlatformChange={setPlatform}
+                retainRawDays={detail.retain_raw_days ?? null}
+              />
             </Col>
+          )}
+          {effectiveTab === 'review' && canReview && (
+            <DiscoverYouTubeGating slug={slug} expanded onChanged={(pending) => setPendingReview(pending)} />
           )}
         </>
       )}
@@ -396,7 +472,7 @@ export function DiscoverDetailPage() {
             bottom: 0,
             zIndex: 30,
             display: 'grid',
-            gridTemplateColumns: '1fr 1fr 1fr',
+            gridTemplateColumns: `repeat(${canReview ? 4 : 3}, 1fr)`,
             background: 'var(--bg-card)',
             borderTop: '1px solid var(--border)',
             paddingBottom: 'env(safe-area-inset-bottom, 0px)',
@@ -407,13 +483,14 @@ export function DiscoverDetailPage() {
               ['live', 'Live', <IconBolt key="i" size={15} />],
               ['trends', 'Trends', <IconGrid key="i" size={15} />],
               ['channels', 'Channels', <IconList key="i" size={15} />],
-            ] as const
+              ...(canReview ? ([['review', 'Review', <IconCheck key="i" size={15} />]] as const) : []),
+            ] as ReadonlyArray<readonly [TabKey, string, React.ReactNode]>
           ).map(([id, label, icon]) => (
             <button
               key={id}
               type="button"
               onClick={() => setTab(id)}
-              aria-current={tab === id ? 'page' : undefined}
+              aria-current={effectiveTab === id ? 'page' : undefined}
               style={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -426,7 +503,7 @@ export function DiscoverDetailPage() {
                 cursor: 'pointer',
                 fontSize: 10.5,
                 fontWeight: 600,
-                color: tab === id ? 'var(--red)' : 'var(--fg-muted)',
+                color: effectiveTab === id ? 'var(--red)' : 'var(--fg-muted)',
               }}
             >
               {icon}
@@ -435,6 +512,7 @@ export function DiscoverDetailPage() {
           ))}
         </nav>
       )}
+      <BackToTop />
     </div>
   );
 }
@@ -455,7 +533,8 @@ function ShareViewButton() {
       }}
       style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
     >
-      {copied ? 'Copied ✓' : 'Share'}
+      {copied ? <IconCheck size={12} /> : <IconShare size={12} />}
+      {copied ? 'Link copied' : 'Copy link'}
     </button>
   );
 }
@@ -515,7 +594,7 @@ function TrendingRail({ slug }: { slug: string }) {
 }
 
 /** Right-rail: channels discovery found recently. */
-function NewFacesRail({ slug }: { slug: string }) {
+function NewFacesRail({ slug, onReview }: { slug: string; onReview?: () => void }) {
   const [rows, setRows] = useState<api.GameTrackerRecentChannelRow[] | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -560,31 +639,22 @@ function NewFacesRail({ slug }: { slug: string }) {
             }}
           >
             YouTube channels count only after review — a missing number beats a wrong one.
+            {onReview && (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  onClick={onReview}
+                  style={{ padding: 0, border: 'none', background: 'transparent', color: 'var(--red)', font: 'inherit', cursor: 'pointer' }}
+                >
+                  Open the review queue →
+                </button>
+              </>
+            )}
           </div>
         </Col>
       )}
     </Section>
-  );
-}
-
-function BackLink() {
-  return (
-    <Link
-      to="/discover"
-      style={{
-        color: 'var(--fg-muted)',
-        fontSize: 12,
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-        textDecoration: 'none',
-      }}
-    >
-      <span style={{ display: 'inline-block', transform: 'rotate(180deg)' }}>
-        <IconChev size={12} />
-      </span>
-      ← All trackers
-    </Link>
   );
 }
 
@@ -602,6 +672,7 @@ function LiveTab({
   isAdmin,
   platform,
   onViewAll,
+  onReview,
 }: {
   slug: string;
   totalCcvNow: number;
@@ -614,6 +685,7 @@ function LiveTab({
   isAdmin: boolean;
   platform: string;
   onViewAll: () => void;
+  onReview?: () => void;
 }) {
   const shown = useMemo(
     () =>
@@ -715,25 +787,27 @@ function LiveTab({
   };
   return (
     <Col gap={16}>
-      {/* Hero KPI strip */}
-      <Row gap={12} wrap style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-        <div className="card" style={{ padding: '16px 18px' }}>
-          <div className="eyebrow" style={{ fontSize: 9.5, marginBottom: 6, color: 'var(--fg-dim)' }}>
-            Live CCV{scopeSuffix}
-          </div>
-          <Row gap={10} align="baseline">
-            <span className="tabular" style={{ fontSize: 34, fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1 }}>
-              {fmtCompact(kpis.total)}
-            </span>
-            {deltaVs6h != null && <DeltaChip pct={deltaVs6h / 100} />}
-          </Row>
-        </div>
+      {/* KPI strip — four plain stats, same treatment for each */}
+      <div
+        className="discover-kpis"
+        style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}
+      >
+        <StatBlock
+          label={`Live viewers${scopeSuffix}`}
+          value={
+            <Row gap={10} align="baseline">
+              <span>{fmtCompact(kpis.total)}</span>
+              {deltaVs6h != null && <DeltaChip pct={deltaVs6h / 100} />}
+            </Row>
+          }
+          sub={deltaVs6h != null ? 'vs 6 hours ago' : 'across live streams'}
+        />
         <StatBlock
           label={`24h peak${scopeSuffix}`}
           value={peak24 ? fmtCompact(peak24.value) : '—'}
           sub={
             peak24
-              ? new Date(peak24.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              ? `at ${new Date(peak24.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
               : null
           }
         />
@@ -747,14 +821,16 @@ function LiveTab({
           value={newToday != null ? fmtN(newToday) : '—'}
           sub="found by discovery"
         />
-      </Row>
+      </div>
 
       {/* Top streams + the discovery rails, prototype layout */}
       <div className="live-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 300px', gap: 16, alignItems: 'start' }}>
         <div>
       <Section
         title="Top streams now"
-        eyebrow={`${(shown ?? []).length} STREAMS · SORTED BY CCV · GRADES SCORE COMPLETED BROADCASTS, NEVER THE LIVE SESSION`}
+        eyebrow={`Live now · ${(shown ?? []).length}${
+          activeChannelCount > (shown?.length ?? 0) && platform === 'all' ? ` of ${fmtN(activeChannelCount)}` : ''
+        } streams`}
         right={
           <Row gap={10} align="center" wrap>
             <FreshnessIndicator at={lastUpdatedAt} />
@@ -770,7 +846,15 @@ function LiveTab({
           </Row>
         }
       >
-        <LeaderboardTable rows={shown} trackerSlug={slug} showLastGrade />
+        <LeaderboardTable
+          rows={shown}
+          trackerSlug={slug}
+          showUptime
+          // The column only appears once someone in the list has a grade
+          // that passed the evidence gate — a column of dashes says nothing.
+          showLastGrade={(shown ?? []).some((r) => r.last_grade)}
+          sticky
+        />
         {platform === 'tiktok' && (shown?.length ?? 0) > 0 && (
           <div style={{ fontSize: 11, color: 'var(--fg-dim)', padding: '8px 0 0' }}>
             TikTok's category feed is region-personalized sampling — this column shows the
@@ -808,7 +892,7 @@ function LiveTab({
         </div>
         <Col gap={16}>
           <TrendingRail slug={slug} />
-          <NewFacesRail slug={slug} />
+          <NewFacesRail slug={slug} onReview={onReview} />
         </Col>
       </div>
     </Col>
@@ -987,6 +1071,8 @@ export function LeaderboardTable({
   rankOffset = 0,
   showLastGrade = false,
   showRangeGrade = false,
+  showUptime,
+  sticky = false,
 }: {
   rows: LeaderboardRow[] | null;
   trackerSlug: string;
@@ -1002,48 +1088,55 @@ export function LeaderboardTable({
   showLastGrade?: boolean;
   /** Range mode: median grade over the window (no uptime column). */
   showRangeGrade?: boolean;
+  /** Live boards: "3h 12m" since the session started. Defaults to showLastGrade for older callers. */
+  showUptime?: boolean;
+  /** Column headers stick under the page's sticky chrome while scrolling. */
+  sticky?: boolean;
 }) {
   const navigate = useNavigate();
-  const colCount = (showRangeStats ? 8 : 5) + (showLastGrade ? 2 : 0) + (showRangeGrade ? 1 : 0);
+  const uptime = showUptime ?? showLastGrade;
+  const colCount =
+    (showRangeStats ? 8 : 5) + (uptime ? 1 : 0) + (showLastGrade || showRangeGrade ? 1 : 0);
   const platformFilterHint = filterHint ? `(${filterHint})` : '';
+  const th = sticky ? { ...thStyle, ...stickyThStyle } : thStyle;
   return (
     <TableScroll>
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: showRangeStats ? 640 : 480 }}>
       <thead>
         <tr style={{ borderBottom: '1px solid var(--border)' }}>
-          <th style={{ ...thStyle, width: 36 }}>#</th>
-          <th style={{ ...thStyle, width: 56 }}></th>
-          <th style={thStyle}>Channel</th>
-          <th style={{ ...thStyle, width: 60 }}>Lang</th>
-          {showRangeStats && <th style={{ ...thStyle, textAlign: 'right', width: 70 }}>Days</th>}
+          <th style={{ ...th, width: 36 }}>#</th>
+          <th style={{ ...th, width: 56 }}></th>
+          <th style={th}>Channel</th>
+          <th style={{ ...th, width: 60 }}>Lang</th>
+          {showRangeStats && <th style={{ ...th, textAlign: 'right', width: 70 }}>Days</th>}
           {showRangeStats && (
-            <th style={{ ...thStyle, textAlign: 'right', width: 90 }} title="Airtime — hours the channel was live">
+            <th style={{ ...th, textAlign: 'right', width: 90 }} title="Airtime — hours the channel was live">
               Hours live
             </th>
           )}
           {showRangeStats && (
-            <th style={{ ...thStyle, textAlign: 'right', width: 104 }} title="Avg viewers × hours live — total audience time">
+            <th style={{ ...th, textAlign: 'right', width: 104 }} title="Avg viewers × hours live — total audience time">
               Hours watched
             </th>
           )}
-          {showLastGrade && (
-            <th style={{ ...thStyle, textAlign: 'right', width: 78 }} title="Time since this live session started">
+          {uptime && (
+            <th style={{ ...th, textAlign: 'right', width: 78 }} title="Time since this live session started">
               Uptime
             </th>
           )}
           {(showLastGrade || showRangeGrade) && (
             <th
-              style={{ ...thStyle, textAlign: 'center', width: 82 }}
+              style={{ ...th, textAlign: 'center', width: 82 }}
               title={
                 showRangeGrade
                   ? 'Median grade across the completed broadcasts inside this range'
-                  : 'Grades score completed broadcasts, never the live session'
+                  : 'Grade of the channel\'s last completed broadcast (30 days) — live sessions are scored after they end, and only once three broadcasts have been scored'
               }
             >
               {showRangeGrade ? 'Grade' : 'Last grade'}
             </th>
           )}
-          <th style={{ ...thStyle, textAlign: 'right', width: 110 }}>{metricLabel}</th>
+          <th style={{ ...th, textAlign: 'right', width: 110 }}>{metricLabel}</th>
         </tr>
       </thead>
       <tbody>
@@ -1162,7 +1255,7 @@ export function LeaderboardTable({
                     : '—'}
                 </td>
               )}
-              {showLastGrade && (
+              {uptime && (
                 <td
                   style={{
                     ...tdStyle,
@@ -1230,6 +1323,7 @@ export function Avatar({
   // A broken/blocked profile image degrades to initials instead of a
   // blank dark circle (the Trends tab shipped rows of black dots).
   const [broken, setBroken] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const initials = name
     .split(/\s+/)
     .map((s) => s[0])
@@ -1257,22 +1351,30 @@ export function Avatar({
     </div>
   );
   if (!src || broken) return fallback;
+  // Initials stay underneath until the picture has actually arrived —
+  // lazy-loaded rows used to flash a row of blank circles.
   return (
-    <img
-      src={src}
-      alt=""
-      loading="lazy"
-      width={size}
-      height={size}
-      onError={() => setBroken(true)}
-      style={{
-        width: size,
-        height: size,
-        borderRadius: '50%',
-        background: 'color-mix(in oklab, var(--info) 10%, var(--bg-sunken))',
-        objectFit: 'cover',
-        flexShrink: 0,
-      }}
-    />
+    <span style={{ position: 'relative', display: 'inline-block', width: size, height: size, flexShrink: 0 }}>
+      {!loaded && fallback}
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        width={size}
+        height={size}
+        onLoad={() => setLoaded(true)}
+        onError={() => setBroken(true)}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: size,
+          height: size,
+          borderRadius: '50%',
+          objectFit: 'cover',
+          opacity: loaded ? 1 : 0,
+          transition: 'opacity 120ms',
+        }}
+      />
+    </span>
   );
 }

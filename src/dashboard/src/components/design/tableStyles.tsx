@@ -28,10 +28,28 @@ export const numTdStyle: CSSProperties = {
   color: 'var(--fg)',
 };
 
-/** Wrap any wide <table> so it scrolls inside its own card on phones. */
+/**
+ * Wrap any wide <table> so it scrolls inside its own card on phones.
+ * On wide screens the wrapper clips instead of scrolling (see .table-scroll
+ * in index.css) so sticky column headers can stick to the page.
+ */
 export function TableScroll({ children, style }: { children: ReactNode; style?: CSSProperties }) {
-  return <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', ...style }}>{children}</div>;
+  return <div className="table-scroll" style={style}>{children}</div>;
 }
+
+/**
+ * Sticky column header — spread over thStyle. The offset is the CSS var
+ * --sticky-th-top (top nav by default; pages with a sticky tab bar set it
+ * to nav + tab bar). Borders vanish on stuck cells with border-collapse,
+ * hence the inset shadow line.
+ */
+export const stickyThStyle: CSSProperties = {
+  position: 'sticky',
+  top: 'var(--sticky-th-top, var(--topnav-h))',
+  background: 'var(--bg-card)',
+  zIndex: 2,
+  boxShadow: 'inset 0 -1px 0 var(--border)',
+};
 
 /**
  * Keyboard/a11y props for a clickable table row: focusable, announced as

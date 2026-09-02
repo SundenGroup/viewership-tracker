@@ -198,6 +198,9 @@ export interface LiveCCVResponse {
     tier: string | null;
     timestamp: string;
     streamId: string | null;
+    /** True when streamId is ownership-verified (API multi-stream path) —
+     *  safe to embed by exact video id. */
+    ytApiStream?: boolean;
     streamTitle: string | null;
   }>;
 }

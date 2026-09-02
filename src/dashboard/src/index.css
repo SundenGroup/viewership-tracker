@@ -185,3 +185,58 @@
 @media (pointer: coarse) {
   .range-pill { min-height: 40px; padding: 8px 14px; }
 }
+
+/* ── Discover ─────────────────────────────────────────────────────────── */
+/* Table wrapper: clips on wide screens so sticky headers can stick to the
+   page; scrolls sideways only where the table cannot fit. */
+.table-scroll { overflow-x: clip; }
+@media (max-width: 900px) {
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+}
+:root { --sticky-th-top: var(--topnav-h); }
+/* Tracker page: sticky tab bar (44px) sits under the top nav */
+.discover-page { --sticky-th-top: calc(var(--topnav-h) + 44px); }
+
+/* Live tab: table + rail side by side, stacked on narrow screens */
+@media (max-width: 900px) {
+  .live-grid { grid-template-columns: minmax(0, 1fr) !important; }
+}
+
+/* Select styled like the pills next to it (language filters) */
+.pill-select {
+  min-height: 28px;
+  padding: 4px 26px 4px 12px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background-color: transparent;
+  color: var(--fg-muted);
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5l3 3 3-3' fill='none' stroke='%239AA1AB' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  cursor: pointer;
+}
+.pill-select[data-active="true"] {
+  border-color: var(--red);
+  color: var(--red);
+  background-color: var(--red-wash);
+}
+.pill-select:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+
+/* Phones: tighter page padding, wrapping tab bar with the search on its own line */
+@media (max-width: 700px) {
+  .discover-page { padding: 20px 14px 96px !important; }
+  .discover-hero h1 { font-size: 24px !important; }
+  .discover-tabbar { flex-wrap: wrap; row-gap: 6px; }
+  .discover-tabbar .discover-search { flex: 1 1 100% !important; min-width: 0 !important; order: 9; }
+  .discover-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+@media (pointer: coarse) {
+  .segmented button { min-height: 36px; }
+}
