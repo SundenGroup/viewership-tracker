@@ -74,7 +74,6 @@ export async function trendsV2(
       FROM game_tracker_channel_day_stats
       WHERE game_tracker_id = :tid AND day >= :baselineFrom::date AND day < :baselineTo::date
       GROUP BY channel_id
-    ),
     )
     SELECT c.channel_id,
            c.peak AS cur_peak,
