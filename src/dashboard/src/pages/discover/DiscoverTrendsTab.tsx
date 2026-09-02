@@ -55,7 +55,7 @@ interface RangeOption {
 const RANGE_OPTIONS: RangeOption[] = [
   { key: '1h', label: '1h', hours: 1, bucketSeconds: 60 },
   { key: '6h', label: '6h', hours: 6, bucketSeconds: 60 },
-  { key: '24h', label: '24h', hours: 24, bucketSeconds: 300 },
+  { key: '24h', label: '24h', hours: 24, bucketSeconds: 600 }, // 10-min buckets: served from the rollup
   { key: '7d', label: '7d', hours: 24 * 7, bucketSeconds: 1800 },
   { key: '30d', label: '30d', hours: 24 * 30, bucketSeconds: 3600 },
 ];
