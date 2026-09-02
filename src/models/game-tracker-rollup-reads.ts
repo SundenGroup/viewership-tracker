@@ -15,7 +15,7 @@ import {
 
 /**
  * Fast read paths for Discover, served from the two rollup tables:
- *   game_tracker_bucket_stats       — 10-minute buckets (timeline)
+ *   game_tracker_bucket_stats_v2       — 10-minute buckets (timeline)
  *   game_tracker_channel_day_stats  — per channel per UTC day (leaderboards, shares)
  * Every function falls back to the raw query when the rollup can't cover
  * the request (short buckets, no rolled days inside the window, empty
@@ -69,7 +69,7 @@ async function rangeAggregateFromRollup(
   platform?: string | null,
 ): Promise<Array<{ ts: Date; total_ccv: number; stream_count: number }>> {
   const plat = platform ?? '*';
-  const maxRow = await db('game_tracker_bucket_stats')
+  const maxRow = await db('game_tracker_bucket_stats_v2')
     .where({ game_tracker_id: gameTrackerId, platform: plat, language: '*' })
     .max<{ m: Date | null }>('bucket_ts as m')
     .first();
@@ -88,7 +88,7 @@ async function rangeAggregateFromRollup(
       `
       SELECT date_bin(?::interval, bucket_ts, ?::timestamptz) AS ts,
              SUM(ccv_sum) AS ccv_sum, SUM(stream_sum) AS stream_sum, SUM(minutes) AS minutes
-      FROM game_tracker_bucket_stats
+      FROM game_tracker_bucket_stats_v2
       WHERE game_tracker_id = ? AND platform = ? AND language = '*' AND bucket_ts >= ? AND bucket_ts < ?
       GROUP BY 1
       `,
@@ -377,7 +377,7 @@ async function breakdownFromRollup(
   platformFilter?: string | null,
 ): Promise<Breakdown & { from: Date }> {
   const plat = platformFilter ?? '*';
-  const maxRow = await db('game_tracker_bucket_stats')
+  const maxRow = await db('game_tracker_bucket_stats_v2')
     .where({ game_tracker_id: gameTrackerId, platform: plat, language: '*' })
     .max<{ m: Date | null }>('bucket_ts as m')
     .first();
@@ -407,7 +407,7 @@ async function breakdownFromRollup(
     }>(
       `
       SELECT platform, language, SUM(ccv_sum) AS ccv_sum, MAX(ccv_max) AS ccv_max
-      FROM game_tracker_bucket_stats
+      FROM game_tracker_bucket_stats_v2
       WHERE game_tracker_id = ?
         AND bucket_ts >= ? AND bucket_ts < ?
         AND (

@@ -1,21 +1,26 @@
 import type { Knex } from 'knex';
 
 /**
- * game_tracker_bucket_stats gains a language dimension so the share-of-
- * watch-time breakdown (platform AND language) is served from the rollup
- * for any window, instead of raw rows or day stats.
+ * game_tracker_bucket_stats_v2 — the 10-minute rollup with a language
+ * dimension, so the share-of-watch-time breakdown (platform AND language)
+ * is served from the rollup for any window.
  *
  * Rows exist for every combination of (platform | '*') × (language | '*'):
  * the timeline reads ('*' or one platform, '*'), the platform breakdown
  * reads (platform, '*'), the language breakdown reads ('*' or the
- * platform filter, language). Same semantics as before otherwise.
+ * platform filter, language). Same semantics as v1 otherwise.
  *
- * The table was created earlier today and is rebuilt from raw by
- * scripts/rollup-gt-buckets.ts --all, so recreate rather than migrate rows.
+ * A NEW table rather than an ALTER/DROP of v1: the nightly backups run
+ * pg_dump for long stretches (and overlap), holding AccessShare locks on
+ * every table, so any DDL on an existing table can wait indefinitely —
+ * this migration blocked the app from booting once. CREATE TABLE needs
+ * no lock on existing data. v1 is dropped by a later migration.
+ * Rebuilt from raw by scripts/rollup-gt-buckets.ts --all.
  */
 export async function up(knex: Knex): Promise<void> {
-  await knex.schema.dropTableIfExists('game_tracker_bucket_stats');
-  await knex.schema.createTable('game_tracker_bucket_stats', (table) => {
+  const exists = await knex.schema.hasTable('game_tracker_bucket_stats_v2');
+  if (exists) return;
+  await knex.schema.createTable('game_tracker_bucket_stats_v2', (table) => {
     table.uuid('game_tracker_id').notNullable()
       .references('id').inTable('game_trackers').onDelete('CASCADE');
     table.string('platform', 32).notNullable(); // '*' = all platforms
@@ -30,16 +35,5 @@ export async function up(knex: Knex): Promise<void> {
 }
 
 export async function down(knex: Knex): Promise<void> {
-  await knex.schema.dropTableIfExists('game_tracker_bucket_stats');
-  await knex.schema.createTable('game_tracker_bucket_stats', (table) => {
-    table.uuid('game_tracker_id').notNullable()
-      .references('id').inTable('game_trackers').onDelete('CASCADE');
-    table.string('platform', 32).notNullable();
-    table.timestamp('bucket_ts', { useTz: true }).notNullable();
-    table.bigInteger('ccv_sum').notNullable().defaultTo(0);
-    table.bigInteger('stream_sum').notNullable().defaultTo(0);
-    table.integer('ccv_max').notNullable().defaultTo(0);
-    table.integer('minutes').notNullable().defaultTo(0);
-    table.primary(['game_tracker_id', 'platform', 'bucket_ts']);
-  });
+  await knex.schema.dropTableIfExists('game_tracker_bucket_stats_v2');
 }

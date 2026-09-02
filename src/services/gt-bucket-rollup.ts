@@ -1,6 +1,6 @@
 /**
  * Game-tracker 10-minute bucket rollup — pre-aggregates
- * game_tracker_snapshots into game_tracker_bucket_stats (one row per
+ * game_tracker_snapshots into game_tracker_bucket_stats_v2 (one row per
  * tracker / platform / language / 10-minute bucket; '*' = every platform
  * or every language, '-' = no language tag)
  * so the Trends timeline and the 24h peak stop scanning raw minute rows.
@@ -57,7 +57,7 @@ export async function rollupBuckets(from: Date, to: Date): Promise<BucketRollupR
       UNION ALL
       SELECT game_tracker_id, '*', '*', minute, SUM(ccv), SUM(streams) FROM per_minute GROUP BY 1, 4
     )
-    INSERT INTO game_tracker_bucket_stats
+    INSERT INTO game_tracker_bucket_stats_v2
       (game_tracker_id, platform, language, bucket_ts, ccv_sum, stream_sum, ccv_max, minutes)
     SELECT game_tracker_id,
            platform,
