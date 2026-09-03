@@ -144,6 +144,10 @@ const TIKTOK_CHANNELS = [
   '@pubg.esports.official',
   '@pubg_battlegrounds_vn',
   'pubgthailandofficial',
+  // GeoGuessr WC 2026: the residential WS tracker reports 1 viewer for this
+  // room almost every minute (real reading once in hours); the page scrape
+  // carries the real count and the server keeps the higher value per minute.
+  '@geoguessr',
 ];
 
 // Track last known viewers per channel to filter out scrape failures
