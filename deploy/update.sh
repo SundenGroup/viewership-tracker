@@ -24,6 +24,12 @@ APP_DIR="/opt/clutch-viewership-tracker"
 BACKUP_DIR="$APP_DIR/backups"
 cd "$APP_DIR"
 
+# Everything below is also appended to a log on the server, so a deploy that
+# loses its SSH session (GitHub runner, laptop asleep) still leaves a trace.
+mkdir -p /var/log/clutch
+exec > >(tee -a /var/log/clutch/update.log) 2>&1
+echo "[$(date -u +%FT%TZ)] update.sh start (pid $$)"
+
 # ── Pre-deploy: Database backup ──────────────────────────────────────
 echo "▸ Backing up database..."
 mkdir -p "$BACKUP_DIR"

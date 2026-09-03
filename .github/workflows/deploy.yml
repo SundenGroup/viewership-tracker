@@ -29,7 +29,11 @@ jobs:
           # The server's git remote is HTTPS with no credentials, so it cannot pull
           # from GitHub by itself. The runner pushes the release into the server's
           # repo over SSH (refs/heads/deploy-inbox) and update.sh fast-forwards to it.
-          export GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no"
+          # Keepalives matter: update.sh is silent for the 11-minute pre-deploy dump,
+          # and an idle session gets dropped, which killed the script right after
+          # the dump on 2026-09-02 (dump done, nothing merged).
+          SSH_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
+          export GIT_SSH_COMMAND="ssh $SSH_OPTS"
           git push --force root@${{ secrets.DROPLET_IP }}:/opt/clutch-viewership-tracker "$GITHUB_SHA:refs/heads/deploy-inbox"
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@${{ secrets.DROPLET_IP }} \
+          ssh $SSH_OPTS root@${{ secrets.DROPLET_IP }} \
             'bash /opt/clutch-viewership-tracker/deploy/update.sh'

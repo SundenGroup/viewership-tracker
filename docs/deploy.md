@@ -12,6 +12,9 @@
    `pg_dump` (about 11 minutes, 6.5 GB, ten kept under `backups/`),
    fast-forwards `main` to `deploy-inbox`, runs `npm install`, `tsc`,
    `knex migrate:latest` and `pm2 restart clutch-viewership`.
+   The script appends everything it prints to `/var/log/clutch/update.log` on
+   the server. The runner's SSH session uses keepalives; the dump is silent
+   for 11 minutes and an idle session gets dropped otherwise.
 
 Batch commits and push once per deploy. Do not also deploy by hand on top of
 a push; the app would restart twice.
