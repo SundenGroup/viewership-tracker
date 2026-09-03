@@ -13,6 +13,7 @@
  */
 
 import type { ReportPayload, Narratives } from './report-builder';
+import { languageDisplayName } from '../utils/language-names';
 import type {
   PlatformBreakdown,
   LanguageBreakdown,
@@ -283,13 +284,13 @@ export function buildHTMLReport(data: HTMLReportData): string {
   }
 
   // Build per-language time series arrays
-  const languageNames = [...new Set((languageTimeSeries ?? []).map((p) => (p.groupKey ?? 'unknown').toUpperCase()).filter(Boolean))];
+  const languageNames = [...new Set((languageTimeSeries ?? []).map((p) => languageDisplayName(p.groupKey)).filter(Boolean))];
   const langTSData: Record<string, number[]> = {};
   for (const name of languageNames) {
     langTSData[name] = new Array(totalTimeSeries.length).fill(0);
   }
   for (const pt of (languageTimeSeries ?? [])) {
-    const key = (pt.groupKey ?? 'unknown').toUpperCase();
+    const key = languageDisplayName(pt.groupKey);
     if (!langTSData[key]) continue;
     const idx = timestampIndex.get(pt.timestamp);
     if (idx !== undefined) langTSData[key][idx] = pt.totalCCV;
@@ -347,7 +348,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
   const platColors = aggregated.platformBreakdown.map((p) => platformColor(p.platform));
 
   // Language breakdown for pie chart
-  const langLabels = aggregated.languageBreakdown.map((l) => (l.language || 'Unknown').toUpperCase());
+  const langLabels = aggregated.languageBreakdown.map((l) => languageDisplayName(l.language));
   const langVH = aggregated.languageBreakdown.map((l) => Math.round(l.totalCCV / 60));
   const langColors = aggregated.languageBreakdown.map((_, i) => langColor(i));
 
@@ -375,7 +376,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
       name: ch.displayName,
       platform: ch.platform.toLowerCase(),
       tier: tierLabel(ch.tier || channel?.tier),
-      lang: (ch.language || channel?.language || 'Unknown').toUpperCase(),
+      lang: languageDisplayName(ch.language || channel?.language),
       avg: Math.round(ch.avgCCV),
       peak: ch.peakCCV,
       vh: Math.round((ch.totalViewedMinutes ?? 0) / 60),
@@ -392,7 +393,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
   }));
 
   const langTableRows = aggregated.languageBreakdown.map((l, i) => ({
-    label: (l.language || 'Unknown').toUpperCase(),
+    label: languageDisplayName(l.language),
     colorIdx: i,
     vh: fmtNum(Math.round(l.totalCCV / 60)),
     avg: fmtNum(Math.round(l.avgCCV)),
