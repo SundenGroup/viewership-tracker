@@ -8,13 +8,21 @@
 2. It pushes that commit into the server's repository over SSH as
    `refs/heads/deploy-inbox` (the server's own git remote is HTTPS without
    credentials, so the server cannot fetch from GitHub by itself).
-3. It runs `deploy/update.sh` on the server, which takes a pre-deploy
-   `pg_dump` (about 11 minutes, 6.5 GB, ten kept under `backups/`),
-   fast-forwards `main` to `deploy-inbox`, runs `npm install`, `tsc`,
-   `knex migrate:latest` and `pm2 restart clutch-viewership`.
+3. It runs `deploy/update.sh` on the server, which fast-forwards `main` to
+   `deploy-inbox`, runs `npm install`, `tsc`, `knex migrate:latest` and
+   `pm2 restart clutch-viewership`. A deploy takes about two minutes.
    The script appends everything it prints to `/var/log/clutch/update.log` on
-   the server. The runner's SSH session uses keepalives; the dump is silent
-   for 11 minutes and an idle session gets dropped otherwise.
+   the server. The runner's SSH session uses keepalives.
+
+There is no pre-deploy dump any more (removed 2026-09-03; it cost 11 minutes
+and 6.5 GB per push). Backups come from `deploy/daily-backup.sh`, run by root's
+cron at 03:00 UTC (`backups/daily`, seven kept; `backups/weekly`, four kept,
+written on Sundays; log in `backups/daily-backup.log`). Before a migration you
+are not sure about, take a dump by hand first:
+
+```bash
+ssh root@165.232.126.195 'cd /opt/clutch-viewership-tracker && source .env && pg_dump "$DATABASE_URL" | gzip > backups/pre-deploy-$(date +%Y%m%d-%H%M%S).sql.gz'
+```
 
 Batch commits and push once per deploy. Do not also deploy by hand on top of
 a push; the app would restart twice.

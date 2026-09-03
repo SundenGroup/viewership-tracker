@@ -30,17 +30,11 @@ mkdir -p /var/log/clutch
 exec > >(tee -a /var/log/clutch/update.log) 2>&1
 echo "[$(date -u +%FT%TZ)] update.sh start (pid $$)"
 
-# ── Pre-deploy: Database backup ──────────────────────────────────────
-echo "▸ Backing up database..."
-mkdir -p "$BACKUP_DIR"
-source "$APP_DIR/.env"
-BACKUP_FILE="$BACKUP_DIR/pre-deploy-$(date +%Y%m%d-%H%M%S).sql.gz"
-pg_dump "$DATABASE_URL" | gzip > "$BACKUP_FILE"
-echo "  Backup saved: $BACKUP_FILE ($(du -h "$BACKUP_FILE" | cut -f1))"
-
-# Keep only last 10 pre-deploy backups
-ls -t "$BACKUP_DIR"/pre-deploy-*.sql.gz 2>/dev/null | tail -n +11 | xargs -r rm --
-echo "  Retained last 10 backups"
+# No pre-deploy dump any more (removed 2026-09-03): it took 11 minutes and
+# 6.5 GB per push. Backups come from deploy/daily-backup.sh (root cron, 03:00
+# UTC, backups/daily and backups/weekly). Take one by hand before a risky
+# migration:
+#   source .env && pg_dump "$DATABASE_URL" | gzip > backups/pre-deploy-$(date +%Y%m%d-%H%M%S).sql.gz
 
 echo "▸ Pulling latest code..."
 # The server cannot fetch from GitHub (HTTPS remote, no credentials). The deploy
