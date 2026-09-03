@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useCallback } from 'react';
 import { Card, PlatformIcon, LoadingOverlay } from '@/components/common';
-import { formatNumber, formatCompact, tierLabel, getStreamUrl } from '@/utils/formatters';
+import { formatNumber, formatCompact, tierLabel, getStreamUrl, languageFullName } from '@/utils/formatters';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import * as api from '@/services/api';
 import type { LiveCCVResponse, LeaderboardStats, ScopeLevel } from '@/types/api';
@@ -59,7 +59,7 @@ function sortLeaderboard(rows: MergedEntry[], { field, dir }: LeaderboardSortSta
 
 function languageBadge(lang: string | null): string {
   if (!lang) return '';
-  return lang.toUpperCase();
+  return languageFullName(lang);
 }
 
 // ── Component ────────────────────────────────────────────────────────────

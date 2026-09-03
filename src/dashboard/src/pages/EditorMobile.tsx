@@ -50,6 +50,7 @@ import type {
 } from '@/types/api';
 import type { PollingDataState } from '@/hooks/usePollingData';
 import { AddChannelDialog } from '@/components/editor/AddChannelDialog';
+import { languageFullName } from '@/utils/formatters';
 
 type MobileTab = 'live' | 'channels' | 'discovery' | 'ops';
 
@@ -519,7 +520,7 @@ export function EditorMobile({
                         channelIdentifier={c.channelIdentifier}
                       />
                       <span className="mono" style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
-                        {(c.language ?? '').toUpperCase()}
+                        {languageFullName(c.language)}
                       </span>
                     </Row>
                     {/* Hide stream-title sub-line for YouTube — the
@@ -939,7 +940,7 @@ function DiscoveryMobileTab({
         platform: c.platform,
         viewers: Number(md.discovered_ccv ?? 0) || 0,
         title: md.stream_title ?? '',
-        lang: (c.language ?? '').toUpperCase(),
+        lang: languageFullName(c.language),
         source: md.source ?? 'keyword',
         reason: md.auto_paused_reason ?? '',
         pausedAt: md.paused_at ?? md.last_seen_at ?? c.added_at,

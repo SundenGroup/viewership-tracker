@@ -4,7 +4,7 @@ import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/hooks/useAuth';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import * as api from '@/services/api';
-import { formatDate, tierLabel, getStreamUrl } from '@/utils/formatters';
+import { formatDate, tierLabel, getStreamUrl, languageFullName } from '@/utils/formatters';
 import type { Channel, BroadcastDay } from '@/types/api';
 
 // ── Sort types & helpers ────────────────────────────────────────────────
@@ -482,7 +482,7 @@ function ChannelRow({
       <td className="py-2">
         {channel.language && (
           <span className="rounded bg-navy-700 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">
-            {channel.language.toUpperCase()}
+            {languageFullName(channel.language)}
           </span>
         )}
       </td>

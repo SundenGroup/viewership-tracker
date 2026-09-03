@@ -1268,7 +1268,7 @@ function PublicRecap({
                 width={1160}
                 height={240}
                 items={model.languageBreakdown.slice(0, 8).map((l, i) => ({
-                  label: (l.language ?? l.key ?? '').toUpperCase() || '—',
+                  label: languageFullName(l.language ?? l.key),
                   value: l.peakCCV ?? Number(l.peak_ccv ?? 0) ?? l.totalCCV ?? 0,
                   sub: '',
                   color: palette[i % palette.length]!,

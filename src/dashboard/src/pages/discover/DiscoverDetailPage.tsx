@@ -49,6 +49,7 @@ import { DiscoverTrendsTab } from './DiscoverTrendsTab';
 import { DiscoverYouTubeGating } from './DiscoverYouTubeGating';
 import { GameArtTile } from '@/components/discover/GameArtTile';
 import { DiscoverChannelsTab } from './DiscoverChannelsTab';
+import { languageFullName } from '@/utils/formatters';
 
 const POLL_INTERVAL_MS = 30_000;
 type TabKey = 'live' | 'trends' | 'channels' | 'review';
@@ -140,7 +141,7 @@ export function DiscoverDetailPage() {
     const byLang = new Map<string, number>();
     let total = 0;
     for (const r of leaderboard ?? []) {
-      const lang = r.language?.toUpperCase() ?? '—';
+      const lang = languageFullName(r.language);
       byLang.set(lang, (byLang.get(lang) ?? 0) + r.concurrent_viewers);
       total += r.concurrent_viewers;
     }
@@ -752,7 +753,7 @@ function LiveTab({
     for (const r of rows) {
       total += r.concurrent_viewers;
       if (r.concurrent_viewers > peak) peak = r.concurrent_viewers;
-      const lang = r.language?.toUpperCase() ?? '—';
+      const lang = languageFullName(r.language);
       byLang.set(lang, (byLang.get(lang) ?? 0) + r.concurrent_viewers);
     }
     let best: { lang: string; ccv: number } | null = null;
@@ -1213,7 +1214,7 @@ export function LeaderboardTable({
                 )}
               </td>
               <td style={{ ...tdStyle, color: 'var(--fg-dim)' }}>
-                {row.language?.toUpperCase() ?? '—'}
+                {languageFullName(row.language)}
               </td>
               {showRangeStats && (
                 <td

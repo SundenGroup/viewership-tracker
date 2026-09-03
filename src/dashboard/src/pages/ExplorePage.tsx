@@ -42,7 +42,7 @@ import type { SeriesData } from '@/components/design';
 import { useTimelineSeries } from '@/design/useTimelineSeries';
 import type { ScopeOption } from '@/components/design/ScopeScrubber';
 import { fmtCompact, fmtN, fmtDateMD, fmtDateLong } from '@/design/format';
-import { formatChartTimeInTz } from '@/utils/formatters';
+import { formatChartTimeInTz, languageFullName } from '@/utils/formatters';
 import { downloadCsv, csvStamp } from '@/utils/csv';
 import { useAuth } from '@/hooks/useAuth';
 import { useViewportBelow } from '@/hooks/useViewport';
@@ -1469,7 +1469,7 @@ function ExploreScopedView({
                   <FilterChipRow label="Language">
                     <FilterMultiSelect
                       label="Language"
-                      options={availableLanguages.map((l) => ({ value: l, label: l.toUpperCase(), count: filterCounts.lang.get(l) }))}
+                      options={availableLanguages.map((l) => ({ value: l, label: languageFullName(l), count: filterCounts.lang.get(l) }))}
                       selected={languageFilter}
                       onChange={setLanguages}
                     />

@@ -17,6 +17,7 @@ import {
 import { downloadCsv, csvStamp } from '@/utils/csv';
 import { RetentionNote } from '@/components/discover/RetentionNote';
 import { LeaderboardTable, FreshnessIndicator, type LeaderboardRow } from './DiscoverDetailPage';
+import { languageFullName } from '@/utils/formatters';
 
 const POLL_INTERVAL_MS = 30_000;
 type SortKey = 'ccv' | 'lang';
@@ -313,7 +314,7 @@ export function DiscoverChannelsTab({
               </option>
             ))}
             {lang !== 'all' && !langOptions.includes(lang) && (
-              <option value={lang}>{lang.toUpperCase()}</option>
+              <option value={lang}>{languageFullName(lang)}</option>
             )}
           </select>
         </Row>

@@ -29,6 +29,7 @@ import { fmtDateLong } from '@/design/format';
 import { getPlatform } from '@/design/platforms';
 import * as api from '@/services/api';
 import { AddChannelDialog } from './AddChannelDialog';
+import { languageFullName } from '@/utils/formatters';
 
 type Filter = 'all' | 'active' | 'inactive';
 
@@ -324,7 +325,7 @@ export function ChannelsSection({
                     textTransform: 'uppercase',
                   }}
                 >
-                  {c.language?.toUpperCase() || '—'}
+                  {languageFullName(c.language)}
                 </div>
 
                 {/* Tier */}

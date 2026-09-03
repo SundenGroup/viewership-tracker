@@ -452,44 +452,25 @@ export function tierLabel(tier: string): string {
  * to the uppercased code so the UI still renders something.
  */
 const LANGUAGE_FULL_NAMES: Record<string, string> = {
-  en: 'English',
-  ru: 'Russian',
-  pl: 'Polish',
-  tr: 'Turkish',
-  de: 'German',
-  fr: 'French',
-  es: 'Spanish',
-  pt: 'Portuguese',
-  it: 'Italian',
-  nl: 'Dutch',
-  cs: 'Czech',
-  sv: 'Swedish',
-  no: 'Norwegian',
-  da: 'Danish',
-  fi: 'Finnish',
-  hu: 'Hungarian',
-  ro: 'Romanian',
-  el: 'Greek',
-  uk: 'Ukrainian',
-  ar: 'Arabic',
-  he: 'Hebrew',
-  ja: 'Japanese',
-  ko: 'Korean',
-  zh: 'Chinese',
+  en: 'English', de: 'German', fr: 'French', es: 'Spanish', pt: 'Portuguese', it: 'Italian',
+  nl: 'Dutch', pl: 'Polish', ru: 'Russian', uk: 'Ukrainian', be: 'Belarusian', cs: 'Czech',
+  sk: 'Slovak', sl: 'Slovenian', hr: 'Croatian', sr: 'Serbian', bs: 'Bosnian', mk: 'Macedonian',
+  bg: 'Bulgarian', ro: 'Romanian', hu: 'Hungarian', el: 'Greek', sq: 'Albanian', tr: 'Turkish',
+  sv: 'Swedish', no: 'Norwegian', nb: 'Norwegian', nn: 'Norwegian', da: 'Danish', fi: 'Finnish',
+  is: 'Icelandic', et: 'Estonian', lv: 'Latvian', lt: 'Lithuanian', ga: 'Irish', cy: 'Welsh',
+  mt: 'Maltese', lb: 'Luxembourgish', ca: 'Catalan', eu: 'Basque', gl: 'Galician',
+  ar: 'Arabic', he: 'Hebrew', fa: 'Persian', ku: 'Kurdish', ur: 'Urdu', ps: 'Pashto',
+  hi: 'Hindi', bn: 'Bengali', pa: 'Punjabi', gu: 'Gujarati', mr: 'Marathi', ta: 'Tamil',
+  te: 'Telugu', kn: 'Kannada', ml: 'Malayalam', si: 'Sinhala', ne: 'Nepali',
+  ja: 'Japanese', ko: 'Korean', zh: 'Chinese',
   // 'tw' is our house code for Taiwanese-Mandarin channels (mirrors SOOP's
   // pubgtw). It's NOT ISO-639 (that 'tw' is Twi) — display-mapped here so
   // reports read "Taiwanese" instead of a bare "TW".
-  tw: 'Taiwanese',
-  th: 'Thai',
-  vi: 'Vietnamese',
-  hi: 'Hindi',
-  id: 'Indonesian',
-  ms: 'Malay',
-  tl: 'Tagalog',
-  fil: 'Filipino',
-  bn: 'Bengali',
-  ur: 'Urdu',
-  fa: 'Persian',
+  tw: 'Taiwanese', th: 'Thai', vi: 'Vietnamese',
+  id: 'Indonesian', ms: 'Malay', tl: 'Tagalog', fil: 'Filipino', my: 'Burmese', km: 'Khmer',
+  lo: 'Lao', mn: 'Mongolian', kk: 'Kazakh', ky: 'Kyrgyz', uz: 'Uzbek', tg: 'Tajik',
+  az: 'Azerbaijani', hy: 'Armenian', ka: 'Georgian', af: 'Afrikaans', sw: 'Swahili',
+  am: 'Amharic', asl: 'American Sign Language', other: 'Other',
 };
 
 /**
@@ -500,7 +481,9 @@ const LANGUAGE_FULL_NAMES: Record<string, string> = {
 export function languageFullName(code: string | null | undefined): string {
   if (!code) return '—';
   const k = code.trim().toLowerCase();
-  return LANGUAGE_FULL_NAMES[k] ?? k.toUpperCase();
+  if (!k) return '—';
+  // Region subtags ("pt-BR", "en_US") read as the base language.
+  return LANGUAGE_FULL_NAMES[k] ?? LANGUAGE_FULL_NAMES[k.split(/[-_]/)[0] ?? k] ?? k.toUpperCase();
 }
 
 const STATUS_COLORS: Record<string, string> = {

@@ -4,7 +4,7 @@ import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/hooks/useAuth';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import * as api from '@/services/api';
-import { formatTimeAgo, getStreamUrl } from '@/utils/formatters';
+import { formatTimeAgo, getStreamUrl, languageFullName } from '@/utils/formatters';
 import type { Channel, DiscoveryResult } from '@/types/api';
 
 // ── Shared external-link icon ───────────────────────────────────────────────
@@ -324,7 +324,7 @@ function DiscoveryRow({
             )}
             {channel.language && (
               <span className="shrink-0 rounded bg-navy-700 px-1.5 py-0.5 text-[10px] text-gray-500">
-                {channel.language.toUpperCase()}
+                {languageFullName(channel.language)}
               </span>
             )}
             {isAutoPaused && (

@@ -10,7 +10,7 @@ import {
   Cell,
 } from 'recharts';
 import { Card, LoadingOverlay } from '@/components/common';
-import { formatCompact, formatNumber, formatPercent, formatViewedHours } from '@/utils/formatters';
+import { formatCompact, formatNumber, formatPercent, formatViewedHours, languageFullName } from '@/utils/formatters';
 import type { BreakdownEntry, LiveCCVResponse } from '@/types/api';
 
 interface LanguageDistPanelProps {
@@ -55,7 +55,7 @@ export function LanguageDistPanel({ data, loading, liveCCV }: LanguageDistPanelP
     const map = new Map<string, number>();
     for (const ch of liveCCV.channels) {
       if (ch.concurrentViewers <= 0) continue;
-      const lang = (ch.language ?? 'unknown').toUpperCase();
+      const lang = languageFullName(ch.language ?? 'unknown');
       map.set(lang, (map.get(lang) ?? 0) + ch.concurrentViewers);
     }
     return map;
@@ -101,7 +101,7 @@ export function LanguageDistPanel({ data, loading, liveCCV }: LanguageDistPanelP
     chartData = sorted.map((d, i) => {
       const value = metric === 'viewedHours' ? d.totalCCV / 60 : d[metric];
       return {
-        name: (d.language ?? d.key ?? 'Unknown').toUpperCase(),
+        name: languageFullName(d.language ?? d.key ?? 'unknown'),
         value,
         pct: grandTotal > 0 ? value / grandTotal : 0,
         color: BAR_COLORS[i % BAR_COLORS.length]!,

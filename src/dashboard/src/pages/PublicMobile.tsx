@@ -36,6 +36,7 @@ import {
 } from '@/components/design';
 import { fmtCompact, fmtN, fmtDateLong } from '@/design/format';
 import { PLATFORMS } from '@/design/platforms';
+import { languageFullName } from '@/utils/formatters';
 
 // ── Shared helpers ────────────────────────────────────────────────────
 
@@ -376,7 +377,7 @@ function ChannelAccordion({
                       </span>
                       {c.language && (
                         <span className="mono" style={{ fontSize: 9.5, color: 'var(--fg-dim)' }}>
-                          {c.language.toUpperCase()}
+                          {languageFullName(c.language)}
                         </span>
                       )}
                     </Row>

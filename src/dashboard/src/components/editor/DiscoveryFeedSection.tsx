@@ -34,6 +34,7 @@ import {
 } from '@/components/design';
 import { fmtCompact, fmtRelative } from '@/design/format';
 import * as api from '@/services/api';
+import { languageFullName } from '@/utils/formatters';
 
 type SortKey = 'recent' | 'viewers' | 'platform' | 'name' | 'lang';
 
@@ -130,7 +131,7 @@ export function DiscoveryFeedSection({
         platform: c.platform,
         viewers: Number(md.discovered_ccv ?? 0) || 0,
         title: md.stream_title ?? '',
-        lang: (c.language ?? '').toUpperCase(),
+        lang: languageFullName(c.language),
         source: md.source ?? 'keyword',
         reason: md.auto_paused_reason ?? '',
         pausedAt: md.paused_at ?? md.last_seen_at ?? c.added_at,
