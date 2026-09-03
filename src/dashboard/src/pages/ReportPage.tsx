@@ -1671,8 +1671,11 @@ function DetailedReport({
                             ? prevLanguagePeaks?.get(l.language.toLowerCase())
                             : undefined;
                           if (!base) return null;
-                          const pct = Math.round(((l.peakCCV - base) / base) * 100);
-                          if (pct === 0) return null;
+                          // Small moves used to round to 0 and vanish (German: +0.5%
+                          // read as "no comparison"); show one decimal under 1%.
+                          const raw = ((l.peakCCV - base) / base) * 100;
+                          const flat = Math.abs(raw) < 0.05;
+                          const label = flat ? '0' : Math.abs(raw) < 1 ? raw.toFixed(1) : String(Math.round(raw));
                           return (
                             <span
                               className="tabular"
@@ -1681,10 +1684,10 @@ function DetailedReport({
                                 marginLeft: 6,
                                 fontSize: 10,
                                 fontWeight: 500,
-                                color: pct > 0 ? 'var(--live)' : 'var(--danger)',
+                                color: flat ? 'var(--fg-dim)' : raw > 0 ? 'var(--live)' : 'var(--danger)',
                               }}
                             >
-                              {pct > 0 ? '+' : ''}{pct}%
+                              {raw > 0 && !flat ? '+' : ''}{label}%
                             </span>
                           );
                         })()}
