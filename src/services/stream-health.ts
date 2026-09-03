@@ -68,14 +68,22 @@
  *     session. corr ≥ 0.2 → 15, -0.1 ≤ corr < 0.2 → 8 (near-zero is
  *     noise), corr < -0.1 with spikes present → 0, no spikes → neutral 10.
  *
- * All SQL is set-based (one cohort-stats statement per run); only the
- * per-target curve analysis runs in JS, over per-minute arrays fetched in
- * one query per chunk.
+ * Shape since 2026-09-03 (plan: docs/plans/2026-09-03-stream-health-scorer.md):
+ *   - each session's inputs (chat coverage, engagement ratio, CCV mean/sd,
+ *     minute rises) are computed ONCE when it is finalized and stored in
+ *     stream_sessions.health_features (stream-health-features.ts);
+ *   - cohort baselines are rebuilt from those stored features once a night
+ *     into stream_health_cohorts (buildHealthCohorts), never while a
+ *     broadcast day is live;
+ *   - the hourly pass only scores sessions that have no grade yet, reading
+ *     the cohort table and each target's own minute array. Seconds, not
+ *     the 35-minute raw-snapshot rebuild that starved the tracker's polls.
  */
 
 import db from '../utils/db';
 import logger from '../utils/logger';
 import type { HealthEvidence, HealthFlag } from '../models/stream-session';
+import { computeHealthFeatures, type HealthFeatures } from './stream-health-features';
 
 // ── Eligibility gates ──────────────────────────────────────────────────
 const MIN_AVG_CCV = 50;
@@ -120,6 +128,8 @@ const EXTREME_ENG_RATIO = 1 / 3;
 
 /** How many target sessions to fetch per-minute arrays for at a time. */
 const CURVE_CHUNK = 200;
+/** Hourly pass: at most this many unscored sessions per run (newest first). */
+const UNSCORED_BATCH = 3000;
 
 export type SizeBand = '50-200' | '200-1k' | '1k-5k' | '5k-20k' | '20k+';
 
@@ -202,6 +212,7 @@ interface Candidate {
   followers_start: number | null;
   followers_end: number | null;
   titles: Array<{ title: string; at: string }>;
+  health_features: HealthFeatures | null;
 }
 
 interface TargetStats {
@@ -257,6 +268,180 @@ interface MinutePoint {
   chatters: number | null; // null = no chat row for this minute
 }
 
+// ── Stored-feature plumbing ──────────────────────────────────────────
+
+/**
+ * The scorer's per-target inputs from the features stored at
+ * finalization. Null when the session cannot be scored: no chat evidence
+ * at all, or chat coverage below MIN_CHAT_COVERAGE of its minutes.
+ */
+export function targetStatsFromFeatures(c: {
+  platform: string;
+  ccv_minutes: number;
+  followers_start: number | null;
+  followers_end: number | null;
+  health_features: HealthFeatures | null;
+}): TargetStats | null {
+  const f = c.health_features;
+  if (!f || f.engRatio == null || f.snapMinutes <= 0) return null;
+  if (f.chatMinutes < MIN_CHAT_COVERAGE * f.snapMinutes) return null;
+  const cv = f.meanCcv != null && f.meanCcv > 0 && f.sdCcv != null ? f.sdCcv / f.meanCcv : null;
+  // YouTube and TikTok report rounded follower counts, so their deltas
+  // are false zeros: neutral, never a number.
+  const convPer1k =
+    c.followers_start != null && c.followers_end != null && c.ccv_minutes > 0 &&
+    c.platform !== 'youtube' && c.platform !== 'tiktok'
+      ? ((c.followers_end - c.followers_start) * 1000) / c.ccv_minutes
+      : null;
+  return {
+    engRatio: Number(f.engRatio),
+    cv,
+    convPer1k,
+    snapMinutes: f.snapMinutes,
+    chatMinutes: f.chatMinutes,
+  };
+}
+
+/** Cohort baselines for the given trackers, keyed tracker|band|platform ('*' = mixed). */
+async function loadCohorts(trackerIds: string[]): Promise<Map<string, CohortStats>> {
+  const cohorts = new Map<string, CohortStats>();
+  if (trackerIds.length === 0) return cohorts;
+  const rows = await db('stream_health_cohorts')
+    .whereIn('game_tracker_id', trackerIds)
+    .select('game_tracker_id', 'band', 'platform', 'p99_rise', 'sessions');
+  for (const row of rows) {
+    cohorts.set(`${row.game_tracker_id}|${row.band}|${row.platform}`, {
+      p99Rise: row.p99_rise != null ? Number(row.p99_rise) : null,
+      sessions: ((row.sessions as Array<Record<string, unknown>>) ?? []).map((s) => ({
+        ch: String(s.ch),
+        eng: Number(s.eng),
+        conv: s.conv != null ? Number(s.conv) : null,
+        cv: s.cv != null ? Number(s.cv) : null,
+      })),
+    });
+  }
+  return cohorts;
+}
+
+/** True while any broadcast day is live: the tracker's polls come first. */
+export async function isBroadcastLive(): Promise<boolean> {
+  const [row] = await db('broadcast_days').where('status', 'live').count<{ n: string }[]>('* as n');
+  return Number(row?.n ?? 0) > 0;
+}
+
+export interface CohortBuildResult {
+  skipped: 'broadcast_live' | null;
+  cohorts: number;
+  durationMs: number;
+}
+
+/**
+ * Rebuild stream_health_cohorts from the stored per-session features:
+ * per (tracker, band, platform) and the mixed (tracker, band) slice, the
+ * eligible sessions' {channel, engagement, conversion, cv} plus the
+ * pooled 99th-percentile minute rise. Seconds of work over ~20k short
+ * rows. Refuses to run while a broadcast day is live unless forced.
+ */
+export async function buildHealthCohorts(opts: { force?: boolean } = {}): Promise<CohortBuildResult> {
+  const startedMs = Date.now();
+  if (!opts.force && (await isBroadcastLive())) {
+    logger.info('[StreamHealth] cohort build skipped: a broadcast day is live');
+    return { skipped: 'broadcast_live', cohorts: 0, durationMs: Date.now() - startedMs };
+  }
+  const cohorts = await db.transaction(async (trx) => {
+    await trx.raw(`SET LOCAL statement_timeout = '10min'`);
+    const res = await trx.raw<{ rows: Array<{ n: string }> }>(
+      `
+      WITH sess AS (
+        SELECT s.id, s.game_tracker_id, s.channel_id, ch.platform::text AS platform,
+               (${BAND_SQL}) AS band,
+               (s.health_features->>'engRatio')::numeric AS eng,
+               CASE WHEN (s.health_features->>'meanCcv')::numeric > 0 AND (s.health_features->>'sdCcv') IS NOT NULL
+                    THEN (s.health_features->>'sdCcv')::numeric / (s.health_features->>'meanCcv')::numeric END AS cv,
+               CASE WHEN s.followers_start IS NOT NULL AND s.followers_end IS NOT NULL
+                         AND s.ccv_minutes > 0 AND ch.platform::text NOT IN ('youtube', 'tiktok')
+                    THEN (s.followers_end - s.followers_start)::numeric * 1000 / s.ccv_minutes END AS conv,
+               s.health_features->'rises' AS rises
+        FROM stream_sessions s
+        JOIN channels ch ON ch.id = s.channel_id
+        WHERE s.status = 'ended'
+          AND s.ended_at >= now() - interval '${COHORT_DAYS} days'
+          AND s.avg_ccv >= ? AND s.minutes_live >= ?
+          AND s.health_features IS NOT NULL
+          AND (s.health_features->>'engRatio') IS NOT NULL
+          AND (s.health_features->>'snapMinutes')::numeric > 0
+          AND (s.health_features->>'chatMinutes')::numeric >= ? * (s.health_features->>'snapMinutes')::numeric
+      ),
+      rise_vals AS (
+        SELECT se.game_tracker_id, se.band, se.platform, r.value::numeric AS rise
+        FROM sess se, jsonb_array_elements_text(se.rises) AS r(value)
+      ),
+      cohort_rise AS (
+        SELECT game_tracker_id, band, platform,
+               percentile_cont(0.99) WITHIN GROUP (ORDER BY rise) AS p99_rise
+        FROM rise_vals
+        GROUP BY GROUPING SETS ((game_tracker_id, band, platform), (game_tracker_id, band))
+      ),
+      cohort_agg AS (
+        SELECT game_tracker_id, band, platform,
+               jsonb_agg(jsonb_build_object('ch', channel_id, 'eng', eng, 'conv', conv, 'cv', cv)) AS sessions,
+               COUNT(*)::int AS session_count,
+               COUNT(DISTINCT channel_id)::int AS channel_count
+        FROM sess
+        GROUP BY GROUPING SETS ((game_tracker_id, band, platform), (game_tracker_id, band))
+      ),
+      upserted AS (
+        INSERT INTO stream_health_cohorts (game_tracker_id, band, platform, p99_rise, sessions, session_count, channel_count, computed_at)
+        SELECT ca.game_tracker_id, ca.band, COALESCE(ca.platform, '*'), cr.p99_rise, ca.sessions, ca.session_count, ca.channel_count, now()
+        FROM cohort_agg ca
+        LEFT JOIN cohort_rise cr
+          ON cr.game_tracker_id = ca.game_tracker_id AND cr.band = ca.band
+         AND cr.platform IS NOT DISTINCT FROM ca.platform
+        ON CONFLICT (game_tracker_id, band, platform) DO UPDATE
+          SET p99_rise = EXCLUDED.p99_rise, sessions = EXCLUDED.sessions,
+              session_count = EXCLUDED.session_count, channel_count = EXCLUDED.channel_count,
+              computed_at = EXCLUDED.computed_at
+        RETURNING 1
+      ),
+      stale AS (
+        -- Slices that no longer have any eligible session disappear.
+        DELETE FROM stream_health_cohorts c
+        WHERE c.computed_at < now() - interval '1 minute'
+        RETURNING 1
+      )
+      SELECT (SELECT COUNT(*) FROM upserted)::text AS n
+      `,
+      [MIN_AVG_CCV, MIN_MINUTES, MIN_CHAT_COVERAGE],
+    );
+    return Number(res.rows[0]?.n ?? 0);
+  });
+  const result = { skipped: null, cohorts, durationMs: Date.now() - startedMs };
+  logger.info('[StreamHealth] cohort build complete', { ...result });
+  return result;
+}
+
+/**
+ * Nightly pass: refresh the features of sessions that ended in the last
+ * day (late chat and follower data settle), rebuild the cohort table,
+ * then re-score the last week against the fresh baselines. Skipped as a
+ * whole while a broadcast day is live; the next night catches up.
+ */
+export async function nightlyHealthPass(): Promise<{ skipped: boolean; refreshed: number; cohorts: number; rescored: number }> {
+  if (await isBroadcastLive()) {
+    logger.info('[StreamHealth] nightly pass skipped: a broadcast day is live');
+    return { skipped: true, refreshed: 0, cohorts: 0, rescored: 0 };
+  }
+  const recent = await sessionIdsEndedWithin(24);
+  let refreshed = 0;
+  for (let i = 0; i < recent.length; i += 500) {
+    refreshed += await computeHealthFeatures(recent.slice(i, i + 500));
+  }
+  const build = await buildHealthCohorts();
+  const week = await sessionIdsEndedWithin(7 * 24);
+  const scored = week.length > 0 ? await scoreSessions(week) : null;
+  return { skipped: false, refreshed, cohorts: build.cohorts, rescored: scored?.scored ?? 0 };
+}
+
 /**
  * Ids of ended sessions that passed the cheap scoring gates and ended
  * within the last N hours. The cron jobs and the backfill script resolve
@@ -289,249 +474,59 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
   });
   if (sessionIds && sessionIds.length === 0) return done(0, 0);
 
-  // ── 1. Candidates: cheap gates + metadata for evidence text ──────────
+  // ── 1. Candidates: cheap gates + stored features ─────────────────────
+  // Explicit ids (nightly re-score, backfill) or, for the hourly pass,
+  // every scorable session that has features but no grade yet, newest
+  // first. No time window: a pass skipped for twelve hours just means a
+  // bigger batch at the next one, nothing falls through.
   let q = db('stream_sessions as s')
     .join('game_trackers as gt', 'gt.id', 's.game_tracker_id')
+    .join('channels as c', 'c.id', 's.channel_id')
     .where('s.status', 'ended')
     .whereNotNull('s.ended_at')
     .where('s.avg_ccv', '>=', MIN_AVG_CCV)
     .where('s.minutes_live', '>=', MIN_MINUTES)
-    .join('channels as c', 'c.id', 's.channel_id')
+    .whereNotNull('s.health_features')
     .select(
       's.id', 's.game_tracker_id', 'gt.slug as tracker_slug', 's.channel_id',
       db.raw('c.platform::text as platform'),
       's.started_at', 's.ended_at', 's.avg_ccv', 's.ccv_minutes',
-      's.followers_start', 's.followers_end', 's.titles',
+      's.followers_start', 's.followers_end', 's.titles', 's.health_features',
     );
   q = sessionIds
     ? q.whereRaw('s.id = ANY(?::uuid[])', [sessionIds])
-    : q.where('s.ended_at', '>=', db.raw(`now() - interval '7 days'`));
+    : q.whereNull('s.health_score')
+        .where('s.ended_at', '>=', db.raw(`now() - interval '${COHORT_DAYS} days'`))
+        // Sessions without chat coverage can never be scored; skip them here
+        // so the hourly pass does not re-read them forever.
+        .whereRaw(`(s.health_features->>'engRatio') IS NOT NULL`)
+        .whereRaw(`(s.health_features->>'chatMinutes')::numeric >= ? * (s.health_features->>'snapMinutes')::numeric`, [MIN_CHAT_COVERAGE])
+        .orderBy('s.ended_at', 'desc')
+        .limit(UNSCORED_BATCH);
   const candidates: Candidate[] = (await q).map((r) => ({
     ...r,
     avg_ccv: Number(r.avg_ccv),
     ccv_minutes: Number(r.ccv_minutes),
     titles: r.titles ?? [],
+    health_features: (r.health_features as HealthFeatures | null) ?? null,
   }));
   if (candidates.length === 0) return done(0, 0);
 
   const targetIds = candidates.map((c) => c.id);
   const byId = new Map(candidates.map((c) => [c.id, c]));
 
-  // (tracker, band) combos we need cohort baselines for — each target's
-  // own band plus the band below it, so a lone giant (a band whose only
-  // occupant is one channel) can still borrow the nearest honest peers.
-  const comboKeys = new Set<string>();
-  for (const c of candidates) {
-    const band = bandFor(c.avg_ccv);
-    comboKeys.add(`${c.game_tracker_id}|${band}`);
-    const lower = bandDown(band);
-    if (lower) comboKeys.add(`${c.game_tracker_id}|${lower}`);
-  }
-  const comboTrackers: string[] = [];
-  const comboBands: string[] = [];
-  for (const key of comboKeys) {
-    const [trackerId, band] = key.split('|');
-    comboTrackers.push(trackerId as string);
-    comboBands.push(band as string);
-  }
-
-  // ── 2. Cohort + per-target stats in one set-based statement ──────────
-  // The cohort scan windows over 30 days of per-minute data; SET LOCAL
-  // lifts any server statement_timeout for exactly this transaction.
-  const statsRows = await db.transaction(async (trx) => {
-    await trx.raw('SET LOCAL statement_timeout = 0');
-    const result = await trx.raw<{
-      rows: Array<{ kind: 'cohort' | 'target'; tracker_id: string; band: string; payload: Record<string, unknown> }>;
-    }>(
-      `
-      WITH combo AS (
-        SELECT DISTINCT t.tracker_id, t.band
-        FROM unnest(?::uuid[], ?::text[]) AS t(tracker_id, band)
-      ),
-      sess AS (
-        SELECT s.id, s.game_tracker_id, s.channel_id, s.stream_id, ch.platform::text AS platform,
-               s.started_at, s.ended_at,
-               s.avg_ccv, s.ccv_minutes, s.followers_start, s.followers_end,
-               (${BAND_SQL}) AS band,
-               (s.id = ANY(?::uuid[])) AS is_target,
-               (s.ended_at >= now() - interval '${COHORT_DAYS} days') AS in_cohort
-        FROM stream_sessions s
-        JOIN channels ch ON ch.id = s.channel_id
-        JOIN combo c
-          ON c.tracker_id = s.game_tracker_id
-         AND c.band = (${BAND_SQL})
-        WHERE s.status = 'ended'
-          AND s.ended_at IS NOT NULL
-          AND s.avg_ccv >= ?
-          AND s.minutes_live >= ?
-          AND (s.ended_at >= now() - interval '${COHORT_DAYS} days' OR s.id = ANY(?::uuid[]))
-          -- Cheap prefilter: skip the snapshots join entirely for sessions
-          -- with no chat evidence at all — neither a message-minute nor a
-          -- watch interval (most channels sit outside the collector's set).
-          AND (
-            EXISTS (
-              SELECT 1 FROM chat_minute_rollup r
-              WHERE r.channel_id = s.channel_id
-                AND r.minute >= date_trunc('minute', s.started_at)
-                AND r.minute <= s.ended_at
-            )
-            OR EXISTS (
-              SELECT 1 FROM chat_watch_intervals wi
-              WHERE wi.channel_id = s.channel_id
-                AND wi.started_at <= s.ended_at
-                AND COALESCE(wi.ended_at, wi.last_seen_at) >= s.started_at
-            )
-          )
-      ),
-      per_minute AS (
-        SELECT se.id AS session_id, se.channel_id,
-               date_trunc('minute', g."timestamp") AS minute,
-               MAX(g.concurrent_viewers) AS ccv
-        FROM sess se
-        JOIN game_tracker_snapshots g
-          ON g.game_tracker_id = se.game_tracker_id
-         AND g.channel_id = se.channel_id
-         AND g.stream_id = se.stream_id
-         AND g."timestamp" >= se.started_at
-         AND g."timestamp" <= se.ended_at
-        GROUP BY se.id, se.channel_id, date_trunc('minute', g."timestamp")
-      ),
-      minute_stats AS (
-        -- A minute counts as chat evidence when a message arrived (rollup
-        -- row) OR the collector was verifiably watching (interval overlap)
-        -- — in the latter case silence is a real zero, not missing data.
-        SELECT pm.session_id,
-               COUNT(*)::int AS snap_minutes,
-               COUNT(*) FILTER (WHERE r.chatters IS NOT NULL OR w.w IS NOT NULL)::int AS chat_minutes,
-               AVG(pm.ccv)::numeric AS mean_ccv,
-               stddev_samp(pm.ccv)::numeric AS sd_ccv,
-               AVG(COALESCE(r.chatters, CASE WHEN w.w IS NOT NULL THEN 0 END)::numeric / pm.ccv)
-                 FILTER (WHERE (r.chatters IS NOT NULL OR w.w IS NOT NULL) AND pm.ccv > 0) AS eng_ratio
-        FROM per_minute pm
-        LEFT JOIN chat_minute_rollup r
-          ON r.channel_id = pm.channel_id AND r.minute = pm.minute
-        LEFT JOIN LATERAL (
-          SELECT 1 AS w FROM chat_watch_intervals wi
-          WHERE wi.channel_id = pm.channel_id
-            AND wi.started_at <= pm.minute
-            AND COALESCE(wi.ended_at, wi.last_seen_at) >= pm.minute
-          LIMIT 1
-        ) w ON true
-        GROUP BY pm.session_id
-      ),
-      eligible AS (
-        SELECT se.id, se.channel_id, se.game_tracker_id, se.band, se.platform, se.is_target, se.in_cohort,
-               ms.snap_minutes, ms.chat_minutes, ms.eng_ratio,
-               CASE WHEN ms.mean_ccv > 0 THEN ms.sd_ccv / ms.mean_ccv END AS cv,
-               -- YouTube and TikTok report follower counts rounded (11.0k
-               -- stays 11.0k through real growth — and the bigger the
-               -- channel, the coarser the rounding), so their "conversion"
-               -- would be a false zero — treat as no data, score neutral.
-               CASE WHEN se.followers_start IS NOT NULL AND se.followers_end IS NOT NULL
-                         AND se.ccv_minutes > 0 AND se.platform NOT IN ('youtube', 'tiktok')
-                    THEN (se.followers_end - se.followers_start)::numeric * 1000 / se.ccv_minutes
-               END AS conv_per_1k
-        FROM sess se
-        JOIN minute_stats ms ON ms.session_id = se.id
-        WHERE ms.eng_ratio IS NOT NULL
-          AND ms.chat_minutes::numeric >= ?::numeric * ms.snap_minutes
-      ),
-      rise_vals AS (
-        SELECT x.session_id, (x.ccv - x.prev_ccv)::numeric / x.prev_ccv AS rise
-        FROM (
-          SELECT pm.session_id, pm.ccv,
-                 lag(pm.ccv) OVER (PARTITION BY pm.session_id ORDER BY pm.minute) AS prev_ccv
-          FROM per_minute pm
-        ) x
-        WHERE x.prev_ccv >= ? AND x.ccv > x.prev_ccv
-      ),
-      -- GROUPING SETS emit each cohort twice: once per platform slice
-      -- (chat culture differs — YouTube chats far less per viewer than
-      -- Twitch) and once mixed. The scorer prefers the platform slice
-      -- when it has enough sessions, else falls back to the mixed one.
-      cohort_rise AS (
-        SELECT e.game_tracker_id, e.band, e.platform,
-               percentile_cont(0.99) WITHIN GROUP (ORDER BY rv.rise) AS p99_rise
-        FROM rise_vals rv
-        JOIN eligible e ON e.id = rv.session_id
-        WHERE e.in_cohort
-        GROUP BY GROUPING SETS ((e.game_tracker_id, e.band, e.platform), (e.game_tracker_id, e.band))
-      ),
-      cohort_agg AS (
-        -- Per-session rows (not pre-aggregated arrays) so the scorer can
-        -- exclude a target channel's OWN sessions from its baselines — a
-        -- channel dominating its cohort must not be its own alibi.
-        SELECT e.game_tracker_id, e.band, e.platform,
-               jsonb_agg(jsonb_build_object(
-                 'ch', e.channel_id, 'eng', e.eng_ratio, 'conv', e.conv_per_1k, 'cv', e.cv
-               )) AS sessions
-        FROM eligible e
-        WHERE e.in_cohort
-        GROUP BY GROUPING SETS ((e.game_tracker_id, e.band, e.platform), (e.game_tracker_id, e.band))
-      )
-      SELECT 'cohort' AS kind, ca.game_tracker_id::text AS tracker_id, ca.band,
-             jsonb_build_object(
-               'platform', ca.platform,
-               'p99Rise', cr.p99_rise,
-               'sessions', ca.sessions
-             ) AS payload
-      FROM cohort_agg ca
-      LEFT JOIN cohort_rise cr
-        ON cr.game_tracker_id = ca.game_tracker_id AND cr.band = ca.band
-       AND cr.platform IS NOT DISTINCT FROM ca.platform
-      UNION ALL
-      SELECT 'target', e.game_tracker_id::text, e.band,
-             jsonb_build_object(
-               'id', e.id,
-               'platform', e.platform,
-               'engRatio', e.eng_ratio,
-               'cv', e.cv,
-               'convPer1k', e.conv_per_1k,
-               'snapMinutes', e.snap_minutes,
-               'chatMinutes', e.chat_minutes
-             )
-      FROM eligible e
-      WHERE e.is_target
-      `,
-      [
-        comboTrackers, comboBands,
-        targetIds,
-        MIN_AVG_CCV, MIN_MINUTES,
-        targetIds,
-        MIN_CHAT_COVERAGE,
-        RISE_LEVEL_FLOOR,
-      ],
-    );
-    return result.rows;
-  });
-
-  // Cohorts are keyed tracker|band|platform, with '*' for the mixed
-  // (all-platform) slice the GROUPING SETS also emit.
-  const cohorts = new Map<string, CohortStats>();
+  // ── 2. Targets from stored features, cohorts from the nightly table ──
   const targets = new Map<string, TargetStats>();
   const targetBand = new Map<string, SizeBand>();
-  for (const row of statsRows) {
-    const p = row.payload;
-    if (row.kind === 'cohort') {
-      cohorts.set(`${row.tracker_id}|${row.band}|${(p.platform as string | null) ?? '*'}`, {
-        p99Rise: p.p99Rise != null ? Number(p.p99Rise) : null,
-        sessions: ((p.sessions as Array<Record<string, unknown>>) ?? []).map((s) => ({
-          ch: String(s.ch),
-          eng: Number(s.eng),
-          conv: s.conv != null ? Number(s.conv) : null,
-          cv: s.cv != null ? Number(s.cv) : null,
-        })),
-      });
-    } else {
-      targets.set(String(p.id), {
-        engRatio: Number(p.engRatio),
-        cv: p.cv != null ? Number(p.cv) : null,
-        convPer1k: p.convPer1k != null ? Number(p.convPer1k) : null,
-        snapMinutes: Number(p.snapMinutes),
-        chatMinutes: Number(p.chatMinutes),
-      });
-      targetBand.set(String(p.id), row.band as SizeBand);
-    }
+  for (const c of candidates) {
+    const stats = targetStatsFromFeatures(c);
+    if (!stats) continue;
+    targets.set(c.id, stats);
+    targetBand.set(c.id, bandFor(c.avg_ccv));
+  }
+  const cohorts = await loadCohorts([...new Set(candidates.map((c) => c.game_tracker_id))]);
+  if (cohorts.size === 0) {
+    logger.warn('[StreamHealth] no cohort baselines stored yet (run buildHealthCohorts); scoring with neutral baselines');
   }
 
   const eligibleIds = targetIds.filter((id) => targets.has(id));
@@ -622,7 +617,9 @@ export async function scoreSessions(sessionIds?: string[]): Promise<ScoreRunResu
  */
 async function fetchMinuteArrays(sessionIds: string[]): Promise<Map<string, MinutePoint[]>> {
   const result = await db.transaction(async (trx) => {
-    await trx.raw('SET LOCAL statement_timeout = 0');
+    // A chunk is at most CURVE_CHUNK sessions' own minutes (index scans);
+    // a minute is plenty, and a runaway must never sit on the database.
+    await trx.raw(`SET LOCAL statement_timeout = '60s'`);
     return trx.raw<{
       rows: Array<{ session_id: string; minute: Date; ccv: number; chatters: number | null }>;
     }>(

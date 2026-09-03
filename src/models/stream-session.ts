@@ -1,4 +1,6 @@
 import type { Knex } from 'knex';
+import logger from '../utils/logger';
+import { computeHealthFeatures } from '../services/stream-health-features';
 import db from '../utils/db';
 
 /**
@@ -434,6 +436,18 @@ export async function finalizeSessions(ids: string[], trx?: Knex.Transaction): P
     `,
     [ids],
   );
+  // The health scorer's per-session inputs, computed once here (same
+  // transaction, same per-minute scan family) instead of every hour. A
+  // failure here must never block closing the sessions: log and move on,
+  // the nightly pass and the backfill script fill any hole.
+  try {
+    await computeHealthFeatures(ids, trx);
+  } catch (err) {
+    logger.warn('[StreamSession] health features skipped for a finalize batch', {
+      sessions: ids.length,
+      error: (err as Error).message,
+    });
+  }
 }
 
 // ── Read paths (endpoints) ───────────────────────────────────────────────

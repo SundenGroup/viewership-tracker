@@ -26,7 +26,7 @@ import { GameTrackerService } from './services/game-tracker-service';
 import { ReportAgent } from './agent/report-agent';
 import { ViewershipWebSocketServer } from './api/websocket';
 import { getPushNotifier } from './services/push-notifier';
-import { scoreSessions, sessionIdsEndedWithin } from './services/stream-health';
+import { scoreSessions, nightlyHealthPass } from './services/stream-health';
 import { rollupRecentDays, rollupToday } from './services/gt-day-rollup';
 import { rollupRecentBuckets } from './services/gt-bucket-rollup';
 import { repairUnfinalizedSessions } from './models/stream-session';
@@ -226,11 +226,12 @@ async function bootstrap(): Promise<void> {
   await gameTrackerService.start();
   logger.info('[CVT] Game tracker service started');
 
-  // ── 10c. Stream health scorer (cron) ───────────────────────────────────
-  // Hourly at :10 scores sessions ended in the last 3 hours; the daily
-  // 04:15 UTC pass re-scores the last 7 days (idempotent) so late chat /
-  // follower data and shifting cohort baselines settle. HEALTH_SCORER=0
-  // is the kill switch.
+  // ── 10c. Stream health scorer (cron) ──────────────────────────────
+  // Hourly at :10: score every session that has features but no grade
+  // yet (light: the cohort table plus each target's own minutes). Nightly
+  // at 04:15 UTC: refresh yesterday's features, rebuild the cohort
+  // baselines, re-score the week. The nightly pass never runs while a
+  // broadcast day is live. HEALTH_SCORER=0 is the kill switch.
   const healthScorerTasks: ScheduledTask[] = [];
   if (process.env.HEALTH_SCORER === '0') {
     logger.info('[StreamHealth] scorer disabled via HEALTH_SCORER=0');
@@ -238,9 +239,7 @@ async function bootstrap(): Promise<void> {
     healthScorerTasks.push(
       cron.schedule('10 * * * *', async () => {
         try {
-          const ids = await sessionIdsEndedWithin(3);
-          if (ids.length === 0) return;
-          await scoreSessions(ids);
+          await scoreSessions();
         } catch (err) {
           logger.error('[StreamHealth] hourly scoring pass failed', {
             error: (err as Error).message,
@@ -251,11 +250,10 @@ async function bootstrap(): Promise<void> {
     healthScorerTasks.push(
       cron.schedule('15 4 * * *', async () => {
         try {
-          const ids = await sessionIdsEndedWithin(7 * 24);
-          if (ids.length === 0) return;
-          await scoreSessions(ids);
+          const r = await nightlyHealthPass();
+          logger.info('[StreamHealth] nightly pass', { ...r });
         } catch (err) {
-          logger.error('[StreamHealth] daily scoring pass failed', {
+          logger.error('[StreamHealth] nightly pass failed', {
             error: (err as Error).message,
           });
         }
