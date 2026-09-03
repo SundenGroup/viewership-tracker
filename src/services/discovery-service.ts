@@ -301,6 +301,8 @@ export class DiscoveryService {
     const normIdent = (identifier: string): string => identifier.toLowerCase().replace(/^@/, '');
 
     const trackedSet = new Set<string>();
+    const trackedIds = new Map<string, string>(); // lookupKey -> channel id
+    const refreshedThisCycle = new Set<string>();
     const offScheduleActive = new Map<string, string>(); // lookupKey -> channel id
     for (const ch of activeChannels) {
       const key = `${ch.platform}:${normIdent(ch.channel_identifier)}`;
@@ -308,6 +310,7 @@ export class DiscoveryService {
       const trackedToday = !tags || tags.length === 0 || tags.some((d) => liveDaySet.has(d));
       if (trackedToday || liveDaySet.size === 0) {
         trackedSet.add(key);
+        trackedIds.set(key, ch.id);
       } else {
         offScheduleActive.set(key, ch.id);
       }
@@ -399,9 +402,26 @@ export class DiscoveryService {
 
         const lookupKey = `${platform}:${normIdent(stream.channelIdentifier)}`;
 
-        // Already tracked?
+        // Already tracked? Still refresh the sighting: the Scout feed shows
+        // "last seen" and the live title, and an active channel that Scout
+        // never touched again read "15h ago" while it was live on stage.
         if (trackedSet.has(lookupKey)) {
           alreadyTracked++;
+          const trackedId = trackedIds.get(lookupKey);
+          if (trackedId && !refreshedThisCycle.has(trackedId)) {
+            refreshedThisCycle.add(trackedId);
+            const seenMeta: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
+            if (stream.title) seenMeta.stream_title = stream.title;
+            if (stream.concurrentViewers > 0) seenMeta.discovered_ccv = stream.concurrentViewers;
+            try {
+              await this.db('channels')
+                .where('id', trackedId)
+                .where('source', 'auto_discovered')
+                .update({ metadata: this.db.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [JSON.stringify(seenMeta)]) });
+            } catch (err) {
+              logger.warn(`[Discovery] Failed to refresh sighting for ${stream.channelIdentifier}`, { error: (err as Error).message });
+            }
+          }
           continue;
         }
 
