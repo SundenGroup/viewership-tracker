@@ -470,7 +470,10 @@ export function HeroKPIs({
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: variant === 'mobile' ? '1fr' : 'repeat(3, 1fr)',
+        // minmax(0, 1fr): a 1fr track never shrinks below its content's
+        // min width, so three cells of 72px numbers pushed past the right
+        // edge on phones and landscape tablets. Let them shrink and clip.
+        gridTemplateColumns: variant === 'mobile' ? 'minmax(0, 1fr)' : 'repeat(3, minmax(0, 1fr))',
         background: 'var(--bg-card)',
         border: '1px solid var(--border)',
         borderRadius: 'var(--r-lg)',
@@ -482,6 +485,7 @@ export function HeroKPIs({
         <div
           key={c.key}
           style={{
+            minWidth: 0,
             borderRight:
               variant !== 'mobile' && i < arr.length - 1 ? '1px solid var(--border)' : 'none',
             borderBottom:

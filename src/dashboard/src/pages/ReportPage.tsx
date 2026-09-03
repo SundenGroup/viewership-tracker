@@ -10,7 +10,7 @@
  * InteractiveMainChart with Public / Editor Desktop.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { usePollingApi } from '@/hooks/useApi';
 import type {
@@ -966,6 +966,10 @@ function DetailedReport({
   /** lang(lower) → baseline peak, present only when a comparison is active. */
   prevLanguagePeaks: Map<string, number> | null;
 }) {
+  const narrow = useIsNarrow(640);
+  const compact = useIsNarrow(900);
+  const [chartHostRef, chartHostWidth] = useMeasuredWidth();
+  const [barsHostRef, barsHostWidth] = useMeasuredWidth();
   const totalDayCount = useMemo(() => {
     if (scopeLevel === 'day') return 1;
     if (scopeLevel === 'stage') {
@@ -1241,7 +1245,7 @@ function DetailedReport({
       {/* HeroKPIs — 3-cell strip with micro visualizations (v6) */}
       <div style={{ marginBottom: 32 }}>
         <HeroKPIs
-          variant="xl"
+          variant={narrow ? 'mobile' : compact ? 'md' : 'xl'}
           peak={model.peakTotal}
           avg={model.avgTotal}
           hours={model.viewedHours}
@@ -1266,10 +1270,11 @@ function DetailedReport({
         title="Concurrent viewers · interactive"
         right={<Pill>{totalDayCount}-day span</Pill>}
       >
+        <div ref={chartHostRef}>
         {timeline.total.length > 0 ? (
           <InteractiveMainChart
-            height={280}
-            width={1040}
+            height={narrow ? 220 : 280}
+            width={chartHostWidth || 1040}
             series={{
               platform: timeline.platform,
               region: timeline.region,
@@ -1282,10 +1287,11 @@ function DetailedReport({
             dayBoundaries={dayBoundaries}
           />
         ) : (
-          <div className="placeholder" style={{ height: 280 }}>
+          <div className="placeholder" style={{ height: narrow ? 220 : 280 }}>
             {timeline.loading ? 'Loading…' : 'No time-series data'}
           </div>
         )}
+        </div>
       </Section>
 
       <div style={{ height: 24 }} />
@@ -1528,23 +1534,70 @@ function DetailedReport({
               <MetricToggle value={languageMetric} onChange={setLanguageMetric} />
             }
           >
-            <div style={{ height: 220 }}>
-              <VBarChart
-                width={540}
-                height={220}
-                items={[...languageStats]
-                  .sort((a, b) =>
-                    languageMetric === 'hours' ? b.hours - a.hours : b.peak - a.peak,
-                  )
-                  .slice(0, 8)
-                  .map((l, i) => ({
-                    label: l.label,
-                    value: languageMetric === 'hours' ? l.hours : l.peak,
-                    sub: '',
-                    color: palette[i % palette.length]!,
-                  }))}
-              />
-            </div>
+            {(() => {
+              const items = [...languageStats]
+                .sort((a, b) =>
+                  languageMetric === 'hours' ? b.hours - a.hours : b.peak - a.peak,
+                )
+                .slice(0, 8)
+                .map((l, i) => ({
+                  label: l.label,
+                  value: languageMetric === 'hours' ? l.hours : l.peak,
+                  sub: '',
+                  color: palette[i % palette.length]!,
+                }));
+              if (narrow) {
+                // Phones: horizontal rows, so full language names stay readable.
+                const max = Math.max(...items.map((it) => it.value), 1);
+                return (
+                  <Col gap={8}>
+                    {items.map((it) => (
+                      <Row key={it.label} gap={10}>
+                        <span
+                          style={{
+                            width: 96,
+                            fontSize: 12,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {it.label}
+                        </span>
+                        <div
+                          style={{
+                            flex: 1,
+                            height: 12,
+                            background: 'var(--bg-sunken)',
+                            borderRadius: 3,
+                            overflow: 'hidden',
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: (it.value / max) * 100 + '%',
+                              height: '100%',
+                              background: it.color,
+                            }}
+                          />
+                        </div>
+                        <span
+                          className="tabular"
+                          style={{ width: 56, textAlign: 'right', fontSize: 11, color: 'var(--fg-muted)' }}
+                        >
+                          {fmtCompact(it.value)}
+                        </span>
+                      </Row>
+                    ))}
+                  </Col>
+                );
+              }
+              return (
+                <div ref={barsHostRef} style={{ height: 220 }}>
+                  <VBarChart width={barsHostWidth || 540} height={220} items={items} />
+                </div>
+              );
+            })()}
           </Section>
         )}
       </div>
@@ -1565,7 +1618,9 @@ function DetailedReport({
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'minmax(120px, 1fr) 120px 80px 110px 120px',
+                  gridTemplateColumns: narrow
+                    ? 'minmax(0, 1fr) 96px 88px'
+                    : 'minmax(120px, 1fr) 120px 80px 110px 120px',
                   padding: '0 4px 6px',
                   fontSize: 10,
                   fontFamily: 'var(--font-mono)',
@@ -1577,9 +1632,9 @@ function DetailedReport({
               >
                 <div>Language</div>
                 <div style={{ textAlign: 'right' }}>Peak</div>
-                <div style={{ textAlign: 'right' }}>At</div>
-                <div style={{ textAlign: 'right' }}>Avg viewers</div>
-                <div style={{ textAlign: 'right' }}>Viewed hours</div>
+                {!narrow && <div style={{ textAlign: 'right' }}>At</div>}
+                {!narrow && <div style={{ textAlign: 'right' }}>Avg viewers</div>}
+                <div style={{ textAlign: 'right' }}>{narrow ? 'Hours' : 'Viewed hours'}</div>
               </div>
               {languagePeaks
                 .filter((l) => l.peakCCV > 0)
@@ -1595,7 +1650,9 @@ function DetailedReport({
                       key={l.language ?? '—'}
                       style={{
                         display: 'grid',
-                        gridTemplateColumns: 'minmax(120px, 1fr) 120px 80px 110px 120px',
+                        gridTemplateColumns: narrow
+                    ? 'minmax(0, 1fr) 96px 88px'
+                    : 'minmax(120px, 1fr) 120px 80px 110px 120px',
                         padding: '7px 4px',
                         borderBottom: '1px solid var(--border-faint)',
                         fontSize: 12.5,
@@ -1627,13 +1684,22 @@ function DetailedReport({
                             </span>
                           );
                         })()}
+                        {narrow && (
+                          <div style={{ fontSize: 10, fontWeight: 400, color: 'var(--fg-dim)' }}>
+                            at {peakTime}
+                          </div>
+                        )}
                       </div>
-                      <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
-                        {peakTime}
-                      </div>
-                      <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
-                        {fmtN(l.avgCCV)}
-                      </div>
+                      {!narrow && (
+                        <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+                          {peakTime}
+                        </div>
+                      )}
+                      {!narrow && (
+                        <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+                          {fmtN(l.avgCCV)}
+                        </div>
+                      )}
                       <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
                         {fmtN(l.viewedHours)}
                       </div>
@@ -1738,6 +1804,27 @@ function DetailedReport({
       </div>
     </div>
   );
+}
+
+/** Rendered width of a block, tracked through resizes and rotations (0 until measured).
+ *  The report charts draw into an SVG viewBox and stretch to 100% width, so
+ *  handing them the real width keeps their text at natural size on phones
+ *  instead of scaling a 1040px drawing down to 340px. */
+function useMeasuredWidth() {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      setWidth(Math.round(w));
+    });
+    ro.observe(el);
+    setWidth(Math.round(el.getBoundingClientRect().width));
+    return () => ro.disconnect();
+  }, []);
+  return [ref, width] as const;
 }
 
 // ── Detailed-report sortable leaderboard ───────────────────────────────────
