@@ -310,7 +310,7 @@ export function DiscoverChannelsTab({
             <option value="all">All</option>
             {langOptions.map((l) => (
               <option key={l} value={l}>
-                {l.toUpperCase()}
+                {languageFullName(l)}
               </option>
             ))}
             {lang !== 'all' && !langOptions.includes(lang) && (

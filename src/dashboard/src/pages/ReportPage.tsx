@@ -1151,7 +1151,7 @@ function DetailedReport({
         breakdown?.peakCCV ?? Number(breakdown?.peak_ccv ?? 0) ?? 0;
       const peak = timelinePeak > 0 ? timelinePeak : breakdownPeak;
       const hours = hoursByLang.get(key) ?? 0;
-      return { key, label: key.toUpperCase() || '—', peak, hours };
+      return { key, label: languageFullName(key), peak, hours };
     });
     const totalPeak = rows.reduce((a, r) => a + r.peak, 0);
     return rows

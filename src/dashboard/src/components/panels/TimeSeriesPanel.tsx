@@ -14,7 +14,7 @@ import {
 import { Card, LoadingOverlay } from '@/components/common';
 import { usePollingApi } from '@/hooks/useApi';
 import * as api from '@/services/api';
-import { formatCompact, platformColor, platformLabel } from '@/utils/formatters';
+import { formatCompact, platformColor, platformLabel, languageFullName } from '@/utils/formatters';
 import type { TimeSeriesBucket, GroupedTimeSeriesBucket, TimeSeriesGroupBy, ScopeLevel } from '@/types/api';
 
 interface TimeSeriesPanelProps {
@@ -519,7 +519,7 @@ function StackedLanguageChart({ data, keys, dayMarkers, tickFormatter }: { data:
         hidden={hidden}
         toggle={toggle}
         colorFn={(_key, i) => GROUP_COLORS[i % GROUP_COLORS.length]!}
-        labelFn={(key) => (key || 'Unknown').toUpperCase()}
+        labelFn={(key) => languageFullName(key || 'unknown')}
       />
       <ResponsiveContainer width="100%" height={320}>
         <AreaChart data={data} margin={{ top: 4, right: 10, left: 0, bottom: 0 }}>
