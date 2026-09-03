@@ -54,7 +54,7 @@ const PLATFORM_TONES: Record<string, 'red' | 'default'> = {
 };
 
 /** Column template — matches v4 spec. */
-const COLS = '1.4fr 90px 64px 64px 110px 90px 90px 100px 110px 130px';
+const COLS = '1.4fr 90px 64px 96px 110px 90px 90px 100px 110px 130px';
 
 export interface ChannelsSectionProps {
   seriesId: string;
@@ -317,12 +317,14 @@ export function ChannelsSection({
 
                 {/* Language */}
                 <div
-                  className="mono"
+                  title={languageFullName(c.language)}
                   style={{
-                    fontSize: 10.5,
+                    fontSize: 11.5,
                     color: c.language ? 'var(--fg-muted)' : 'var(--fg-dim)',
-                    letterSpacing: '0.08em',
-                    textTransform: 'uppercase',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    minWidth: 0,
                   }}
                 >
                   {languageFullName(c.language)}
