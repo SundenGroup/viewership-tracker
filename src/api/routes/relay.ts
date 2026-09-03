@@ -16,10 +16,9 @@ import db from '../../utils/db';
 import logger from '../../utils/logger';
 import { getPushNotifier } from '../../services/push-notifier';
 import * as TikTokDiscoveredModel from '../../models/tiktok-discovered-stream';
-import { TikTokIngestGuard } from '../../services/tiktok-ingest-guard';
+import { ingestTikTokReadings, type TikTokReading } from '../../services/tiktok-ingest';
 
 /** One guard for the process — state must persist across pushes. */
-const tiktokGuard = new TikTokIngestGuard();
 
 const router = Router();
 
@@ -141,7 +140,7 @@ const relayStats: Record<'twitch' | 'tiktok', RelayPlatformStats> = {
   tiktok: { lastPushAt: null, lastMatched: 0, lastWritten: 0, lastSuspected: 0, totalPushes: 0 },
 };
 
-function recordRelayPush(
+export function recordRelayPush(
   platform: 'twitch' | 'tiktok',
   matched: number,
   written: number,
@@ -183,171 +182,35 @@ relayHealthRouter.get('/', (_req: Request, res: Response) => {
  */
 router.post('/tiktok', requireRelayToken, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { channels } = req.body;
+    const { channels, source } = req.body as { channels?: unknown; source?: unknown };
     if (!Array.isArray(channels) || channels.length === 0) {
       res.status(400).json({ error: 'channels array required' });
       return;
     }
-
-    // Snap to the most recent bulk poll timestamp (within the last 2 minutes)
-    // so relay data joins the same time bucket as the main poll cycle.
-    const recentBulk = await db('viewership_snapshots')
-      .where('timestamp', '>', db.raw("NOW() - INTERVAL '2 minutes'"))
-      .groupBy('timestamp')
-      .having(db.raw('COUNT(*) > 1'))
-      .orderBy('timestamp', 'desc')
-      .limit(1)
-      .select('timestamp')
-      .first();
-
-    const timestamp = recentBulk ? new Date(recentBulk.timestamp) : new Date();
-    const insertRows: Record<string, unknown>[] = [];
-    let matched = 0;
-
-    // Find all active TikTok channels across all series
-    const dbChannels = await db('channels')
-      .where('platform', 'tiktok')
-      .where('is_active', true)
-      .select('id', 'series_id', 'channel_identifier', 'language', 'region');
-
-    // Build lookup map
-    const channelMap = new Map<string, typeof dbChannels>();
-    for (const ch of dbChannels) {
-      const key = ch.channel_identifier.toLowerCase().replace(/^@/, '');
-      const list = channelMap.get(key) ?? [];
-      list.push(ch);
-      channelMap.set(key, list);
+    // Shared ingest (validation, plunge guard, stale-source rule, source-
+    // ranked merge) — the server-side page tracker uses the same path.
+    const r = await ingestTikTokReadings(channels as TikTokReading[], typeof source === 'string' ? source : 'unknown');
+    if (r.invalid > 0) logger.warn(`[Relay] TikTok: ${r.invalid} entr${r.invalid === 1 ? 'y' : 'ies'} with invalid viewer values skipped`);
+    if (r.deferred > 0 || r.released > 0) {
+      logger.info(`[Relay] TikTok guard: ${r.deferred} plunge(s) held, ${r.released} released as real`);
     }
-
-    // Find active broadcast days per series
-    const seriesIds = [...new Set(dbChannels.map((c) => c.series_id))];
-    const activeDays = await db('broadcast_days')
-      .whereIn('series_id', seriesIds)
-      .where('status', 'live')
-      .select('id', 'series_id', 'stage_id');
-
-    const seriesToDays = new Map<string, typeof activeDays>();
-    for (const day of activeDays) {
-      const list = seriesToDays.get(day.series_id) ?? [];
-      list.push(day);
-      seriesToDays.set(day.series_id, list);
-    }
-
-    // Build channel-to-day assignments
-    const channelIds = dbChannels.map((c) => c.id);
-    const channelDayAssignments = channelIds.length > 0
-      ? await db('channel_broadcast_days').whereIn('channel_id', channelIds).select('channel_id', 'broadcast_day_id')
-      : [];
-    const channelDayMap = new Map<string, Set<string>>();
-    for (const a of channelDayAssignments) {
-      const set = channelDayMap.get(a.channel_id) ?? new Set();
-      set.add(a.broadcast_day_id);
-      channelDayMap.set(a.channel_id, set);
-    }
-
-    let deferred = 0;
-    let released = 0;
-    const buildRows = (key: string, viewers: number, title: string | null, ts: Date) => {
-      const matches = channelMap.get(key);
-      if (!matches) return false;
-      for (const ch of matches) {
-        const days = seriesToDays.get(ch.series_id) ?? [];
-        const assignedDays = channelDayMap.get(ch.id);
-        for (const day of days) {
-          if (assignedDays && assignedDays.size > 0 && !assignedDays.has(day.id)) continue;
-          insertRows.push({
-            channel_id: ch.id,
-            broadcast_day_id: day.id,
-            stage_id: day.stage_id,
-            series_id: day.series_id,
-            timestamp: ts,
-            concurrent_viewers: viewers,
-            platform: 'tiktok',
-            language: ch.language,
-            region: ch.region,
-            stream_id: null,
-            stream_title: title,
-          });
-        }
-        matched++;
-      }
-      return true;
-    };
-
-    let invalid = 0;
-    for (const input of channels) {
-      const key = (input.identifier || '').toLowerCase().replace(/^@/, '');
-      if (!channelMap.has(key)) continue;
-
-      // Validate before anything touches the DB: a non-numeric / negative /
-      // implausible value must not fail the whole batch (which would lose
-      // every channel in this push).
-      const viewers = normalizeRelayViewers(input.viewers);
-      if (viewers === null) { invalid++; continue; }
-
-      // Ingest guard: a sudden plunge (stale relay re-emit / disconnect
-      // zero) is held one cycle for a second opinion — see the guard's
-      // header for the exact semantics.
-      const verdict = tiktokGuard.assess(key, viewers, timestamp);
-      if (verdict.action === 'defer') {
-        deferred++;
-        continue;
-      }
-      if (verdict.release) {
-        // Confirmed real decline: backfill the held reading at its
-        // original timestamp so the record has no hole.
-        buildRows(key, verdict.release.viewers, input.title ?? null, verdict.release.timestamp);
-        released++;
-      }
-      buildRows(key, viewers, input.title ?? null, timestamp);
-    }
-    if (invalid > 0) logger.warn(`[Relay] TikTok: ${invalid} entr${invalid === 1 ? 'y' : 'ies'} with invalid viewer values skipped`);
-    if (deferred > 0 || released > 0) {
-      logger.info(`[Relay] TikTok guard: ${deferred} plunge(s) held, ${released} released as real`);
-    }
-
-    // Insert or update snapshots — one per channel per minute.
-    // If a row already exists for this minute, update it ONLY if the new value is higher.
-    // This allows multiple TikTok relays (scraper + WS tracker) to both contribute,
-    // with the highest viewer count winning.
-    let snapshotsInserted = 0;
-    let snapshotsUpdated = 0;
-    if (insertRows.length > 0) {
-      for (const row of insertRows) {
-        const existsInMinute = await db('viewership_snapshots')
-          .where('channel_id', row.channel_id as string)
-          .whereRaw("date_trunc('minute', \"timestamp\") = date_trunc('minute', ?::timestamptz)", [
-            (row.timestamp as Date).toISOString(),
-          ])
-          .where('platform', 'tiktok')
-          .first();
-        if (!existsInMinute) {
-          await db('viewership_snapshots').insert(row);
-          snapshotsInserted++;
-        } else if ((row.concurrent_viewers as number) > existsInMinute.concurrent_viewers) {
-          // New value is higher — update existing row
-          await db('viewership_snapshots')
-            .where('id', existsInMinute.id)
-            .update({ concurrent_viewers: row.concurrent_viewers });
-          snapshotsUpdated++;
-        }
-      }
-    }
-
-    logger.info(`[Relay] TikTok: ${matched} matched, ${snapshotsInserted} inserted, ${snapshotsUpdated} updated (higher)`);
-    recordRelayPush('tiktok', matched, snapshotsInserted + snapshotsUpdated);
+    logger.info(
+      `[Relay] TikTok: ${r.matched} matched, ${r.snapshotsInserted} inserted, ${r.snapshotsUpdated} updated` +
+        (r.stale > 0 ? `, ${r.stale} stale ignored` : '') +
+        ` (source ${typeof source === 'string' ? source : 'untagged'})`,
+    );
+    recordRelayPush('tiktok', r.matched, r.snapshotsInserted + r.snapshotsUpdated);
 
     // Trigger WebSocket broadcast so dashboard gets updated TikTok numbers
-    if ((snapshotsInserted > 0 || snapshotsUpdated > 0) && relayBroadcast) {
-      const affectedSeriesIds = [...new Set(insertRows.map((r) => r.series_id as string))];
+    if ((r.snapshotsInserted > 0 || r.snapshotsUpdated > 0) && relayBroadcast) {
       try {
-        relayBroadcast(affectedSeriesIds);
+        relayBroadcast(r.affectedSeriesIds);
       } catch (err) {
         logger.debug('[Relay] TikTok broadcast callback failed', { error: (err as Error).message });
       }
     }
 
-    res.json({ matched, snapshotsInserted, snapshotsUpdated });
+    res.json({ matched: r.matched, snapshotsInserted: r.snapshotsInserted, snapshotsUpdated: r.snapshotsUpdated });
   } catch (err) {
     next(err);
   }

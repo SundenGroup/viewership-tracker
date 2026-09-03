@@ -15,6 +15,7 @@
  */
 
 import cron, { type ScheduledTask } from 'node-cron';
+import { startTikTokServerTracker, setTikTokServerBroadcast } from './services/tiktok-server-tracker';
 import { config } from './utils/config';
 import logger from './utils/logger';
 import db from './utils/db';
@@ -201,6 +202,16 @@ async function bootstrap(): Promise<void> {
         .catch((err: Error) => logger.debug('[Relay] TikTok WS broadcast failed', { error: err.message }));
     }
   });
+
+  // Server-side TikTok page tracker (direct fetch, residential proxy as
+  // fallback); readings join the same ingest and broadcast as relay pushes.
+  setTikTokServerBroadcast((seriesIds) => {
+    for (const seriesId of seriesIds) {
+      wsServer.broadcastSnapshotUpdate({ timestamp: new Date() } as PollCycleResult, [seriesId])
+        .catch((err: Error) => logger.debug('[TikTokServer] WS broadcast failed', { error: err.message }));
+    }
+  });
+  startTikTokServerTracker();
 
   // ── 8. Start Express API server ────────────────────────────────────────
   const app = createApp();
