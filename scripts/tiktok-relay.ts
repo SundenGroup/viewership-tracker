@@ -116,6 +116,7 @@ async function pushToServer(results: ChannelResult[]): Promise<void> {
       viewers: r.viewers,
       title: r.title,
       displayName: r.displayName,
+      source: 'page-scrape',
     })),
   };
 

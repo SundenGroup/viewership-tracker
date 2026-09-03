@@ -193,6 +193,8 @@ export class TikTokWSInterceptClient {
     cdpSession: CDPSession | null;
     nodeWs: import('ws').WebSocket | null;
     viewers: number;
+    /** Consecutive DOM-fallback reads that returned the same value (stale-page detector). */
+    sameReads?: number;
     isLive: boolean;
     lastUpdate: number;
   }>();
@@ -383,15 +385,35 @@ export class TikTokWSInterceptClient {
 
   /**
    * Refresh viewer count — re-read DOM for channels without active WebSocket.
+   *
+   * The DOM fallback reads the userCount baked into the page's initial
+   * JSON. Without the live WebSocket that JSON never changes, so a page
+   * loaded once reports the same number forever (GeoGuessr WC 2026:
+   * "1" for a whole day, then a flat 728 for hours). Reload the live page
+   * before every fallback read so the number is the count at read time.
    */
   async refreshViewerCounts(): Promise<void> {
     for (const [username, channel] of this.channels) {
       // If we have an active Node.js WebSocket, viewer count updates automatically
       if (channel.nodeWs) continue;
 
-      // Otherwise try to read from DOM
+      // Otherwise reload the live page and read the fresh DOM
       if (channel.cdpSession) {
+        try {
+          await channel.cdpSession.send('Page.navigate', { url: `https://www.tiktok.com/@${username}/live` });
+          await sleep(5000);
+        } catch (err) {
+          console.log(`[TikTokWS] reload failed for ${username}: ${(err as Error).message}`);
+        }
+        const before = channel.viewers;
         await this.readDOMViewerCount(username, channel.cdpSession);
+        channel.sameReads = channel.viewers === before ? (channel.sameReads ?? 0) + 1 : 0;
+        if ((channel.sameReads ?? 0) >= 5) {
+          console.log(`[TikTokWS] ${username}: DOM fallback returned ${channel.viewers} five times in a row; treating as stale (not live)`);
+          channel.isLive = false;
+          channel.viewers = 0;
+          channel.sameReads = 0;
+        }
       }
     }
   }

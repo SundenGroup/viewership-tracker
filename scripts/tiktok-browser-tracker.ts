@@ -77,13 +77,14 @@ async function fetchChannelList(): Promise<Array<{ channel_identifier: string; d
 
 // ── Push results to server ────────────────────────────────────────────────
 
-async function pushToServer(results: Array<{ identifier: string; viewers: number; displayName: string }>): Promise<void> {
+async function pushToServer(results: Array<{ identifier: string; viewers: number; displayName: string; source?: string }>): Promise<void> {
   const payload = {
     channels: results.map((r) => ({
       identifier: r.identifier,
       viewers: r.viewers,
       title: null,
       displayName: r.displayName,
+      source: r.source,
     })),
   };
 
@@ -173,7 +174,7 @@ async function main() {
     await client.refreshViewerCounts();
 
     const states = client.getChannelStates();
-    const results: Array<{ identifier: string; viewers: number; displayName: string }> = [];
+    const results: Array<{ identifier: string; viewers: number; displayName: string; source: string }> = [];
 
     for (const ch of states) {
       if (ch.isLive && ch.viewers > 0) {
@@ -181,6 +182,7 @@ async function main() {
           identifier: `@${ch.username}`,
           viewers: ch.viewers,
           displayName: ch.displayName,
+          source: ch.wsConnected ? 'browser-ws' : 'browser-dom',
         });
       }
     }
