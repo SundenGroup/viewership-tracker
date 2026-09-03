@@ -936,12 +936,20 @@ export class YouTubeAdapter implements PlatformAdapter {
   private async scrapeLiveData(channelId: string): Promise<ScrapedLiveData | null> {
     try {
       const url = `https://www.youtube.com/channel/${channelId}/live`;
-      const { data: html } = await this.scraper.get<string>(url, {
+      const { data: html, status } = await this.scraper.get<string>(url, {
         responseType: 'text',
         validateStatus: (s) => s < 500,
       });
 
       if (typeof html !== 'string') return null;
+      // A throttle / error / challenge page is not a channel page. Treat it
+      // as a failed fetch, never as "offline" (2026-09-03: two such bursts
+      // wrote zeros for fourteen live channels during the GeoGuessr WC).
+      if (status !== 200 || (!html.includes('ytInitialData') && !html.includes('ytInitialPlayerResponse'))) {
+        this.scrapeFailures.add(channelId);
+        logger.warn(`YouTube scrape: ${channelId} returned status ${status} without channel data; treating as fetch failure`);
+        return null;
+      }
 
       // ── Step 1: Detect if the channel is live ──────────────────────────
 
@@ -1123,6 +1131,7 @@ export class YouTubeAdapter implements PlatformAdapter {
       };
     } catch (err) {
       const errMsg = (err as Error).message;
+      this.scrapeFailures.add(channelId);
       if (errMsg.includes('timeout') || errMsg.includes('ECONNRESET')) {
         logger.debug(`YouTube scrape: ${channelId} timed out or connection reset`);
       } else {
@@ -1206,6 +1215,7 @@ export class YouTubeAdapter implements PlatformAdapter {
   ): Promise<Map<string, ScrapedLiveData>> {
     const results = new Map<string, ScrapedLiveData>();
     const toScrape: string[] = [];
+    this.scrapeFailures.clear();
 
     // Channels with cached video IDs still need scraping for viewer counts
     // (cache only stores videoId, not the full data), but we can skip known-offline channels
@@ -1240,7 +1250,10 @@ export class YouTubeAdapter implements PlatformAdapter {
       }
     }
 
-    logger.info(`YouTube scrape results: ${results.size} live out of ${channelIds.length} channels`);
+    logger.info(
+      `YouTube scrape results: ${results.size} live out of ${channelIds.length} channels` +
+        (this.scrapeFailures.size > 0 ? ` (${this.scrapeFailures.size} fetch failure(s), no rows written for those)` : ''),
+    );
     return results;
   }
 
@@ -1284,6 +1297,8 @@ export class YouTubeAdapter implements PlatformAdapter {
    * reads it to tell "these streams ended" from "we could not look".
    */
   public lastVideoDetailsDegraded = false;
+  /** Channel ids whose /live page fetch failed in the current scrape pass (not confirmed offline). */
+  private scrapeFailures = new Set<string>();
 
   private async getVideoDetails(videoIds: string[]): Promise<YouTubeVideoItem[]> {
     if (videoIds.length === 0) return [];
@@ -1719,7 +1734,8 @@ export class YouTubeAdapter implements PlatformAdapter {
       const scraped = scrapedData.get(resolvedId);
 
       if (!scraped) {
-        // Channel is not live
+        // Not in the scrape results: either confirmed offline, or the fetch
+        // itself failed. Only the former is a zero.
         results.push({
           channelIdentifier: originalId,
           displayName: originalId,
@@ -1729,6 +1745,7 @@ export class YouTubeAdapter implements PlatformAdapter {
           gameName: null,
           title: null,
           startedAt: null,
+          ...(this.scrapeFailures.has(resolvedId) ? { fetchFailed: true } : {}),
         });
         continue;
       }

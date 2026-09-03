@@ -911,6 +911,7 @@ export class PollingOrchestrator {
 
     const insertRows: SnapshotInsertRow[] = [];
     let totalCCV = 0;
+    let fetchFailed = 0;
 
     for (const channel of channelList) {
       // Skip channels handled by relay (they write their own snapshots)
@@ -947,6 +948,12 @@ export class PollingOrchestrator {
       const assignedDays = channelDayMap.get(channel.id);
 
       for (const snap of channelSnapshots) {
+        // The adapter could not fetch this channel (timeout, throttle page):
+        // unknown is not zero, so write nothing and let the gap show.
+        if (snap.fetchFailed) {
+          fetchFailed++;
+          continue;
+        }
         const viewers = snap.concurrentViewers ?? 0;
 
         // Anomaly check — drop a sample where CCV crashed >90 % (cliff)
@@ -1017,7 +1024,8 @@ export class PollingOrchestrator {
     const duration = Date.now() - startTime;
 
     logger.info(
-      `[Poll] Cycle complete: ${channelList.length} channels, ${totalCCV} total CCV, ${snapshotsCreated} snapshots, ${duration}ms`,
+      `[Poll] Cycle complete: ${channelList.length} channels, ${totalCCV} total CCV, ${snapshotsCreated} snapshots, ${duration}ms` +
+        (fetchFailed > 0 ? ` (${fetchFailed} fetch failure(s), no rows written)` : ''),
     );
 
     const result: PollCycleResult = {

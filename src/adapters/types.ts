@@ -12,6 +12,12 @@ export interface ChannelSnapshot {
   /** Populated by AdapterRegistry.getViewerCountsMultiPlatform to identify source platform */
   platform?: string;
   /**
+   * True when the adapter could not fetch this channel at all (timeout,
+   * throttling, error page) as opposed to confirming it offline. The
+   * orchestrator writes no row for it: a failed fetch is unknown, not zero.
+   */
+  fetchFailed?: boolean;
+  /**
    * True when the adapter positively confirmed this stream belongs to the
    * channel it is reported under (videos.list owner, or the channel-scoped
    * API path). Multi-stream child rows are only ever created from these.
