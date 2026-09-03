@@ -283,6 +283,34 @@ export class DiscoveryService {
       .where('is_active', true)
       .select('id', 'platform', 'channel_identifier');
 
+    // Sightings from the tracker's own polls: discovery only lists the
+    // configured category, so an active Scout channel streaming the event
+    // under another category (or off the search) still read "15h ago" in the
+    // Scout feed while it was live. The orchestrator polls every active
+    // channel by handle, so take the freshest live snapshot of each
+    // auto-discovered channel as its latest sighting.
+    try {
+      await this.db.raw(
+        `UPDATE channels c
+            SET metadata = COALESCE(c.metadata, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
+                  'last_seen_at', to_char(s.ts AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+                  'stream_title', s.title,
+                  'discovered_ccv', s.ccv))
+           FROM (
+             SELECT DISTINCT ON (v.channel_id) v.channel_id, v.timestamp AS ts, v.stream_title AS title, v.concurrent_viewers AS ccv
+               FROM viewership_snapshots v
+               JOIN channels ch ON ch.id = v.channel_id
+              WHERE ch.series_id = ? AND ch.is_active = true AND ch.source = 'auto_discovered'
+                AND v.timestamp > now() - interval '3 minutes' AND v.concurrent_viewers > 0
+              ORDER BY v.channel_id, v.timestamp DESC
+           ) s
+          WHERE c.id = s.channel_id`,
+        [seriesId],
+      );
+    } catch (err) {
+      logger.warn('[Discovery] Failed to refresh sightings from polls', { error: (err as Error).message });
+    }
+
     const activeTagRows = activeChannels.length
       ? await this.db('channel_broadcast_days')
           .whereIn('channel_id', activeChannels.map((c) => c.id))
