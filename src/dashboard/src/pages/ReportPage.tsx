@@ -10,7 +10,7 @@
  * InteractiveMainChart with Public / Editor Desktop.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { usePollingApi } from '@/hooks/useApi';
 import type {
@@ -1546,10 +1546,13 @@ function DetailedReport({
                   sub: '',
                   color: palette[i % palette.length]!,
                 }));
-              if (narrow) {
-                // Phones: horizontal rows, so full language names stay readable.
+              // Rows whenever the column is too narrow for eight labelled bars
+              // (phones, and landscape phones where the two sections sit side by side).
+              if (narrow || (barsHostWidth > 0 && barsHostWidth < 480)) {
+                // Horizontal rows keep the full language names readable.
                 const max = Math.max(...items.map((it) => it.value), 1);
                 return (
+                  <div ref={barsHostRef}>
                   <Col gap={8}>
                     {items.map((it) => (
                       <Row key={it.label} gap={10}>
@@ -1590,6 +1593,7 @@ function DetailedReport({
                       </Row>
                     ))}
                   </Col>
+                  </div>
                 );
               }
               return (
@@ -1811,19 +1815,22 @@ function DetailedReport({
  *  handing them the real width keeps their text at natural size on phones
  *  instead of scaling a 1040px drawing down to 340px. */
 function useMeasuredWidth() {
-  const ref = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
-  useEffect(() => {
-    const el = ref.current;
+  const observer = useRef<ResizeObserver | null>(null);
+  // Callback ref: the measured block often mounts after the data arrives,
+  // long after this hook's first effect, so observe on attach instead.
+  const ref = useCallback((el: HTMLDivElement | null) => {
+    observer.current?.disconnect();
+    observer.current = null;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? 0;
-      setWidth(Math.round(w));
+      setWidth(Math.round(entries[0]?.contentRect.width ?? 0));
     });
     ro.observe(el);
+    observer.current = ro;
     setWidth(Math.round(el.getBoundingClientRect().width));
-    return () => ro.disconnect();
   }, []);
+  useEffect(() => () => observer.current?.disconnect(), []);
   return [ref, width] as const;
 }
 
