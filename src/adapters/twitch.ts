@@ -81,6 +81,8 @@ interface TwitchPaginatedResponse<T> {
 }
 
 interface GqlStreamResponse {
+  /** Per-operation errors ("service unavailable", "service timeout"); data.user is null when set. */
+  errors?: Array<{ message?: string }>;
   data: {
     user: {
       login: string;
@@ -231,6 +233,14 @@ export class TwitchAdapter implements PlatformAdapter {
   private async getViewerCountsViaGQL(channelNames: string[]): Promise<ChannelSnapshot[]> {
     const batches = chunk(channelNames, GQL_BATCH_SIZE);
     const results: ChannelSnapshot[] = [];
+    // Channels whose GQL operation came back with an error instead of data.
+    // Twitch answers "service unavailable" / "service timeout" per operation
+    // while the HTTP call itself succeeds (2026-09-05, 18:00Z: ten live WC
+    // channels, every other cycle). That is unknown, not offline: they are
+    // re-fetched via Helix below, and if that fails too they are marked
+    // fetchFailed so the orchestrator writes no row.
+    const gqlFailed: string[] = [];
+    let sampleError = '';
 
     for (const batch of batches) {
       // Build a batched GQL request: one query per channel in a single POST
@@ -256,7 +266,12 @@ export class TwitchAdapter implements PlatformAdapter {
       for (let i = 0; i < batch.length; i++) {
         const name = batch[i];
         const resp = responses[i];
-        const user = resp?.data?.user;
+        if (!resp || !resp.data || (resp.errors && resp.errors.length > 0)) {
+          gqlFailed.push(name);
+          if (!sampleError) sampleError = resp?.errors?.[0]?.message ?? 'empty response';
+          continue;
+        }
+        const user = resp.data.user;
         const stream = user?.stream;
 
         if (user && stream) {
@@ -285,8 +300,37 @@ export class TwitchAdapter implements PlatformAdapter {
       }
     }
 
+    if (gqlFailed.length > 0) {
+      logger.warn(
+        `Twitch GQL: ${gqlFailed.length}/${channelNames.length} channel(s) returned errors ("${sampleError}"); fetching them via Helix`,
+      );
+      try {
+        results.push(...(await this.getViewerCountsViaHelix(gqlFailed)));
+      } catch (err) {
+        logger.warn(`Twitch Helix fallback failed for ${gqlFailed.length} channel(s); no rows written for them`, {
+          error: (err as Error).message,
+        });
+        for (const name of gqlFailed) results.push(TwitchAdapter.unknownSnapshot(name));
+      }
+    }
+
     logger.debug(`Twitch GQL getViewerCounts: ${results.filter(r => r.isLive).length}/${channelNames.length} live`);
     return results;
+  }
+
+  /** A channel we could not fetch: not live, not offline, and never a row. */
+  private static unknownSnapshot(name: string): ChannelSnapshot {
+    return {
+      channelIdentifier: name,
+      displayName: name,
+      concurrentViewers: 0,
+      isLive: false,
+      language: null,
+      gameName: null,
+      title: null,
+      startedAt: null,
+      fetchFailed: true,
+    };
   }
 
   // ── Helix: Official API (stepped ~3-5 min viewer counts) ────────────
@@ -310,11 +354,15 @@ export class TwitchAdapter implements PlatformAdapter {
         return data.data;
       }, 'getViewerCounts');
 
+      if (liveStreams === null) {
+        // Request failed after retries: unknown, not offline. No zero rows.
+        logger.warn(`Twitch Helix: streams request failed for ${batch.length} channel(s); no rows written for them`);
+        for (const name of batch) results.push(TwitchAdapter.unknownSnapshot(name));
+        continue;
+      }
       const liveMap = new Map<string, TwitchStreamData>();
-      if (liveStreams) {
-        for (const stream of liveStreams) {
-          liveMap.set(stream.user_login.toLowerCase(), stream);
-        }
+      for (const stream of liveStreams) {
+        liveMap.set(stream.user_login.toLowerCase(), stream);
       }
 
       for (const name of batch) {
