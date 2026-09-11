@@ -429,7 +429,7 @@ router.get('/:shortName/timeseries', timeseriesCache, async (req: Request, res: 
          FROM (
            SELECT
              date_trunc('minute', ${vsPrefix}"timestamp")
-               + (EXTRACT(epoch FROM ${vsPrefix}"timestamp" - date_trunc('minute', ${vsPrefix}"timestamp"))::int / :interval * :interval)
+               + (floor(EXTRACT(epoch FROM ${vsPrefix}"timestamp" - date_trunc('minute', ${vsPrefix}"timestamp")))::int / :interval * :interval)
                * interval '1 second' AS bucket,
              ${vsPrefix}channel_id,
              ${groupExpr} AS group_key,
