@@ -165,7 +165,7 @@ router.get('/discovery/status', requireRole('admin', 'editor'), (_req: Request, 
   }
 });
 
-// POST /api/polling/discovery/trigger/:seriesId — Manually trigger one discovery cycle (admin only)
+// POST /api/polling/discovery/trigger/:seriesId — Manually trigger one discovery cycle (admin or editor)
 // Fire-and-forget: a full cycle can run well past 30s, which mobile
 // clients surface as "Load failed" — respond immediately and let the
 // cycle finish in the background (progress lands in discovery status).
@@ -185,7 +185,7 @@ router.post('/discovery/trigger/:seriesId', requireRole('admin', 'editor'), (req
   }
 });
 
-// POST /api/polling/discovery/start/:seriesId — Start discovery for a series (admin only)
+// POST /api/polling/discovery/start/:seriesId — Start discovery for a series (admin or editor)
 router.post('/discovery/start/:seriesId', requireRole('admin', 'editor'), (_req: Request, res: Response, next: NextFunction) => {
   try {
     const svc = ensureDiscovery(res);
@@ -200,7 +200,7 @@ router.post('/discovery/start/:seriesId', requireRole('admin', 'editor'), (_req:
   }
 });
 
-// POST /api/polling/discovery/stop/:seriesId — Stop discovery for a series (admin only)
+// POST /api/polling/discovery/stop/:seriesId — Stop discovery for a series (admin or editor)
 router.post('/discovery/stop/:seriesId', requireRole('admin', 'editor'), (_req: Request, res: Response, next: NextFunction) => {
   try {
     const svc = ensureDiscovery(res);
