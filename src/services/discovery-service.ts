@@ -887,8 +887,13 @@ export class DiscoveryService {
   /**
    * Purge unapproved auto-discovered channels for a series.
    * Only deletes channels with source='auto_discovered' AND is_active=false
-   * that have NO viewership snapshots (i.e. truly pending/unapproved).
-   * Channels with historical data (blocked after collecting data) are preserved.
+   * AND tier='community' (never approved by a human) that have NO
+   * viewership snapshots (i.e. truly pending/unapproved). Approved rows
+   * keep any other tier, including a roster carried over from a previous
+   * series so Scout can auto-reactivate it; they are preserved, as are
+   * channels with historical data (blocked after collecting data).
+   * 2026-09-11: the tier-blind version wiped 32 carried-over PAS1 approvals
+   * the moment PAS2's first live day started.
    */
   async purgeDiscoveredChannels(seriesId: string): Promise<number> {
     // Find channels that have viewership data — these must be preserved
@@ -904,6 +909,7 @@ export class DiscoveryService {
       .where('series_id', seriesId)
       .where('source', 'auto_discovered')
       .where('is_active', false)
+      .where('tier', 'community')
       .select('id');
 
     // Only purge channels that have NO historical data
