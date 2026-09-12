@@ -211,6 +211,19 @@ router.put('/:id', requireRole('admin', 'editor'), async (req: Request, res: Res
       }
     }
 
+    // "Auto-start Scout" switched on while a day is already live: start now
+    // rather than waiting for the next day to go live.
+    if (!existing.auto_start_discovery && updated.auto_start_discovery) {
+      const svc = getDiscoveryService();
+      if (svc && !svc.isRunning(id)) {
+        const liveDays = await BroadcastDayModel.findAll({ series_id: id, status: 'live' });
+        if (liveDays.length > 0) {
+          await svc.startDiscovery(id);
+          logger.info(`[Series] Auto-started Scout for ${id}: auto_start_discovery switched on with a live day`);
+        }
+      }
+    }
+
     res.json(updated);
   } catch (err) {
     next(err);

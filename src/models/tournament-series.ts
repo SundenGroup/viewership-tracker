@@ -11,6 +11,8 @@ export interface TournamentSeries {
   status: TournamentStatus;
   timezone: string;
   auto_start_polling: boolean;
+  /** Start Scout automatically when one of this series' broadcast days goes live. */
+  auto_start_discovery: boolean;
   start_date: string | null;
   end_date: string | null;
   discovery_keywords: string[];
@@ -31,6 +33,7 @@ export interface CreateTournamentSeries {
   status?: TournamentStatus;
   timezone?: string;
   auto_start_polling?: boolean;
+  auto_start_discovery?: boolean;
   start_date?: string;
   end_date?: string;
   discovery_keywords?: string[];

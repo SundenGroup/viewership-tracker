@@ -333,8 +333,6 @@ export class PollingOrchestrator {
           }
         }
 
-        // Discovery is user-initiated only — no auto-start here
-
         // Auto-purge unapproved discovery feed for affected series (fresh slate for new broadcast day)
         if (this.discoveryService) {
           const affectedSeriesIds = [...new Set(goingLive.map((d) => d.series_id))];
@@ -346,6 +344,27 @@ export class PollingOrchestrator {
               }
             } catch (err) {
               logger.warn(`[Poll] Failed to auto-purge discovery feed for series ${sid}`, {
+                error: (err as Error).message,
+              });
+            }
+          }
+
+          // Scout starts by itself for series that opted in (series settings:
+          // "Auto-start Scout"). Everything else still needs the Start button.
+          // Runs after the purge so the feed is clean when the first cycle
+          // fires; startDiscovery also persists the resume flag, so a restart
+          // mid-broadcast brings it back.
+          const optedIn = await this.db('tournament_series')
+            .whereIn('id', affectedSeriesIds)
+            .where('auto_start_discovery', true)
+            .select('id', 'name');
+          for (const s of optedIn as Array<{ id: string; name: string }>) {
+            if (this.discoveryService.isRunning(s.id)) continue;
+            try {
+              await this.discoveryService.startDiscovery(s.id);
+              logger.info(`[Poll] Auto-started Scout for "${s.name}" (auto_start_discovery, day went live)`);
+            } catch (err) {
+              logger.error(`[Poll] Failed to auto-start Scout for series ${s.id}`, {
                 error: (err as Error).message,
               });
             }
