@@ -118,15 +118,22 @@ export class SteamAdapter implements PlatformAdapter {
             title: broadcastData.title,
             startedAt: null,
           });
-        } else {
+        } else if (broadcastData) {
+          // The endpoint answered and said "not broadcasting": a real zero.
           results.push(this.offlineSnapshot(original, displayName));
+        } else {
+          // Every strategy failed to get an answer: unknown, not offline.
+          // fetchFailed makes the orchestrator write no row (2026-09-13: an
+          // 8-minute DNS outage wrote zeros for both Steam feeds).
+          logger.warn('[Steam] No strategy could fetch broadcast data; no row written', { steamId: steam64 });
+          results.push({ ...this.offlineSnapshot(original, displayName), fetchFailed: true });
         }
       } catch (err) {
-        logger.warn('[Steam] Error fetching broadcast data', {
+        logger.warn('[Steam] Error fetching broadcast data; no row written', {
           steamId: steam64,
           error: (err as Error).message,
         });
-        results.push(this.offlineSnapshot(original, displayName));
+        results.push({ ...this.offlineSnapshot(original, displayName), fetchFailed: true });
       }
     }
 
@@ -200,8 +207,9 @@ export class SteamAdapter implements PlatformAdapter {
         };
       }
 
-      // success !== 'ready' means not broadcasting
-      return null;
+      // success !== 'ready' means not broadcasting: a definitive offline,
+      // as opposed to the catch below (request failed: unknown).
+      return { isLive: false, viewers: 0, title: null, gameName: null };
     } catch {
       return null;
     }

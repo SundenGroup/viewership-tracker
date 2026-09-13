@@ -1201,6 +1201,9 @@ export class YouTubeAdapter implements PlatformAdapter {
     } catch (err) {
       const errMsg = (err as Error).message;
       logger.warn(`YouTube scrape video: failed for ${videoId}`, { error: errMsg });
+      // Remembered for this cycle so the multi-stream path can tell "fetch
+      // failed" (no row) from "video offline" (drop the slot).
+      this.videoScrapeFailures.add(videoId);
       return null;
     }
   }
@@ -1299,6 +1302,8 @@ export class YouTubeAdapter implements PlatformAdapter {
   public lastVideoDetailsDegraded = false;
   /** Channel ids whose /live page fetch failed in the current scrape pass (not confirmed offline). */
   private scrapeFailures = new Set<string>();
+  /** Video ids whose /watch scrape threw this cycle (network), as opposed to reporting offline. */
+  private videoScrapeFailures = new Set<string>();
 
   private async getVideoDetails(videoIds: string[]): Promise<YouTubeVideoItem[]> {
     if (videoIds.length === 0) return [];
@@ -1586,9 +1591,13 @@ export class YouTubeAdapter implements PlatformAdapter {
     const videoIdentifiers: string[] = [];
     const channelOnlyIdentifiers: string[] = [];
 
+    this.videoScrapeFailures.clear();
     for (const id of channelIdentifiers) {
       if (id.startsWith('yt-video:')) {
         videoIdentifiers.push(id);
+      } else if (id.includes(':stream-')) {
+        // Multi-stream slot rows: filled by the orchestrator's auto-split
+        // from the parent's poll, never resolvable on their own.
       } else {
         channelOnlyIdentifiers.push(id);
       }
@@ -1651,6 +1660,27 @@ export class YouTubeAdapter implements PlatformAdapter {
     const results: ChannelSnapshot[] = [];
 
     for (const originalId of channelIdentifiers) {
+      // ":stream-N" rows are multi-stream slots: their numbers come from the
+      // parent's poll (orchestrator auto-split), a direct poll can never
+      // resolve them. fetchFailed = the orchestrator writes nothing unless
+      // the split assigns the slot a stream this cycle. Until 2026-09-13 this
+      // fell through to the "could not resolve" zero below, so a failed
+      // parent fetch wrote zeros for the map stream.
+      if (originalId.includes(':stream-')) {
+        results.push({
+          channelIdentifier: originalId,
+          displayName: originalId,
+          concurrentViewers: 0,
+          isLive: false,
+          language: null,
+          gameName: null,
+          title: null,
+          startedAt: null,
+          fetchFailed: true,
+        });
+        continue;
+      }
+
       // Handle yt-video: identifiers (specific live stream URLs)
       if (originalId.startsWith('yt-video:')) {
         const vScraped = videoScrapedData.get(originalId);
@@ -1770,6 +1800,25 @@ export class YouTubeAdapter implements PlatformAdapter {
             const streamData = await this.scrapeVideoLiveData(liveVideoId);
 
             if (!streamData) {
+              if (this.videoScrapeFailures.has(liveVideoId)) {
+                // The fetch itself failed: unknown, not offline. Keep the
+                // sticky id and hand the slot a fetchFailed snapshot so the
+                // orchestrator writes nothing for it this cycle.
+                results.push({
+                  channelIdentifier: originalId,
+                  displayName: scraped.channelName ?? originalId,
+                  concurrentViewers: 0,
+                  isLive: false,
+                  language: null,
+                  gameName: null,
+                  title: null,
+                  startedAt: null,
+                  streamId: liveVideoId,
+                  ownerVerified: true,
+                  fetchFailed: true,
+                });
+                continue;
+              }
               // Confirmed offline — purge from sticky cache so we don't
               // keep retrying it for STICKY_VIDEO_TTL_MS minutes.
               this.dropStickyVideoId(resolvedId, liveVideoId);

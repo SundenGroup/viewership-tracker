@@ -293,8 +293,9 @@ export class KickAdapter implements PlatformAdapter {
     if (channelNames.length === 0) return [];
 
     if (this.isCircuitOpen()) {
-      logger.warn(`Kick circuit breaker open, returning offline for ${channelNames.length} channels`);
-      return channelNames.map((name) => offlineSnapshot(name));
+      // Unknown, not offline: the orchestrator writes no row for fetchFailed.
+      logger.warn(`Kick circuit breaker open, no rows for ${channelNames.length} channels this cycle`);
+      return channelNames.map((name) => ({ ...offlineSnapshot(name), fetchFailed: true }));
     }
 
     const results: ChannelSnapshot[] = [];
@@ -337,9 +338,11 @@ export class KickAdapter implements PlatformAdapter {
     }, `channels [${channelNames.join(',')}]`);
 
     if (!result || !Array.isArray(result.data)) {
-      // API call failed — return all as offline
-      logger.debug(`Kick: batch API call failed for [${channelNames.join(',')}], returning offline`);
-      return channelNames.map((name) => offlineSnapshot(name));
+      // API call failed: unknown, not offline. Marked fetchFailed so the
+      // orchestrator writes nothing (2026-09-13: an 8-minute DNS outage wrote
+      // zeros for every Kick channel on PAS2 Playoffs 1 Day 2).
+      logger.warn(`Kick: batch API call failed for [${channelNames.join(',')}], no rows written for them`);
+      return channelNames.map((name) => ({ ...offlineSnapshot(name), fetchFailed: true }));
     }
 
     // Build a map of slug → parsed result for quick lookup
