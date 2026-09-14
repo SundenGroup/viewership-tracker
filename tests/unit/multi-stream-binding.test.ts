@@ -1,4 +1,4 @@
-import { assignMultiStreamSlots, type MultiStreamBindings } from '../../src/utils/multi-stream-binding';
+import { assignMultiStreamSlots, reattributeLoneUnverified, type MultiStreamBindings } from '../../src/utils/multi-stream-binding';
 
 const TTL = 15 * 60_000;
 const fresh = (): MultiStreamBindings => ({ parent: { videoId: null, seenAt: null }, children: new Map() });
@@ -62,5 +62,32 @@ describe('assignMultiStreamSlots', () => {
     expect(r.childAssignments.get(2)).toBe('map');
     expect(r.childAssignments.get(3)).toBe('hindi');
     expect(r.newChildIndexes).toEqual([3]);
+  });
+});
+
+describe('reattributeLoneUnverified', () => {
+  const bound = (): MultiStreamBindings => ({
+    parent: { videoId: 'MAIN', seenAt: 1_000_000 },
+    children: new Map([[2, { videoId: 'MAP', seenAt: 1_000_000 }]]),
+  });
+
+  it('an ownership-verified id is left alone', () => {
+    expect(reattributeLoneUnverified('NEW', true, bound(), 1_000_000 + 30_000, TTL)).toBe('NEW');
+  });
+
+  it('an id bound to a slot is left alone', () => {
+    expect(reattributeLoneUnverified('MAP', undefined, bound(), 1_000_000 + 30_000, TTL)).toBe('MAP');
+  });
+
+  it('an unbound, unverified id while the main stream was live moments ago is the main stream (the 02:29 incident)', () => {
+    expect(reattributeLoneUnverified('nfhDuOHMp0A', undefined, bound(), 1_000_000 + 30_000, TTL)).toBe('MAIN');
+  });
+
+  it('once the main stream has been gone longer than the TTL the id stands', () => {
+    expect(reattributeLoneUnverified('NEW', undefined, bound(), 1_000_000 + TTL + 1, TTL)).toBe('NEW');
+  });
+
+  it('with no parent binding the id stands', () => {
+    expect(reattributeLoneUnverified('NEW', undefined, fresh(), 5, TTL)).toBe('NEW');
   });
 });

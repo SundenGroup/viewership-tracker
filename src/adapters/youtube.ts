@@ -1784,9 +1784,14 @@ export class YouTubeAdapter implements PlatformAdapter {
       const isMultiStream = this.multiStreamChannels.has(resolvedId.toLowerCase()) ||
         this.multiStreamChannels.has(originalId.toLowerCase());
 
+      // The channel's own live list (its /streams tab, ownership-gated and
+      // sticky-merged). It also anchors the single-stream path below, because
+      // the /live page's video id field can bleed from another page.
+      let ownLiveIds: string[] = [];
       if (isMultiStream) {
         // Multi-stream: detect ALL live streams on this channel
         const allLiveVideoIds = await this.scrapeChannelLiveVideoIds(resolvedId);
+        ownLiveIds = allLiveVideoIds;
 
         if (allLiveVideoIds.length > 1) {
           // Multiple simultaneous streams detected — scrape each one individually
@@ -1862,8 +1867,31 @@ export class YouTubeAdapter implements PlatformAdapter {
       }
 
       // Single-stream path (default for all channels, and multi-stream with only 1 live stream)
-      const apiVideo = videoMap.get(scraped.videoId);
+      let singleVideoId = scraped.videoId;
+      let bled = false;
+      if (
+        isMultiStream &&
+        !singleVideoId.startsWith('unknown-') &&
+        ownLiveIds.length === 1 &&
+        ownLiveIds[0] !== singleVideoId
+      ) {
+        // The /live page's id and title fields bleed from other pages while
+        // its viewer count is still this channel's featured stream. When the
+        // channel's own live list names exactly one stream, that is the stream
+        // this reading belongs to. (2026-09-14 02:29 UTC: PUBGEsports' last two
+        // readings were filed under a NASA broadcast id and a Minecraft video
+        // id and minted two "(Stream N)" children.)
+        logger.warn(
+          `YouTube: ${originalId}: /live page named video ${singleVideoId} but the channel's own live list has ` +
+            `${ownLiveIds[0]}; attributing the reading to ${ownLiveIds[0]}`,
+        );
+        singleVideoId = ownLiveIds[0];
+        bled = true;
+      }
+      const apiVideo = videoMap.get(singleVideoId);
       const finalViewers = this.resolveViewerCount(scraped, apiVideo, originalId);
+      // A bled page's title and start time belong to the other page.
+      const singleTitle = apiVideo?.snippet.title ?? (bled ? null : scraped.title);
 
       results.push({
         channelIdentifier: originalId,
@@ -1872,10 +1900,10 @@ export class YouTubeAdapter implements PlatformAdapter {
         isLive: true,
         language: apiVideo?.snippet.defaultAudioLanguage ?? scraped.language,
         gameName: null,
-        title: apiVideo?.snippet.title ?? scraped.title,
-        startedAt: apiVideo?.liveStreamingDetails?.actualStartTime ?? scraped.startedAt,
-        streamId: scraped.videoId.startsWith('unknown-') ? undefined : scraped.videoId,
-        streamTitle: apiVideo?.snippet.title ?? scraped.title ?? undefined,
+        title: singleTitle,
+        startedAt: apiVideo?.liveStreamingDetails?.actualStartTime ?? (bled ? null : scraped.startedAt),
+        streamId: singleVideoId.startsWith('unknown-') ? undefined : singleVideoId,
+        streamTitle: singleTitle ?? undefined,
       });
     }
 

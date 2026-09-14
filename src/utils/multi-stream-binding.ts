@@ -128,3 +128,34 @@ export function assignMultiStreamSlots(
 
   return { parentVideoId, childAssignments, newChildIndexes, bindings, changed };
 }
+
+/**
+ * Which video id a LONE candidate should carry.
+ *
+ * The /live page reading never goes through the per-id ownership gate, and
+ * its video id field can bleed from another page while the viewer count is
+ * still the channel's featured stream. A lone, unverified candidate whose id
+ * is bound to no slot, while the parent's stream was seen live within
+ * `ttlMs`, is that stream under a bled id: it must never mint a child.
+ * (2026-09-14 02:29 UTC: PUBGEsports' last two readings created
+ * "(Stream 3)" and "(Stream 4)" children under a NASA broadcast id and a
+ * Minecraft video id while the API pool was exhausted.)
+ *
+ * Returns the id the reading should be filed under.
+ */
+export function reattributeLoneUnverified(
+  candidateVideoId: string,
+  ownerVerified: boolean | undefined,
+  current: MultiStreamBindings,
+  nowMs: number,
+  ttlMs: number,
+): string {
+  if (ownerVerified === true) return candidateVideoId;
+  const boundSomewhere =
+    current.parent.videoId === candidateVideoId ||
+    [...current.children.values()].some((b) => b.videoId === candidateVideoId);
+  if (boundSomewhere) return candidateVideoId;
+  const p = current.parent;
+  if (p.videoId && p.seenAt !== null && nowMs - p.seenAt <= ttlMs) return p.videoId;
+  return candidateVideoId;
+}

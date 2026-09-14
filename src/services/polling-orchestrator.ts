@@ -1,6 +1,6 @@
 import type { Knex } from 'knex';
 import logger from '../utils/logger';
-import { assignMultiStreamSlots, type MultiStreamBindings } from '../utils/multi-stream-binding';
+import { assignMultiStreamSlots, reattributeLoneUnverified, type MultiStreamBindings } from '../utils/multi-stream-binding';
 import { config } from '../utils/config';
 import { AdapterRegistry } from '../adapters';
 import type { MultiPlatformChannel } from '../adapters';
@@ -811,6 +811,29 @@ export class PollingOrchestrator {
 
       const parentMeta = (parent.metadata ?? {}) as Record<string, unknown>;
       const nowMs = Date.now();
+
+      // A lone /live reading (never ownership-gated per id) whose id is bound
+      // nowhere, while the main stream was live within the TTL, is the main
+      // stream under a bled id: file it there instead of minting a child.
+      // (2026-09-14 02:29 UTC: PUBGEsports "(Stream 3)" and "(Stream 4)".)
+      if (withIds.length === 1 && parentSnapshots.length === 1) {
+        const lone = withIds[0];
+        const keep = reattributeLoneUnverified(
+          lone.streamId as string,
+          lone.ownerVerified,
+          readBinding(parentMeta),
+          nowMs,
+          BIND_TTL_MS,
+        );
+        if (keep !== lone.streamId) {
+          logger.warn(
+            `[Poll] Multi-stream: ${parent.display_name}: lone reading carried unbound video ${lone.streamId} ` +
+              `while ${keep} was live moments ago; attributing it to ${keep} (page field bleed)`,
+          );
+          withIds[0] = { ...lone, streamId: keep, streamTitle: undefined, title: null };
+        }
+      }
+
       const assignment = assignMultiStreamSlots(
         withIds.map((s) => ({ videoId: s.streamId as string, viewers: s.concurrentViewers ?? 0 })),
         readBinding(parentMeta),
