@@ -34,16 +34,18 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
 
     const { scope, id, ids, template, format, deliveryMethod, skipNarratives, detail, viewGroup, excludeTiers, excludeLanguages, excludeChannelIds, compare } = req.body;
 
-    // Optional custom comparison: same scope level, real UUID. Multi-stage
-    // reports have no single aligned baseline — reject rather than guess.
-    if (compare != null) {
+    // Optional comparison: 'none' switches every % chip off (not even the
+    // automatic previous-day trend); an object is a custom baseline at the
+    // same scope level, real UUID. Multi-stage reports have no single
+    // aligned baseline: reject rather than guess.
+    if (compare != null && compare !== 'none') {
       const cOk =
         typeof compare === 'object' &&
         ['day', 'stage', 'series'].includes(compare.scope) &&
         typeof compare.id === 'string' &&
         /^[0-9a-f-]{36}$/i.test(compare.id);
       if (!cOk) {
-        res.status(400).json({ error: "compare must be { scope: 'day'|'stage'|'series', id: uuid }" });
+        res.status(400).json({ error: "compare must be { scope: 'day'|'stage'|'series', id: uuid } or 'none'" });
         return;
       }
       if (scope === 'multi_stage') {

@@ -85,12 +85,14 @@ export interface ReportRequest {
   deliveryMethod?: DeliveryMethod;
   branding?: BrandingConfig;
   /**
-   * Optional custom comparison baseline ("vs PEC Spring · Cup Week 1").
-   * Same scope level as the report; replaces the automatic previous-day
-   * trend when present. Deltas are baked into the artifact at generation
-   * time — reports are frozen snapshots, comparisons included.
+   * Comparison baseline for the % chips. An object is a custom baseline
+   * ("vs PEC Spring · Cup Week 1") at the same scope level as the report;
+   * it replaces the automatic previous-day trend. 'none' switches the
+   * chips off entirely. Absent = the standard previous-day trend. Deltas
+   * are baked into the artifact at generation time — reports are frozen
+   * snapshots, comparisons included.
    */
-  compare?: { scope: 'day' | 'stage' | 'series'; id: string };
+  compare?: { scope: 'day' | 'stage' | 'series'; id: string } | 'none';
   /** If true, skip narrative generation (faster). */
   skipNarratives?: boolean;
   /** Report detail level: 'simple' (top 10-20 channels) or 'detailed' (all channels). */
@@ -215,11 +217,14 @@ export class ReportAgent {
       // 5. Aggregate metrics and build HTML
       const aggregated = this.aggregateMetrics(payload.metrics, isDetailed);
 
-      // 5b. Trend data. A custom baseline (any scope) replaces the
-      // automatic previous-day comparison; without one, day reports keep
-      // comparing to the previous day in the same stage.
+      // 5b. Trend data. 'none' means no comparison at all; a custom
+      // baseline (any scope) replaces the automatic previous-day
+      // comparison; without either, day reports keep comparing to the
+      // previous day in the same stage.
       let trend: HTMLReportData['trend'];
-      if (request.compare) {
+      if (request.compare === 'none') {
+        trend = undefined;
+      } else if (request.compare) {
         trend = await this.computeCustomTrend(request.compare, aggregated, request.filter);
       } else if (scope === 'day' && payload.broadcastDays.length === 1) {
         try {
