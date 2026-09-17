@@ -5,6 +5,7 @@
  */
 import type { Knex } from 'knex';
 import {
+  isLateRead,
   pickBestViews,
   type ShareMethod,
   type ViewsConfidence,
@@ -81,6 +82,9 @@ interface JoinedRow {
   event_views: string | number | null;
   stream_ref: string;
   note: string | null;
+  broadcast_ended_at: Date | string | null;
+  fetched_at: Date | string | null;
+  extra: Record<string, unknown> | string | null;
   display_name: string;
   platform: string;
   tier: string | null;
@@ -88,6 +92,24 @@ interface JoinedRow {
 }
 
 const CONF_ORDER: Record<ViewsConfidence, number> = { measured: 0, adjusted: 1, estimated: 2, replay: 3 };
+
+const PLATFORM_NAME: Record<string, string> = { youtube: 'YouTube', twitch: 'Twitch', soop: 'SOOP', tiktok: 'TikTok', kick: 'Kick' };
+
+function toDate(v: Date | string | null): Date | null {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function extraOf(v: Record<string, unknown> | string | null): Record<string, unknown> {
+  if (!v) return {};
+  if (typeof v !== 'string') return v;
+  try {
+    return JSON.parse(v) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
 
 function emptySplit(): ViewsSplit {
   return { liveViews: 0, measured: 0, adjusted: 0, estimated: 0, channels: { measured: 0, adjusted: 0, estimated: 0 } };
@@ -147,6 +169,9 @@ export async function loadViewsSummary(
       'sv.event_views',
       'sv.stream_ref',
       'sv.note',
+      'sv.broadcast_ended_at',
+      'sv.fetched_at',
+      'sv.extra',
       'c.display_name',
       'c.platform',
       'c.tier',
@@ -179,7 +204,7 @@ export async function loadViewsSummary(
   // estimated on Day 2 contributes to both buckets, not to the weaker one.
   const totals = emptySplit();
   const platforms = new Map<string, ViewsSplit>();
-  let lateYouTube = 0;
+  const lateReads = new Map<string, number>();
   for (const [k, list] of byChannelDay) {
     const lite: ViewsRowLite[] = list.map((r) => ({
       source: r.source,
@@ -191,11 +216,14 @@ export async function loadViewsSummary(
       eventViews: r.event_views == null ? null : Number(r.event_views),
       streamRef: r.stream_ref,
       note: r.note,
+      late:
+        isLateRead(String(r.platform), r.source, toDate(r.broadcast_ended_at), toDate(r.fetched_at)) ||
+        extraOf(r.extra).includes_replays === true,
     }));
     const best = pickBestViews(lite);
     if (!best) continue;
-    // YouTube's counter keeps growing with replays: only the three-hour read is a live figure.
-    if (best.source === 'youtube_public' && best.snapshot !== 'plus_3h') lateYouTube += 1;
+    // Public counters keep growing with replays: a read after the live window says so.
+    if (best.late) lateReads.set(String(list[0].platform), (lateReads.get(String(list[0].platform)) ?? 0) + 1);
     const [channelId, dayId] = k.split('|');
     const head = list[0];
     const dc = dayCounts.get(dayId) ?? { measured: 0, adjusted: 0, estimated: 0 };
@@ -242,9 +270,11 @@ export async function loadViewsSummary(
   }
 
   const notes: string[] = [];
-  if (lateYouTube > 0) {
+  const lateTotal = [...lateReads.values()].reduce((a, n) => a + n, 0);
+  if (lateTotal > 0) {
+    const parts = [...lateReads.entries()].sort((a, b) => b[1] - a[1]).map(([p, n]) => `${n} on ${PLATFORM_NAME[p] ?? p}`);
     notes.push(
-      `${lateYouTube} YouTube stream${lateYouTube === 1 ? ' was' : 's were'} first read more than a day after the broadcast, so ${lateYouTube === 1 ? 'its count includes' : 'their counts include'} replay views since then.`,
+      `${lateTotal} stream${lateTotal === 1 ? ' was' : 's were'} first read after the live window (${parts.join(', ')}), so ${lateTotal === 1 ? 'its count includes' : 'their counts include'} replay views since then: about 2% a day on Twitch, more on YouTube.`,
     );
   }
 

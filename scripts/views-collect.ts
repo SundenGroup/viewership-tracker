@@ -166,7 +166,8 @@ async function main() {
       event_share_method: method,
       event_views: eventViews,
       confidence: method === 'full' ? 'measured' : 'adjusted',
-      extra: JSON.stringify({ file: importFile.split('/').pop(), read_at: readAt }),
+      // A public counter read by hand after the event has the replays since then inside it.
+      extra: JSON.stringify({ file: importFile.split('/').pop(), read_at: readAt, includes_replays: Boolean(readAt) }),
       note: [readAt ? `read by hand on ${readAt}, replay views up to then included` : 'read by hand', e.note].filter(Boolean).join('; '),
       fetched_at: now,
     });

@@ -29,6 +29,7 @@ import {
   DEFAULT_VIEWS_PER_VIEWER_HOUR,
   estimateViews,
   eventShare,
+  isLateRead,
   overlaps,
   parseSoopBroadNo,
   windowedViews,
@@ -571,7 +572,7 @@ export class ViewsCollector {
           [
             s.note,
             f.isLiveNow ? 'stream still live at read time' : null,
-            lateDays >= 0.5 ? `read ${lateDays.toFixed(1)} days after the stream, replay views since then included` : null,
+            isLateRead('youtube', 'youtube_public', f.actualEndTime ? spans[i].end : null, now) ? `read ${lateDays.toFixed(1)} days after the stream, replay views since then included` : null,
           ]
             .filter(Boolean)
             .join('; ') || null;
@@ -648,7 +649,11 @@ export class ViewsCollector {
         row.event_share_method = s.method;
         row.event_views = Math.round(a.viewCount * s.share);
         row.confidence = s.method === 'full' ? 'measured' : 'adjusted';
-        row.note = s.note;
+        const lateDays = (Date.now() - spans[i].end.getTime()) / 86_400_000;
+        row.note =
+          [s.note, isLateRead('twitch', 'twitch_vod', spans[i].end, new Date()) ? `read ${lateDays.toFixed(1)} days after the stream, replay views since then included (about 2% a day)` : null]
+            .filter(Boolean)
+            .join('; ') || null;
         rows.push(row);
       }
     }

@@ -7,6 +7,7 @@ import {
   estimateViews,
   eventShare,
   groupRank,
+  isLateRead,
   overlaps,
   parseSoopBroadNo,
   pickBestViews,
@@ -150,6 +151,27 @@ describe('pickBestViews', () => {
   it('nothing counted, nothing reported', () => {
     expect(pickBestViews([row({ counted: false })])).toBeNull();
     expect(groupRank({ source: 'kick_vod', snapshot: 'plus_36h', eventShareMethod: 'none', counted: true })).toBe(Number.POSITIVE_INFINITY);
+  });
+});
+
+describe('isLateRead', () => {
+  const end = at('2026-09-13T19:31:00Z');
+  it('YouTube three hours after the stream is a live figure, the catch-up read four days later is not', () => {
+    expect(isLateRead('youtube', 'youtube_public', end, at('2026-09-13T22:40:00Z'))).toBe(false);
+    expect(isLateRead('youtube', 'youtube_public', end, at('2026-09-17T10:40:00Z'))).toBe(true);
+  });
+  it('Twitch at 36 hours is the live figure; past three days the replays count', () => {
+    expect(isLateRead('twitch', 'twitch_vod', end, at('2026-09-15T07:40:00Z'))).toBe(false);
+    expect(isLateRead('twitch', 'twitch_vod', end, at('2026-09-17T10:40:00Z'))).toBe(true);
+  });
+  it('owner numbers, estimates and streams without an end time are never late', () => {
+    expect(isLateRead('tiktok', 'tiktok_livecenter', end, at('2026-09-20T00:00:00Z'))).toBe(false);
+    expect(isLateRead('twitch', 'estimate', end, at('2026-09-20T00:00:00Z'))).toBe(false);
+    expect(isLateRead('youtube', 'youtube_public', null, at('2026-09-20T00:00:00Z'))).toBe(false);
+  });
+  it('the best group carries the flag', () => {
+    expect(pickBestViews([row({ late: true }), row({ source: 'estimate', snapshot: 'estimate', confidence: 'estimated', eventViews: 5 })])?.late).toBe(true);
+    expect(pickBestViews([row({})])?.late).toBe(false);
   });
 });
 

@@ -109,6 +109,23 @@ export interface ViewsRowLite {
   eventViews: number | null;
   streamRef: string;
   note?: string | null;
+  /** Read after the platform's live window, so replay views are inside the number. */
+  late?: boolean;
+}
+
+/** How long after a broadcast a public counter still is a live figure, in hours. */
+export const LIVE_WINDOW_HOURS: Record<string, number> = { youtube: 12, twitch: 72 };
+
+/**
+ * Whether a public read came after the platform's live window. YouTube's
+ * counter grows with replays from the first hours; Twitch archives add about
+ * 2% a day once the live views have landed.
+ */
+export function isLateRead(platform: string, source: ViewsSource, broadcastEndedAt: Date | null, fetchedAt: Date | null): boolean {
+  if (source !== 'youtube_public' && source !== 'twitch_vod') return false;
+  const limit = LIVE_WINDOW_HOURS[platform];
+  if (!limit || !broadcastEndedAt || !fetchedAt) return false;
+  return (fetchedAt.getTime() - broadcastEndedAt.getTime()) / 3_600_000 > limit;
 }
 
 /**
@@ -152,6 +169,8 @@ export interface BestViews {
   eventViews: number;
   streams: number;
   note: string | null;
+  /** At least one stream of the group was read after its live window. */
+  late: boolean;
 }
 
 /**
@@ -194,6 +213,7 @@ export function pickBestViews(rows: ViewsRowLite[]): BestViews | null {
     eventViews: best.reduce((a, r) => a + (r.eventViews ?? 0), 0),
     streams: best.length,
     note: best.map((r) => r.note).filter(Boolean).join('; ') || null,
+    late: best.some((r) => r.late === true),
   };
 }
 
