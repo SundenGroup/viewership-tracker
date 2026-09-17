@@ -100,6 +100,18 @@ async function main() {
   const channels = (await db('channels')
     .whereIn('series_id', [...new Set(days.map((d) => d.series_id))])
     .select('id', 'platform', 'display_name', 'series_id')) as Array<{ id: string; platform: string; display_name: string; series_id: string }>;
+  // Tracked minutes per channel and day: a channel without minutes is not part of the day,
+  // and the count tells two rows with one display name apart (a multi-stream parent and its slot).
+  const minuteRows = (await db('viewership_minute_rollup')
+    .whereIn('broadcast_day_id', days.map((d) => d.id))
+    .where('ccv', '>', 0)
+    .groupBy('channel_id', 'broadcast_day_id')
+    .select('channel_id', 'broadcast_day_id')
+    .count('* as n')) as unknown as Array<{ channel_id: string; broadcast_day_id: string; n: string }>;
+  const minutesOf = new Map(minuteRows.map((r) => [`${r.channel_id}|${r.broadcast_day_id}`, Number(r.n)]));
+  const stageOf = new Map(
+    ((await db('broadcast_days').whereIn('id', days.map((d) => d.id)).select('id', 'stage_id')) as Array<{ id: string; stage_id: string | null }>).map((d) => [d.id, d.stage_id]),
+  );
   const now = new Date();
   const rows: Array<Record<string, unknown>> = [];
   const skipped: string[] = [];
@@ -115,15 +127,18 @@ async function main() {
       skipped.push(`${tag}: no completed day on that date`);
       continue;
     }
-    const match = channels.filter((c) => c.series_id === day.series_id && String(c.platform) === e.platform && c.display_name === e.channel);
-    if (match.length !== 1) {
-      skipped.push(`${tag}: ${match.length} channels with that name`);
-      continue;
+    let match = channels.filter(
+      (c) =>
+        c.series_id === day.series_id &&
+        String(c.platform) === e.platform &&
+        c.display_name.trim() === e.channel &&
+        minutesOf.has(`${c.id}|${day.id}`),
+    );
+    if (match.length > 1 && e.tracked_minutes) {
+      match = match.filter((c) => minutesOf.get(`${c.id}|${day.id}`) === Math.round(Number(e.tracked_minutes)));
     }
-    // A channel the tracker has no minutes for on that day is not part of the day.
-    const tracked = await db('viewership_minute_rollup').where({ channel_id: match[0].id, broadcast_day_id: day.id }).where('ccv', '>', 0).first('channel_id');
-    if (!tracked) {
-      skipped.push(`${tag}: no tracked minutes on that day`);
+    if (match.length !== 1) {
+      skipped.push(`${tag}: ${match.length} tracked channels with that name on that day`);
       continue;
     }
     const views = Math.round(Number(e.views_today));
@@ -134,12 +149,11 @@ async function main() {
       skipped.push(`${tag}: not a number`);
       continue;
     }
-    const full = await db('broadcast_days').where('id', day.id).first('stage_id');
     rows.push({
       channel_id: match[0].id,
       broadcast_day_id: day.id,
       series_id: day.series_id,
-      stage_id: full?.stage_id ?? null,
+      stage_id: stageOf.get(day.id) ?? null,
       platform: e.platform,
       stream_ref: '',
       source: 'csv_import',
