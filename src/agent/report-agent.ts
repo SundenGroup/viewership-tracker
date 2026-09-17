@@ -21,6 +21,7 @@
  *   });
  */
 
+import { loadViewsSummary, type ViewsTarget } from '../services/views-read';
 import { mkdir } from 'fs/promises';
 import path from 'path';
 import Anthropic from '@anthropic-ai/sdk';
@@ -93,6 +94,8 @@ export interface ReportRequest {
    * snapshots, comparisons included.
    */
   compare?: { scope: 'day' | 'stage' | 'series'; id: string } | 'none';
+  /** Add the live views section and column ("Include views" in the export dialog). Default off. */
+  includeViews?: boolean;
   /** If true, skip narrative generation (faster). */
   skipNarratives?: boolean;
   /** Report detail level: 'simple' (top 10-20 channels) or 'detailed' (all channels). */
@@ -234,6 +237,21 @@ export class ReportAgent {
         }
       }
 
+      // 5c. Live views, only when the export asked for them.
+      let views: HTMLReportData['views'];
+      if (request.includeViews) {
+        try {
+          const target: ViewsTarget =
+            scope === 'multi_stage'
+              ? { kind: 'multi_stage', ids: request.ids ?? [] }
+              : { kind: 'single', scope: scope as 'day' | 'stage' | 'series', id: request.id as string };
+          const summary = await loadViewsSummary(db, target, request.filter);
+          if (summary.channels.length > 0) views = summary;
+        } catch (err) {
+          logger.warn('[ReportAgent] Views could not be loaded, report continues without them', { error: (err as Error).message });
+        }
+      }
+
       const builder = new ReportBuilder(request.branding ?? this.branding);
       const htmlData: HTMLReportData = {
         payload,
@@ -261,6 +279,7 @@ export class ReportAgent {
         detail: isDetailed ? 'detailed' : 'simple',
         groupName: request.groupName,
         trend,
+        views,
       };
       const tmpPath = await builder.buildHTML(htmlData);
 

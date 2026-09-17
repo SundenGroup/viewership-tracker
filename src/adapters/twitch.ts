@@ -58,6 +58,11 @@ export interface TwitchArchiveVideo {
   createdAt: Date;
   durationSeconds: number;
   title: string;
+  /**
+   * Helix `view_count`. Replays only until Twitch's daily batch adds the
+   * live views, 18 to 24 hours after the stream ended (measured 2026-09-16).
+   */
+  viewCount: number;
 }
 
 /** "3h20m18s" / "58m1s" / "45s" → seconds. Unparseable → 0. */
@@ -73,6 +78,8 @@ export interface TwitchUserProfile {
   displayName: string;
   profileImageUrl: string;
   description: string;
+  /** '' (non-affiliate) | 'affiliate' | 'partner'. Decides how long VODs are kept. */
+  broadcasterType: string;
 }
 
 interface TwitchPaginatedResponse<T> {
@@ -483,6 +490,7 @@ export class TwitchAdapter implements PlatformAdapter {
           displayName: u.display_name,
           profileImageUrl: u.profile_image_url,
           description: u.description,
+          broadcasterType: u.broadcaster_type ?? '',
         });
       }
     }
@@ -497,7 +505,7 @@ export class TwitchAdapter implements PlatformAdapter {
   async getArchiveVideos(userId: string, first = 20): Promise<TwitchArchiveVideo[]> {
     const result = await this.requestWithRetry(async () => {
       const { data } = await this.client.get<
-        TwitchPaginatedResponse<{ id: string; created_at: string; duration: string; title: string }>
+        TwitchPaginatedResponse<{ id: string; created_at: string; duration: string; title: string; view_count?: number }>
       >('/videos', { params: { user_id: userId, type: 'archive', first } });
       return data.data;
     }, 'getArchiveVideos');
@@ -507,6 +515,7 @@ export class TwitchAdapter implements PlatformAdapter {
       createdAt: new Date(v.created_at),
       durationSeconds: parseTwitchDuration(v.duration),
       title: v.title,
+      viewCount: Number(v.view_count ?? 0),
     }));
   }
 

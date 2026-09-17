@@ -4,4 +4,5 @@ export { setBroadcastDayDiscoveryService } from './routes/broadcast-days';
 export { setReportAgent } from './routes/reports';
 export { setRelayBroadcast } from './routes/relay';
 export { setGameTrackerService } from './routes/game-trackers';
+export { setViewsCollector } from './routes/views';
 export { ViewershipWebSocketServer } from './websocket';

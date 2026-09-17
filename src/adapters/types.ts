@@ -23,6 +23,12 @@ export interface ChannelSnapshot {
    * API path). Multi-stream child rows are only ever created from these.
    */
   ownerVerified?: boolean;
+  /**
+   * The platform's public view counter for this stream at poll time
+   * (YouTube `statistics.viewCount`). Lags behind the audience while live;
+   * only used for the share of views inside a broadcast window.
+   */
+  platformViews?: number;
 }
 
 export interface DiscoveredStream {

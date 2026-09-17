@@ -55,7 +55,30 @@ export interface HTMLReportData {
   detail?: 'simple' | 'detailed';
   groupName?: string;
   trend?: TrendData;
+  /** Live views, present only when the export ticked "Include views". */
+  views?: ReportViews;
 }
+
+/** What the report needs of the views read model (services/views-read). */
+export interface ReportViews {
+  channels: Array<{ channelId: string; liveViews: number; confidence: string; sources: string[]; note: string | null }>;
+  totals: { liveViews: number; measured: number; adjusted: number; estimated: number };
+  byPlatform: Array<{
+    platform: string;
+    liveViews: number;
+    estimated: number;
+    channels: { measured: number; adjusted: number; estimated: number };
+  }>;
+}
+
+const VIEWS_DEFINITIONS: Record<string, string> = {
+  youtube: 'view count about three hours after the live stream',
+  twitch: 'past-broadcast views a day after the stream (live views plus about 2% replays)',
+  soop: 'cumulative viewers of the broadcast',
+  tiktok: 'Total views from LIVE Center where provided, else estimated',
+  kick: 'estimated from viewer-hours (Kick publishes replay views only)',
+  steam: 'estimated from viewer-hours (no public view count)',
+};
 
 // ── Platform / Language / Tier Colors ────────────────────────────────────────
 
@@ -218,7 +241,8 @@ function getTzAbbr(timezone: string): string {
 // ── Main Export ─────────────────────────────────────────────────────────────
 
 export function buildHTMLReport(data: HTMLReportData): string {
-  const { payload, totalTimeSeries, platformTimeSeries, languageTimeSeries, tierTimeSeries, aggregated, narratives, detail, trend } = data;
+  const { payload, totalTimeSeries, platformTimeSeries, languageTimeSeries, tierTimeSeries, aggregated, narratives, detail, trend, views } = data;
+  const viewsByChannel = new Map((views?.channels ?? []).map((c) => [c.channelId, c]));
   const isDetailed = detail === 'detailed';
 
   const seriesName = esc(payload.series.name);
@@ -379,6 +403,9 @@ export function buildHTMLReport(data: HTMLReportData): string {
       lang: languageDisplayName(ch.language || channel?.language),
       avg: Math.round(ch.avgCCV),
       peak: ch.peakCCV,
+      views: viewsByChannel.get(ch.channelId)?.liveViews ?? -1,
+      vconf: (viewsByChannel.get(ch.channelId)?.confidence ?? '').charAt(0).toUpperCase(),
+      vnote: viewsByChannel.get(ch.channelId)?.note ?? '',
       vh: Math.round((ch.totalViewedMinutes ?? 0) / 60),
     };
   });
@@ -1004,6 +1031,32 @@ ${narratives.viewership_timeline ? `
   <div class="narrative">${esc(narratives.viewership_timeline)}</div>
 ` : ''}
 
+${views ? `
+  <!-- Live Views (opt-in) -->
+  <div class="section-title">Live Views</div>
+  <div class="table-card">
+    <table>
+      <thead><tr><th>Platform</th><th>Live Views</th><th>Channels</th><th style="text-align:left">What counts as a view</th></tr></thead>
+      <tbody>
+${views.byPlatform.map((p) => `        <tr>
+          <td><span class="badge"><span class="dot dot-${esc(p.platform)}"></span>${esc(p.platform.charAt(0).toUpperCase() + p.platform.slice(1))}</span></td>
+          <td>${fmtNum(p.liveViews)}</td>
+          <td>${p.channels.measured} measured, ${p.channels.adjusted} adjusted, ${p.channels.estimated} estimated</td>
+          <td style="text-align:left;color:#9ca3af;font-size:11px">${esc(VIEWS_DEFINITIONS[p.platform] ?? 'estimated from viewer-hours')}</td>
+        </tr>`).join('\n')}
+        <tr class="total-row">
+          <td>Total</td>
+          <td>${fmtNum(views.totals.liveViews)}</td>
+          <td colspan="2" style="text-align:left;font-weight:400;color:#9ca3af;font-size:11px">${views.totals.estimated > 0 ? `of which about ${fmtNum(views.totals.estimated)} estimated` : 'all measured'}${views.totals.adjusted > 0 ? `, ${fmtNum(views.totals.adjusted)} adjusted to the broadcast window` : ''}</td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="font-size:10.5px;color:#7a82a0;margin-top:8px;line-height:1.5">
+      A view is a playback session as each platform counts it, so the figures are not comparable across platforms and sit far above concurrent viewers.
+      M = measured, A = adjusted (the broadcast ran longer than the event window, only its share counts), E = estimated from our own minute data.
+    </div>
+  </div>
+` : ''}
   <!-- Streamer Table -->
   <div class="section-title">${isDetailed ? `All Streamers · Detailed Breakdown (${aggregated.channelLeaderboard.length})` : 'Streamer Breakdown'}</div>
   <div class="table-card">
@@ -1017,6 +1070,7 @@ ${narratives.viewership_timeline ? `
           <th class="sortable-th desc" data-key="avg" data-type="number">Avg CCU<span class="sort-icon"></span></th>
           <th class="sortable-th" data-key="peak" data-type="number">Peak CCU<span class="sort-icon"></span></th>
           <th class="sortable-th" data-key="vh" data-type="number">Viewed Hours<span class="sort-icon"></span></th>
+${views ? `          <th class="sortable-th" data-key="views" data-type="number">Live Views<span class="sort-icon"></span></th>` : ''}
         </tr>
       </thead>
       <tbody id="streamerBody"></tbody>
@@ -1060,6 +1114,7 @@ const C = ${JSON.stringify(Object.fromEntries(Object.entries(PLATFORM_COLORS).fi
 const CA = ${JSON.stringify(Object.fromEntries(Object.entries(PLATFORM_COLORS_ALPHA).filter(([k]) => platformNames.includes(k))))};
 
 const streamerStats = ${JSON.stringify(streamerStats)};
+const showViews = ${views ? 'true' : 'false'};
 const timeLabels = ${JSON.stringify(timeLabels)};
 const dateLabels = ${JSON.stringify(dateLabels)};
 const dayBoundaries = ${JSON.stringify(dayBoundaries)};
@@ -1283,6 +1338,7 @@ function renderTable(data) {
       '<td>' + s.avg.toLocaleString() + '</td>' +
       '<td>' + s.peak.toLocaleString() + '</td>' +
       '<td>' + s.vh.toLocaleString() + '</td>' +
+      (showViews ? '<td title="' + String(s.vnote || '').replace(/"/g, '&quot;') + '">' + (s.views >= 0 ? s.views.toLocaleString() + ' <span style="font-size:9px;color:#7a82a0;font-weight:600">' + s.vconf + '</span>' : '<span style="color:#7a82a0">n/a</span>') + '</td>' : '') +
     '</tr>';
   });
 }

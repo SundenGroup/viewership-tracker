@@ -558,6 +558,11 @@ export class PollingOrchestrator {
   async executePollCycle(): Promise<PollCycleResult> {
     const startTime = Date.now();
     const timestamp = new Date();
+    // Live view counter readings (YouTube): one row per stream per minute,
+    // keyed on the minute. VIEWS_READINGS=0 switches them off.
+    const viewReadingsEnabled = process.env.VIEWS_READINGS !== '0';
+    const readingMinute = new Date(Math.floor(timestamp.getTime() / 60_000) * 60_000);
+    const viewReadings = new Map<string, Record<string, unknown>>();
     const errors: string[] = [];
 
     // 0. Auto-transition broadcast day statuses before querying
@@ -1033,6 +1038,20 @@ export class PollingOrchestrator {
             // every other adapter reports the broadcast title in `title`.
             stream_title: snap.streamTitle ?? snap.title ?? null,
           });
+          if (viewReadingsEnabled && snap.platformViews != null && snap.streamId && viewers > 0) {
+            const rk = `${channel.id}|${snap.streamId}`;
+            if (!viewReadings.has(rk)) {
+              viewReadings.set(rk, {
+                channel_id: channel.id,
+                broadcast_day_id: day.id,
+                series_id: day.series_id,
+                platform: channel.platform,
+                stream_ref: snap.streamId,
+                read_at: readingMinute,
+                views: snap.platformViews,
+              });
+            }
+          }
         }
 
         totalCCV += viewers;
@@ -1052,6 +1071,17 @@ export class PollingOrchestrator {
           }
         });
         snapshotsCreated = insertRows.length;
+        // The readings ride along; a failure here must never cost a poll.
+        if (viewReadings.size > 0) {
+          try {
+            await this.db('stream_view_readings')
+              .insert([...viewReadings.values()])
+              .onConflict(['channel_id', 'stream_ref', 'read_at'])
+              .merge(['views']);
+          } catch (err) {
+            logger.warn('[Poll] view counter readings not written', { error: (err as Error).message });
+          }
+        }
       } catch (err) {
         const errMsg = `Database insert failed: ${(err as Error).message}`;
         logger.error(`[Poll] ${errMsg}`);

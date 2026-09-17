@@ -14,6 +14,7 @@ import * as ViewershipSnapshotModel from '../../models/viewership-snapshot';
 import * as TournamentSeriesModel from '../../models/tournament-series';
 import { trimIncompleteEdge } from '../../utils/timeline';
 import db from '../../utils/db';
+import { loadViewsSummary, type ViewsTarget } from '../../services/views-read';
 
 const router = Router();
 
@@ -314,6 +315,31 @@ router.get('/:shortName/metrics', metricsCache, async (req: Request, res: Respon
 // aggregations), WHEN it happened, and per-broadcast-day peaks so the
 // client can render growth across days. The post-event table partners
 // ask for after every tournament.
+
+// ── GET /api/public/:shortName/views ─────────────────────────────────────
+// Live views per channel and platform for a scope, measured, adjusted and
+// estimated kept apart. Only requested by reports exported with
+// "Include views" (the report link carries ?views=1).
+const viewsCache = publicCacheMiddleware({ ttlMs: 300_000, label: 'views' });
+
+router.get('/:shortName/views', viewsCache, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const series = getPublicSeries(req);
+    const scopeObj = parseScope(req.query as Record<string, unknown>, series.id);
+    if (!scopeObj) {
+      res.status(400).json({ error: 'Invalid scope or id' });
+      return;
+    }
+    const target: ViewsTarget =
+      scopeObj.level === 'multi_stage'
+        ? { kind: 'multi_stage', ids: scopeObj.ids }
+        : { kind: 'single', scope: scopeObj.level, id: scopeObj.id };
+    const filter = parseViewFilter(req.query as Record<string, unknown>);
+    res.json(await loadViewsSummary(db, target, filter, series.id));
+  } catch (err) {
+    next(err);
+  }
+});
 
 const languagePeaksCache = publicCacheMiddleware({ ttlMs: 60_000, label: 'language-peaks' });
 

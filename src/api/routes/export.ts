@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import db from '../../utils/db';
+import { loadViewsSummary, resolveDays } from '../../services/views-read';
 
 const router = Router();
 
@@ -14,8 +15,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // is a forensic/QA format — summing it naively double-counts — so it and
 // the aggregate summaries are ADMIN-ONLY. Everyone with export access
 // gets the safe per-minute grain by default.
-type Granularity = 'per_minute' | 'minute_totals' | 'channel_summary' | 'raw';
-const ALL_GRANULARITIES: Granularity[] = ['per_minute', 'minute_totals', 'channel_summary', 'raw'];
+type Granularity = 'per_minute' | 'minute_totals' | 'channel_summary' | 'raw' | 'views';
+const ALL_GRANULARITIES: Granularity[] = ['per_minute', 'minute_totals', 'channel_summary', 'raw', 'views'];
 const ADMIN_ONLY: Set<Granularity> = new Set(['minute_totals', 'channel_summary', 'raw']);
 
 // ── Scope target ────────────────────────────────────────────────────────
@@ -67,7 +68,34 @@ interface Dataset {
   rows: Array<Record<string, unknown>>;
 }
 
-async function buildDataset(target: ExportTarget, gran: Granularity): Promise<Dataset> {
+async function buildDataset(target: ExportTarget, gran: Granularity, opts: { includeViews?: boolean } = {}): Promise<Dataset> {
+  if (gran === 'views') {
+    // Every stored views row for the scope, uncounted ones and all snapshots
+    // included: the data behind the report's live views, never a total itself.
+    const days = await resolveDays(db, target);
+    const rows = days.length === 0 ? [] : await db('stream_views as sv')
+      .join('channels as c', 'c.id', 'sv.channel_id')
+      .join('broadcast_days as bd', 'bd.id', 'sv.broadcast_day_id')
+      .whereIn('sv.broadcast_day_id', days.map((d) => d.id))
+      .select('bd.label as day', 'bd.date', 'c.channel_identifier', 'c.display_name', 'c.platform', 'c.tier', 'sv.*')
+      .orderBy(['bd.date', 'c.platform', 'c.display_name', 'sv.source', 'sv.snapshot']);
+    return {
+      columns: ['day', 'date', 'channel_identifier', 'display_name', 'platform', 'tier', 'source', 'snapshot', 'stream_ref',
+        'views', 'counted', 'event_views', 'event_share', 'event_share_method', 'confidence',
+        'broadcast_started_at', 'broadcast_minutes', 'tracked_minutes', 'note', 'fetched_at', 'channel_id'],
+      rows: rows.map((r: Record<string, unknown>) => ({
+        ...r,
+        date: r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date ?? '').slice(0, 10),
+        broadcast_started_at: r.broadcast_started_at instanceof Date ? r.broadcast_started_at.toISOString() : '',
+        fetched_at: r.fetched_at instanceof Date ? r.fetched_at.toISOString() : '',
+        views: r.views == null ? '' : Number(r.views),
+        event_views: r.event_views == null ? '' : Number(r.event_views),
+        event_share: r.event_share == null ? '' : Number(r.event_share),
+        note: r.note ?? '',
+      })),
+    };
+  }
+
   if (gran === 'per_minute') {
     const q = applyScope(
       db('viewership_minute_rollup as r').join('channels as c', 'c.id', 'r.channel_id'),
@@ -147,10 +175,28 @@ async function buildDataset(target: ExportTarget, gran: Granularity): Promise<Da
       .groupBy('r.channel_id', 'c.channel_identifier', 'c.display_name', 'c.platform', 'c.language', 'c.region', 'c.tier')
       .orderByRaw('SUM(r.ccv) DESC');
     const rows = await q;
+    // Live views ride along only when the export asked for them ("Include views").
+    const views = opts.includeViews ? await loadViewsSummary(db, target) : null;
+    const viewsByChannel = new Map((views?.channels ?? []).map((c) => [c.channelId, c]));
     return {
       columns: ['channel_identifier', 'display_name', 'platform', 'language', 'region', 'tier',
-        'peak_ccv', 'peak_at', 'avg_ccv', 'viewed_hours', 'channel_id'],
+        'peak_ccv', 'peak_at', 'avg_ccv', 'viewed_hours',
+        ...(views ? ['live_views', 'views_confidence', 'views_source', 'views_method', 'platform_views', 'views_note'] : []),
+        'channel_id'],
       rows: rows.map((r) => ({
+        ...(views
+          ? (() => {
+              const v = viewsByChannel.get(r.channel_id);
+              return {
+                live_views: v ? v.liveViews : '',
+                views_confidence: v ? v.confidence : '',
+                views_source: v ? v.sources.join('+') : '',
+                views_method: v ? v.methods.join('+') : '',
+                platform_views: v ? v.platformViews : '',
+                views_note: v?.note ?? '',
+              };
+            })()
+          : {}),
         channel_identifier: r.channel_identifier,
         display_name: r.display_name,
         platform: r.platform,
@@ -257,7 +303,7 @@ function filenameBase(target: ExportTarget, gran: Granularity): string {
 
 // ── Routes ──────────────────────────────────────────────────────────────
 
-// GET /api/export/csv?scope=…&id=…&granularity=per_minute|minute_totals|channel_summary|raw
+// GET /api/export/csv?scope=…&id=…&granularity=per_minute|minute_totals|channel_summary|raw|views[&views=1]
 router.get('/csv', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const target = parseTarget(req.query as Record<string, unknown>);
@@ -265,7 +311,7 @@ router.get('/csv', async (req: Request, res: Response, next: NextFunction) => {
     const gran = resolveGranularity(req.query as Record<string, unknown>, req.user?.role);
     if (typeof gran !== 'string') { res.status(gran.status).json({ error: gran.error }); return; }
 
-    const ds = await buildDataset(target, gran);
+    const ds = await buildDataset(target, gran, { includeViews: req.query.views === '1' });
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filenameBase(target, gran)}.csv"`);
     res.send(toCsv(ds));
@@ -282,7 +328,7 @@ router.get('/json', async (req: Request, res: Response, next: NextFunction) => {
     const gran = resolveGranularity(req.query as Record<string, unknown>, req.user?.role);
     if (typeof gran !== 'string') { res.status(gran.status).json({ error: gran.error }); return; }
 
-    const ds = await buildDataset(target, gran);
+    const ds = await buildDataset(target, gran, { includeViews: req.query.views === '1' });
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename="${filenameBase(target, gran)}.json"`);
     res.json({

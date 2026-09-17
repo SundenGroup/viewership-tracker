@@ -19,7 +19,8 @@ import { startTikTokServerTracker, setTikTokServerBroadcast } from './services/t
 import { config } from './utils/config';
 import logger from './utils/logger';
 import db from './utils/db';
-import { createApp, setOrchestrator, setDiscoveryService, setBroadcastDayDiscoveryService, setReportAgent, setRelayBroadcast, setGameTrackerService } from './api';
+import { createApp, setOrchestrator, setDiscoveryService, setBroadcastDayDiscoveryService, setReportAgent, setRelayBroadcast, setGameTrackerService, setViewsCollector } from './api';
+import { ViewsCollector } from './services/views-collector';
 import { AdapterRegistry } from './adapters';
 import { PollingOrchestrator, type PollCycleResult } from './services/polling-orchestrator';
 import { DiscoveryService } from './services/discovery-service';
@@ -366,6 +367,29 @@ async function bootstrap(): Promise<void> {
     cron.schedule('30 4 * * *', () => runSessionRepair('daily'),
       { timezone: 'Etc/UTC', noOverlap: true, name: 'session-repair' }),
   );
+
+  // ── 10d2. Live views collector (cron) ──────────────────────────────────
+  // Hourly at :40: completed broadcast days get their platform view counts
+  // read 3 hours, 36 hours and 7 days after they ended (YouTube's counter
+  // settles after the stream, Twitch adds the live views to the VOD about
+  // a day later). Never runs while a broadcast day is live.
+  // VIEWS_COLLECTOR=0 is the kill switch; manual runs stay available.
+  const viewsCollector = new ViewsCollector(registry, db);
+  setViewsCollector(viewsCollector);
+  if (process.env.VIEWS_COLLECTOR === '0') {
+    logger.info('[Views] collector disabled via VIEWS_COLLECTOR=0');
+  } else {
+    maintenanceTasks.push(
+      cron.schedule('40 * * * *', async () => {
+        try {
+          await viewsCollector.collectDue();
+        } catch (err) {
+          logger.error('[Views] scheduled collector pass failed', { error: (err as Error).message });
+        }
+      }, { timezone: 'Etc/UTC', noOverlap: true, name: 'views-collector' }),
+    );
+    logger.info('[CVT] Views collector scheduled (hourly :40)');
+  }
 
   // ── 10e. Raw-snapshot retention purge (cron) ───────────────────────────
   // Nightly at 04:40 UTC deletes game_tracker_snapshots older than each

@@ -23,6 +23,7 @@ import relayRouter, { relayHealthRouter } from './routes/relay';
 import gameTrackersRouter from './routes/game-trackers';
 import askRouter from './routes/ask';
 import docsRouter from './routes/docs';
+import viewsRouter from './routes/views';
 import { authenticate, requireRole } from './middleware/auth';
 
 export function createApp() {
@@ -119,6 +120,8 @@ export function createApp() {
   app.use('/api/ask', askRouter);
   // Guides: /user for everyone signed in; /admin gates itself inside.
   app.use('/api/docs', docsRouter);
+  // Live views: reads are viewer+, collect and import gate themselves (editor+).
+  app.use('/api', viewsRouter);
 
   // Editor+ routes
   app.use('/api/export', requireRole('admin', 'editor'), exportRouter);

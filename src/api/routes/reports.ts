@@ -32,7 +32,7 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       return;
     }
 
-    const { scope, id, ids, template, format, deliveryMethod, skipNarratives, detail, viewGroup, excludeTiers, excludeLanguages, excludeChannelIds, compare } = req.body;
+    const { scope, id, ids, template, format, deliveryMethod, skipNarratives, detail, viewGroup, excludeTiers, excludeLanguages, excludeChannelIds, compare, includeViews } = req.body;
 
     // Optional comparison: 'none' switches every % chip off (not even the
     // automatic previous-day trend); an object is a custom baseline at the
@@ -149,6 +149,7 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       filter,
       groupName,
       compare: compare ?? undefined,
+      includeViews: includeViews === true,
     });
 
     res.json({

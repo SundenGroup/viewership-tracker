@@ -83,6 +83,10 @@ interface YouTubeVideoItem {
     /** Handle for the InnerTube live-chat reader (chat collector). */
     activeLiveChatId?: string;
   };
+  /** Present when `statistics` is requested. viewCount lags while live. */
+  statistics?: {
+    viewCount?: string;
+  };
 }
 
 /** One live stream as the game tracker sees it (see getLiveVideos). */
@@ -144,6 +148,24 @@ interface ScrapedLiveData {
   language: string | null;
   /** UC id from the watch page's videoDetails, when the page exposed it. */
   ownerChannelId?: string | null;
+}
+
+/** What the views collector needs to know about a video, live or ended. */
+export interface YouTubeVideoFacts {
+  videoId: string;
+  channelId: string;
+  title: string;
+  actualStartTime: string | null;
+  actualEndTime: string | null;
+  isLiveNow: boolean;
+  viewCount: number | null;
+}
+
+function parseViewCount(v: YouTubeVideoItem | undefined): number | undefined {
+  const raw = v?.statistics?.viewCount;
+  if (raw == null) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 export interface QuotaUsage {
@@ -812,7 +834,7 @@ export class YouTubeAdapter implements PlatformAdapter {
           {
             params: {
               id: batch.join(','),
-              part: 'snippet,liveStreamingDetails',
+              part: 'snippet,liveStreamingDetails,statistics',
             },
           },
         );
@@ -872,6 +894,7 @@ export class YouTubeAdapter implements PlatformAdapter {
         streamId: v.id,
         streamTitle: v.snippet.title ?? undefined,
         ownerVerified: true,
+        platformViews: parseViewCount(v),
       });
     }
 
@@ -1324,7 +1347,7 @@ export class YouTubeAdapter implements PlatformAdapter {
           {
             params: {
               id: batch.join(','),
-              part: 'snippet,liveStreamingDetails',
+              part: 'snippet,liveStreamingDetails,statistics',
             },
           },
         );
@@ -1380,6 +1403,24 @@ export class YouTubeAdapter implements PlatformAdapter {
       });
     }
     return out;
+  }
+
+  /**
+   * Any videos by id, live or ended: owner, live times and the public view
+   * counter. The views collector reads past broadcasts with it (1 unit per
+   * 50 ids). Ids that were deleted or made private are simply absent.
+   */
+  async getVideosByIds(videoIds: string[]): Promise<YouTubeVideoFacts[]> {
+    const items = await this.getVideoDetails([...new Set(videoIds)]);
+    return items.map((v) => ({
+      videoId: v.id,
+      channelId: v.snippet.channelId,
+      title: v.snippet.title,
+      actualStartTime: v.liveStreamingDetails?.actualStartTime ?? null,
+      actualEndTime: v.liveStreamingDetails?.actualEndTime ?? null,
+      isLiveNow: v.liveStreamingDetails?.concurrentViewers != null && !v.liveStreamingDetails?.actualEndTime,
+      viewCount: parseViewCount(v) ?? null,
+    }));
   }
 
   /**
@@ -1859,6 +1900,7 @@ export class YouTubeAdapter implements PlatformAdapter {
               // Every id here passed the videos.list ownership gate (or was
               // verified for this channel within the last 30 minutes).
               ownerVerified: true,
+              platformViews: parseViewCount(apiVideo),
             });
           }
           continue; // Skip the single-stream path below
@@ -1904,6 +1946,7 @@ export class YouTubeAdapter implements PlatformAdapter {
         startedAt: apiVideo?.liveStreamingDetails?.actualStartTime ?? (bled ? null : scraped.startedAt),
         streamId: singleVideoId.startsWith('unknown-') ? undefined : singleVideoId,
         streamTitle: singleTitle ?? undefined,
+        platformViews: parseViewCount(apiVideo),
       });
     }
 
