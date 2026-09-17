@@ -555,7 +555,15 @@ export class ViewsCollector {
         row.event_share_method = s.method;
         row.event_views = Math.round((f.viewCount as number) * s.share);
         row.confidence = s.method === 'full' ? 'measured' : 'adjusted';
-        row.note = [s.note, f.isLiveNow ? 'stream still live at read time' : null].filter(Boolean).join('; ') || null;
+        const lateDays = f.actualEndTime ? (now.getTime() - spans[i].end.getTime()) / 86_400_000 : 0;
+        row.note =
+          [
+            s.note,
+            f.isLiveNow ? 'stream still live at read time' : null,
+            lateDays >= 0.5 ? `read ${lateDays.toFixed(1)} days after the stream, replay views since then included` : null,
+          ]
+            .filter(Boolean)
+            .join('; ') || null;
         rows.push(row);
       }
     }

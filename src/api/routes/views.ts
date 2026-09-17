@@ -136,6 +136,7 @@ router.get('/views/status', async (req: Request, res: Response, next: NextFuncti
     if (t.liveViews > 0 && t.estimated / t.liveViews > 0.25) {
       warnings.push(`${Math.round((t.estimated / t.liveViews) * 100)}% of the live views in this scope are estimated`);
     }
+    warnings.push(...summary.notes);
     res.json({ days: summary.days, totals: summary.totals, ready: warnings.length === 0, warnings });
   } catch (err) {
     next(err);

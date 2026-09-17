@@ -65,6 +65,8 @@ export interface ViewsSummary {
   totals: ViewsSplit;
   byPlatform: Array<{ platform: string } & ViewsSplit>;
   days: ViewsDayStatus[];
+  /** Caveats a reader of the numbers has to know (late reads that include replays). */
+  notes: string[];
 }
 
 interface JoinedRow {
@@ -128,7 +130,7 @@ export async function loadViewsSummary(
 ): Promise<ViewsSummary> {
   const days = await resolveDays(db, target, seriesId);
   const dayIds = days.map((d) => d.id);
-  if (dayIds.length === 0) return { channels: [], totals: emptySplit(), byPlatform: [], days: [] };
+  if (dayIds.length === 0) return { channels: [], totals: emptySplit(), byPlatform: [], days: [], notes: [] };
 
   const q = db('stream_views as sv')
     .join('channels as c', 'c.id', 'sv.channel_id')
@@ -177,6 +179,7 @@ export async function loadViewsSummary(
   // estimated on Day 2 contributes to both buckets, not to the weaker one.
   const totals = emptySplit();
   const platforms = new Map<string, ViewsSplit>();
+  let lateYouTube = 0;
   for (const [k, list] of byChannelDay) {
     const lite: ViewsRowLite[] = list.map((r) => ({
       source: r.source,
@@ -191,6 +194,8 @@ export async function loadViewsSummary(
     }));
     const best = pickBestViews(lite);
     if (!best) continue;
+    // YouTube's counter keeps growing with replays: only the three-hour read is a live figure.
+    if (best.source === 'youtube_public' && best.snapshot !== 'plus_3h') lateYouTube += 1;
     const [channelId, dayId] = k.split('|');
     const head = list[0];
     const dc = dayCounts.get(dayId) ?? { measured: 0, adjusted: 0, estimated: 0 };
@@ -236,9 +241,17 @@ export async function loadViewsSummary(
     if (ps) ps.channels[c.confidence] += 1;
   }
 
+  const notes: string[] = [];
+  if (lateYouTube > 0) {
+    notes.push(
+      `${lateYouTube} YouTube stream${lateYouTube === 1 ? ' was' : 's were'} first read more than a day after the broadcast, so ${lateYouTube === 1 ? 'its count includes' : 'their counts include'} replay views since then.`,
+    );
+  }
+
   return {
     channels: list,
     totals,
+    notes,
     byPlatform: [...platforms.entries()]
       .map(([platform, split]) => ({ platform, ...split }))
       .sort((a, b) => b.liveViews - a.liveViews),

@@ -69,6 +69,8 @@ export interface ReportViews {
     estimated: number;
     channels: { measured: number; adjusted: number; estimated: number };
   }>;
+  /** Caveats from the read model (late reads that include replays). */
+  notes?: string[];
 }
 
 const VIEWS_DEFINITIONS: Record<string, string> = {
@@ -1053,7 +1055,7 @@ ${views.byPlatform.map((p) => `        <tr>
     </table>
     <div style="font-size:10.5px;color:#7a82a0;margin-top:8px;line-height:1.5">
       A view is a playback session as each platform counts it, so the figures are not comparable across platforms and sit far above concurrent viewers.
-      M = measured, A = adjusted (the broadcast ran longer than the event window, only its share counts), E = estimated from our own minute data.
+      M = measured, A = adjusted (the broadcast ran longer than the event window, only its share counts), E = estimated from our own minute data.${(views.notes ?? []).map((n) => `<br>${esc(n)}`).join('')}
     </div>
   </div>
 ` : ''}
