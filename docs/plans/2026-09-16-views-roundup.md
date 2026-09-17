@@ -102,37 +102,44 @@ Per-platform estimate factors and the collector switch live with the other track
 
 Views never appear in a report unless the person exporting ticks **Include views** in the export dialog. Default off, no memory of the last choice, so every external report is a deliberate decision.
 
-- Export dialog (`components/editor/ExportDialog.tsx`): a checkbox "Include views" under the format choice, with a one-line note ("live views per platform, partly estimated; adds a section and a table column"). Shown for single targets and multi-stage alike.
+- Export dialog (`components/editor/ExportDialog.tsx`): a checkbox "Include views" under the format choice, with a one-line note ("Adds live views to the report. Off unless ticked."). Shown for single targets and multi-stage alike.
 - Public report link: the flag rides the URL as `?views=1`, the same way the comparison rides `vs_scope`. Without it the report page renders exactly as today, no views section, no column, no request to the views endpoint.
 - Legacy static HTML, PDF and DOCX: `includeViews: true` on `POST /api/reports/generate`, default false; the report agent skips the views query and the section entirely when it is off.
 - CSV and JSON: the channel summary carries the views columns only when the box is ticked; the dedicated `views` granularity is always available since it is a data export, not a report.
-- Editor views panel (4.3) is unaffected; it is where the numbers are checked before anyone ticks the box.
+- Editor views panel (4.4) is unaffected; it is where the numbers are checked before anyone ticks the box.
 
-### 4.1 Public report page (dashboard `pages/ReportPage.tsx`)
+### 4.1 Presentation rule (Simon, 2026-09-17, after seeing the first version)
 
-Views stay out of the hero. The hero KPIs are measured to the minute; live views are partly reconstructed, and a fourth tile with three sub-figures made the top of the report noisy (Simon, 2026-09-16). Views get their own section instead, placed after the language peaks and before the streamer table:
+The first version put a "Live views" table on the report: one line per platform with its definition, measured / adjusted / estimated channel counts, footnotes about replays, and M / A / E letters next to every number in the streamer table. Simon rejected it as unreadable for an external report, and the rule applies to every output, internal panels included:
 
-- Section "Live views" with one line per platform: live views, how many channels are measured, adjusted and estimated, and the platform's definition as a muted note. The totals row shows the counted total once, with the estimated part stated in words below it ("of which about 158k estimated"). No comparison chips here in the first version; a baseline comparison can come later once a series has two events with views.
-- Streamer table: a "Live views" column, sortable, with a small M / A / E marker and a tooltip carrying the source, the broadcast length against the tracked minutes and the method. Kick rows show the estimate with the marker, never the replay number. The column is hidden entirely when a day has no views rows at all (older events), so existing reports do not change.
-- Platform, language and category tables stay as they are; their views figures live in the Live views section, not in extra columns.
+- Numbers only. No methodology, no estimation detail, no caveats on the page, and no coded markers or legends.
+- The explanation is two or three short sentences behind a question mark (`summary.info` from the read model: what a view is, how much is estimated and why, whether replays are inside).
+- Views join the existing breakdowns instead of getting a table of their own.
+- Measured, adjusted and estimated stay apart in the data (`stream_views`, the `views` export), not in the presentation.
 
-### 4.2 Legacy static HTML report (`src/agent/report-builder-html.ts`) and PDF / DOCX
+### 4.2 Public report page (dashboard `pages/ReportPage.tsx`)
 
-- The same "Live views" section after the breakdown tables: per platform, counted total, estimated part in words, and a definitions footnote (what counts as a view per platform, the Twitch timing, the estimate factor, the share method).
-- "Live Views" column in the streamer table with the M / A / E marker, hidden when the day has no views rows.
-- No views KPI card and no trend chip on views.
-- The report agent's `aggregateMetrics` model gains `liveViews` per channel and per platform; the payload query pulls from `channel_day_views`.
+- By category, Platforms and Languages: "Views" is a third option in their Peak / Viewed Hours toggles, offered only with `?views=1`. The read model carries `byPlatform`, `byTier` and `byLanguage` for it.
+- The total: a fourth fact card ("Live views", total across N platforms) in the leaders strip next to Top channel, Top platform and Top language, with the question mark. Never a hero KPI. The simple report has no leaders strip: there the total is one quiet band after the category cards, and the category cards get a Peak / Views toggle.
+- Leaderboard: a sortable "Live views" column with a plain number (hidden on phones and when the scope has no views).
 
-### 4.3 Editor
+### 4.3 Legacy static HTML report (`src/agent/report-builder-html.ts`)
 
-- Per broadcast day, a "Views" panel: every channel with its best row, source and confidence, the collector's last run, missing channels with the reason (no VOD, expired, no public source), buttons "Collect now" and "Re-run", and "Add manually" for the TikTok card and Stream Summary numbers.
-- Retention warning when a day older than 6 days still has no Twitch rows.
+- "Views" is one more column in the Platform, Language and Category breakdown tables, the total in their Total row. With the fifth column the tables size the numbers by content and give the label the rest.
+- Streamer table: a plain "Views" column; the report's one question mark (a `title` tooltip) sits in its header.
+- No views KPI card, no separate section, no trend chip on views. PDF and DOCX carry no views.
 
-### 4.4 Exports (`src/api/routes/export.ts`)
+### 4.4 Editor (`components/editor/ViewsDialog.tsx`, "Views" next to Export)
 
-- `channel_summary` gains `live_views`, `views_confidence`, `views_source`, `views_method`, `broadcast_minutes`, `event_share`; `minute_totals` and `per_minute` are unchanged.
-- New granularity `views`: every `stream_views` row including uncounted and the snapshots (`plus_36h`, `plus_7d`), so the replay growth and the Kick replay numbers are available without ever entering a total.
-- JSON export mirrors both. The export dialog needs no new control.
+- Per broadcast day: the total with its question mark, one status line ("Not collected yet", "Collected so far. Twitch views arrive about 36 hours after the stream.", "Collected"), a plain list of channel, platform and live views, and a "Details" switch for what each number is based on and its note.
+- "Collect now", and "Add manually" for the TikTok LIVE Center Total views, a Twitch Stream Summary or another number from the channel owner.
+- Export dialog warnings are one short line each ("Not collected yet: ...", "Twitch views arrive about 36 hours after a stream. Pending: ...", "N% of these views are estimated", "Collected late, so replay views are included").
+
+### 4.5 Exports (`src/api/routes/export.ts`)
+
+- `channel_summary` with `views=1` gains two plain columns, `live_views` and `views_estimated` (yes / no); `minute_totals` and `per_minute` are unchanged.
+- Granularity `views`: every `stream_views` row including uncounted ones and all snapshots, with source, share, method and note. This is where the detail lives.
+- JSON export mirrors both.
 
 ## 5. Order of work
 
