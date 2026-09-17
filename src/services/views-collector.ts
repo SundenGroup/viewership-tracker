@@ -48,6 +48,17 @@ export type CollectorPass = 'plus_3h' | 'plus_36h' | 'plus_7d';
 /** Views per viewer-hour per platform. TikTok counts every room entry (about 20, PEC Fall Playoffs 1 Day 3). */
 const DEFAULT_FACTORS: Record<string, number> = { tiktok: 20 };
 
+/** Why a platform has no measured number; the estimate row says so. */
+const NO_SOURCE_REASON: Record<string, string> = {
+  tiktok: 'TikTok has no public view count: enter the LIVE Center "Total views" to replace this estimate',
+  steam: 'Steam publishes no view count',
+  kick: 'Kick publishes replay views only; live views are estimated',
+};
+
+function noSourceReason(platform: string): string {
+  return NO_SOURCE_REASON[platform] ?? 'no public view count on this platform';
+}
+
 export function viewsFactor(platform: string): number {
   try {
     const raw = process.env.VIEWS_FACTORS;
@@ -238,7 +249,7 @@ export class ViewsCollector {
       .map((cd) => ({
         channel: cd.displayName,
         platform: cd.platform,
-        reason: reasons.get(cd.channelId) ?? 'no public source on this platform',
+        reason: reasons.get(cd.channelId) ?? noSourceReason(cd.platform),
       }));
     const summary: CollectSummary = {
       dayId,
@@ -742,14 +753,18 @@ export class ViewsCollector {
   }
 
   private addEstimates(day: DayRow, cds: ChannelDay[], rows: ViewsRow[], reasons: Map<string, string>): void {
+    const measured = new Set(rows.filter((r) => r.counted && r.source !== 'estimate').map((r) => r.channel_id));
     for (const cd of cds) {
       const factor = viewsFactor(cd.platform);
       const row = this.baseRow(day, cd, 'estimate', 'estimate');
       row.event_views = estimateViews(cd.viewerMinutes, factor);
       row.event_share_method = 'none';
       row.confidence = 'estimated';
-      row.extra = JSON.stringify({ viewer_hours: Math.round(cd.viewerMinutes / 60), factor });
-      row.note = reasons.get(cd.channelId) ?? null;
+      const viewerHours = Math.round(cd.viewerMinutes / 60);
+      row.extra = JSON.stringify({ viewer_hours: viewerHours, factor });
+      // The reason only belongs on an estimate that speaks for the channel; next to a measured row it is just the fallback.
+      const why = measured.has(cd.channelId) ? null : (reasons.get(cd.channelId) ?? noSourceReason(cd.platform));
+      row.note = [why, `${viewerHours.toLocaleString('en-US')} viewer-hours x ${factor}`].filter(Boolean).join('; ');
       rows.push(row);
     }
   }
