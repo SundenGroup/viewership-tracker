@@ -99,7 +99,7 @@ interface ChannelDay {
   streamIdCounts: Map<string, number>;
 }
 
-interface ViewsRow {
+export interface ViewsRow {
   channel_id: string;
   broadcast_day_id: string;
   series_id: string;
@@ -131,6 +131,8 @@ export interface CollectSummary {
   rowsBySource: Record<string, number>;
   missing: Array<{ channel: string; platform: string; reason: string }>;
   durationMs: number;
+  /** Dry run only: what would have been stored. */
+  rows?: ViewsRow[];
 }
 
 export interface ManualViewsEntry {
@@ -215,7 +217,11 @@ export class ViewsCollector {
 
   // ── One day ──────────────────────────────────────────────────────────
 
-  async collectDay(dayId: string, pass?: CollectorPass): Promise<CollectSummary> {
+  /**
+   * `dryRun` reads everything and stores nothing (no rows, no run record): a
+   * look at what a day would give, for one-off counts of old events.
+   */
+  async collectDay(dayId: string, pass?: CollectorPass, opts: { dryRun?: boolean } = {}): Promise<CollectSummary> {
     const started = Date.now();
     const day = (await this.db('broadcast_days').where('id', dayId).first()) as DayRow | undefined;
     if (!day) throw new Error('broadcast day not found');
@@ -241,7 +247,7 @@ export class ViewsCollector {
     }
     this.addEstimates(day, cds, rows, reasons);
 
-    await this.upsert(rows);
+    if (!opts.dryRun) await this.upsert(rows);
     const rowsBySource: Record<string, number> = {};
     for (const r of rows) rowsBySource[r.source] = (rowsBySource[r.source] ?? 0) + 1;
     const measured = new Set(rows.filter((r) => r.counted && r.source !== 'estimate').map((r) => r.channel_id));
@@ -261,6 +267,10 @@ export class ViewsCollector {
       missing,
       durationMs: Date.now() - started,
     };
+    if (opts.dryRun) {
+      logger.info(`[Views] ${day.label} ${snapshot} (dry run): ${cds.length} channels, ${JSON.stringify(rowsBySource)}, ${missing.length} without a measured source`);
+      return { ...summary, rows };
+    }
     await this.db('stream_views_runs')
       .insert({
         broadcast_day_id: dayId,

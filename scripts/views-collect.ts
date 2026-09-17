@@ -8,7 +8,8 @@
  *   npx tsx scripts/views-collect.ts --series ggwc26                 # every completed day
  *   npx tsx scripts/views-collect.ts --day <broadcast_day uuid>
  *   npx tsx scripts/views-collect.ts --series ggwc26 --import views.csv [--read-at 2026-09-16]
- *   add --dry-run to --import to see the matching without writing
+ *   add --dry-run to see the result without writing anything; with a collect
+ *   run, --out rows.json saves what would have been stored
  *
  * CSV columns (header row): date, platform, channel, views_today, wc_share,
  * wc_share_method (full | time share | viewer-minutes), wc_views, note,
@@ -88,9 +89,16 @@ async function main() {
 
   if (!importFile) {
     const collector = new ViewsCollector(new AdapterRegistry(), db);
+    const outFile = arg('--out');
+    const dump: Array<Record<string, unknown>> = [];
     for (const d of days) {
-      const s = await collector.collectDay(d.id);
-      console.log(`${dateOf(d.date)} ${d.label} [${s.pass}]: ${s.channels} channels, ${JSON.stringify(s.rowsBySource)}, ${s.missing.length} without a measured source`);
+      const s = await collector.collectDay(d.id, undefined, { dryRun: DRY });
+      console.log(`${dateOf(d.date)} ${d.label} [${s.pass}]${DRY ? ' (dry run)' : ''}: ${s.channels} channels, ${JSON.stringify(s.rowsBySource)}, ${s.missing.length} without a measured source`);
+      if (DRY) dump.push({ dayId: d.id, date: dateOf(d.date), label: d.label, missing: s.missing, rows: s.rows ?? [] });
+    }
+    if (DRY && outFile) {
+      fs.writeFileSync(outFile, JSON.stringify(dump));
+      console.log(`dry run, nothing written to the database; rows saved to ${outFile}`);
     }
     return;
   }
