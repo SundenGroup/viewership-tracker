@@ -65,9 +65,18 @@ export interface ViewsSummary {
   channels: ChannelViews[];
   totals: ViewsSplit;
   byPlatform: Array<{ platform: string } & ViewsSplit>;
+  /** Same split per category (channel tier; none counts as community). */
+  byTier: Array<{ tier: string } & ViewsSplit>;
+  /** Same split per language code (lower case); channels without a language are left out. */
+  byLanguage: Array<{ language: string } & ViewsSplit>;
   days: ViewsDayStatus[];
-  /** Caveats a reader of the numbers has to know (late reads that include replays). */
-  notes: string[];
+  /** Channel-days whose public count was read after the live window (replays inside). */
+  lateReads: number;
+  /**
+   * What a reader may want to know about the number, in two or three short
+   * sentences. Reports show it behind a question mark, never on the page.
+   */
+  info: string[];
 }
 
 interface JoinedRow {
@@ -93,7 +102,40 @@ interface JoinedRow {
 
 const CONF_ORDER: Record<ViewsConfidence, number> = { measured: 0, adjusted: 1, estimated: 2, replay: 3 };
 
-const PLATFORM_NAME: Record<string, string> = { youtube: 'YouTube', twitch: 'Twitch', soop: 'SOOP', tiktok: 'TikTok', kick: 'Kick' };
+const PLATFORM_NAME: Record<string, string> = { youtube: 'YouTube', twitch: 'Twitch', soop: 'SOOP', tiktok: 'TikTok', kick: 'Kick', steam: 'Steam' };
+
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/**
+ * The explanation behind the number, short enough for a question-mark
+ * popover: what a view is, how much is estimated and why, and whether
+ * replays are inside. Everything else stays in the data export.
+ */
+export function viewsInfo(
+  totals: ViewsSplit,
+  byPlatform: Array<{ platform: string } & ViewsSplit>,
+  lateReads: number,
+): string[] {
+  if (totals.liveViews <= 0) return [];
+  const out = ['Live views are playback sessions of the live broadcasts, as each platform counts them.'];
+  if (totals.estimated > 0) {
+    const pct = Math.max(1, Math.round((totals.estimated / totals.liveViews) * 100));
+    // Platforms where nothing was counted: they publish no live view count at all.
+    const blind = byPlatform
+      .filter((p) => p.estimated > 0 && p.measured + p.adjusted === 0)
+      .map((p) => PLATFORM_NAME[p.platform] ?? p.platform.charAt(0).toUpperCase() + p.platform.slice(1));
+    out.push(
+      blind.length > 0
+        ? `About ${pct}% is estimated from watch time, because ${joinNames(blind)} publish${blind.length === 1 ? 'es' : ''} no live view count.`
+        : `About ${pct}% is estimated from watch time where a channel's count was not available.`,
+    );
+  }
+  if (lateReads > 0) out.push('Some counts were read days after the broadcast, so they include replay views.');
+  return out;
+}
 
 function toDate(v: Date | string | null): Date | null {
   if (!v) return null;
@@ -152,7 +194,9 @@ export async function loadViewsSummary(
 ): Promise<ViewsSummary> {
   const days = await resolveDays(db, target, seriesId);
   const dayIds = days.map((d) => d.id);
-  if (dayIds.length === 0) return { channels: [], totals: emptySplit(), byPlatform: [], days: [], notes: [] };
+  if (dayIds.length === 0) {
+    return { channels: [], totals: emptySplit(), byPlatform: [], byTier: [], byLanguage: [], days: [], lateReads: 0, info: [] };
+  }
 
   const q = db('stream_views as sv')
     .join('channels as c', 'c.id', 'sv.channel_id')
@@ -204,7 +248,9 @@ export async function loadViewsSummary(
   // estimated on Day 2 contributes to both buckets, not to the weaker one.
   const totals = emptySplit();
   const platforms = new Map<string, ViewsSplit>();
-  const lateReads = new Map<string, number>();
+  const tiers = new Map<string, ViewsSplit>();
+  const languages = new Map<string, ViewsSplit>();
+  let lateReads = 0;
   for (const [k, list] of byChannelDay) {
     const lite: ViewsRowLite[] = list.map((r) => ({
       source: r.source,
@@ -222,8 +268,8 @@ export async function loadViewsSummary(
     }));
     const best = pickBestViews(lite);
     if (!best) continue;
-    // Public counters keep growing with replays: a read after the live window says so.
-    if (best.late) lateReads.set(String(list[0].platform), (lateReads.get(String(list[0].platform)) ?? 0) + 1);
+    // Public counters keep growing with replays: a read after the live window is counted as late.
+    if (best.late) lateReads += 1;
     const [channelId, dayId] = k.split('|');
     const head = list[0];
     const dc = dayCounts.get(dayId) ?? { measured: 0, adjusted: 0, estimated: 0 };
@@ -233,6 +279,16 @@ export async function loadViewsSummary(
     const ps = platforms.get(String(head.platform)) ?? emptySplit();
     addToSplit(ps, best.confidence, best.eventViews, false);
     platforms.set(String(head.platform), ps);
+    const tierKey = head.tier || 'community';
+    const ts = tiers.get(tierKey) ?? emptySplit();
+    addToSplit(ts, best.confidence, best.eventViews, false);
+    tiers.set(tierKey, ts);
+    const langKey = (head.language ?? '').toLowerCase();
+    if (langKey) {
+      const ls = languages.get(langKey) ?? emptySplit();
+      addToSplit(ls, best.confidence, best.eventViews, false);
+      languages.set(langKey, ls);
+    }
     const cur = channels.get(channelId);
     if (!cur) {
       channels.set(channelId, {
@@ -267,24 +323,23 @@ export async function loadViewsSummary(
     totals.channels[c.confidence] += 1;
     const ps = platforms.get(c.platform);
     if (ps) ps.channels[c.confidence] += 1;
+    const ts = tiers.get(c.tier || 'community');
+    if (ts) ts.channels[c.confidence] += 1;
+    const ls = languages.get((c.language ?? '').toLowerCase());
+    if (ls) ls.channels[c.confidence] += 1;
   }
 
-  const notes: string[] = [];
-  const lateTotal = [...lateReads.values()].reduce((a, n) => a + n, 0);
-  if (lateTotal > 0) {
-    const parts = [...lateReads.entries()].sort((a, b) => b[1] - a[1]).map(([p, n]) => `${n} on ${PLATFORM_NAME[p] ?? p}`);
-    notes.push(
-      `${lateTotal} stream${lateTotal === 1 ? ' was' : 's were'} first read after the live window (${parts.join(', ')}), so ${lateTotal === 1 ? 'its count includes' : 'their counts include'} replay views since then: about 2% a day on Twitch, more on YouTube.`,
-    );
-  }
+  const bySize = <T extends ViewsSplit>(a: T, b: T) => b.liveViews - a.liveViews;
+  const byPlatform = [...platforms.entries()].map(([platform, split]) => ({ platform, ...split })).sort(bySize);
 
   return {
     channels: list,
     totals,
-    notes,
-    byPlatform: [...platforms.entries()]
-      .map(([platform, split]) => ({ platform, ...split }))
-      .sort((a, b) => b.liveViews - a.liveViews),
+    byPlatform,
+    byTier: [...tiers.entries()].map(([tier, split]) => ({ tier, ...split })).sort(bySize),
+    byLanguage: [...languages.entries()].map(([language, split]) => ({ language, ...split })).sort(bySize),
+    lateReads,
+    info: viewsInfo(totals, byPlatform, lateReads),
     days: days.map((d) => {
       const passes = passesByDay.get(d.id) ?? [];
       return {

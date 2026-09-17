@@ -181,7 +181,8 @@ async function buildDataset(target: ExportTarget, gran: Granularity, opts: { inc
     return {
       columns: ['channel_identifier', 'display_name', 'platform', 'language', 'region', 'tier',
         'peak_ccv', 'peak_at', 'avg_ccv', 'viewed_hours',
-        ...(views ? ['live_views', 'views_confidence', 'views_source', 'views_method', 'platform_views', 'views_note'] : []),
+        // Two plain columns; sources, shares and notes live in the "views" granularity.
+        ...(views ? ['live_views', 'views_estimated'] : []),
         'channel_id'],
       rows: rows.map((r) => ({
         ...(views
@@ -189,11 +190,7 @@ async function buildDataset(target: ExportTarget, gran: Granularity, opts: { inc
               const v = viewsByChannel.get(r.channel_id);
               return {
                 live_views: v ? v.liveViews : '',
-                views_confidence: v ? v.confidence : '',
-                views_source: v ? v.sources.join('+') : '',
-                views_method: v ? v.methods.join('+') : '',
-                platform_views: v ? v.platformViews : '',
-                views_note: v?.note ?? '',
+                views_estimated: v ? (v.confidence === 'estimated' ? 'yes' : 'no') : '',
               };
             })()
           : {}),

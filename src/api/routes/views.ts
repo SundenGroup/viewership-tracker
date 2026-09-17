@@ -127,16 +127,18 @@ router.get('/views/status', async (req: Request, res: Response, next: NextFuncti
     }
     const summary = await loadViewsSummary(db, target);
     const completed = summary.days.filter((d) => d.status === 'completed');
+    // One short line each: the dialog shows them next to the checkbox.
     const warnings: string[] = [];
     const notCollected = completed.filter((d) => !d.collected);
     const pendingTwitch = completed.filter((d) => d.collected && !d.complete);
-    if (notCollected.length > 0) warnings.push(`${notCollected.length} day(s) have no views collected yet: ${notCollected.map((d) => d.label).join(', ')}`);
-    if (pendingTwitch.length > 0) warnings.push(`${pendingTwitch.length} day(s) are waiting for the 36-hour pass (Twitch live views still estimated): ${pendingTwitch.map((d) => d.label).join(', ')}`);
+    const names = (ds: typeof completed) => (ds.length <= 3 ? ds.map((d) => d.label).join(', ') : `${ds.length} days`);
+    if (notCollected.length > 0) warnings.push(`Not collected yet: ${names(notCollected)}`);
+    if (pendingTwitch.length > 0) warnings.push(`Twitch views arrive about 36 hours after a stream. Pending: ${names(pendingTwitch)}`);
     const t = summary.totals;
     if (t.liveViews > 0 && t.estimated / t.liveViews > 0.25) {
-      warnings.push(`${Math.round((t.estimated / t.liveViews) * 100)}% of the live views in this scope are estimated`);
+      warnings.push(`${Math.round((t.estimated / t.liveViews) * 100)}% of these views are estimated`);
     }
-    warnings.push(...summary.notes);
+    if (summary.lateReads > 0) warnings.push('Collected late, so replay views are included');
     res.json({ days: summary.days, totals: summary.totals, ready: warnings.length === 0, warnings });
   } catch (err) {
     next(err);

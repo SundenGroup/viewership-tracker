@@ -61,26 +61,14 @@ export interface HTMLReportData {
 
 /** What the report needs of the views read model (services/views-read). */
 export interface ReportViews {
-  channels: Array<{ channelId: string; liveViews: number; confidence: string; sources: string[]; note: string | null }>;
-  totals: { liveViews: number; measured: number; adjusted: number; estimated: number };
-  byPlatform: Array<{
-    platform: string;
-    liveViews: number;
-    estimated: number;
-    channels: { measured: number; adjusted: number; estimated: number };
-  }>;
-  /** Caveats from the read model (late reads that include replays). */
-  notes?: string[];
+  channels: Array<{ channelId: string; liveViews: number }>;
+  totals: { liveViews: number };
+  byPlatform: Array<{ platform: string; liveViews: number }>;
+  byTier: Array<{ tier: string; liveViews: number }>;
+  byLanguage: Array<{ language: string; liveViews: number }>;
+  /** Short explanation, shown as the tooltip of a question mark and nowhere else. */
+  info?: string[];
 }
-
-const VIEWS_DEFINITIONS: Record<string, string> = {
-  youtube: 'view count about three hours after the live stream',
-  twitch: 'past-broadcast views a day after the stream (live views plus about 2% replays)',
-  soop: 'cumulative viewers of the broadcast',
-  tiktok: 'Total views from LIVE Center where provided, else estimated',
-  kick: 'estimated from viewer-hours (Kick publishes replay views only)',
-  steam: 'estimated from viewer-hours (no public view count)',
-};
 
 // ── Platform / Language / Tier Colors ────────────────────────────────────────
 
@@ -406,19 +394,29 @@ export function buildHTMLReport(data: HTMLReportData): string {
       avg: Math.round(ch.avgCCV),
       peak: ch.peakCCV,
       views: viewsByChannel.get(ch.channelId)?.liveViews ?? -1,
-      vconf: (viewsByChannel.get(ch.channelId)?.confidence ?? '').charAt(0).toUpperCase(),
-      vnote: viewsByChannel.get(ch.channelId)?.note ?? '',
       vh: Math.round((ch.totalViewedMinutes ?? 0) / 60),
     };
   });
 
   // Breakdown tables data
+  // Live views sit in the same three tables as one more column, only when asked for.
+  const viewsCell = (n: number | undefined) => (views ? `<td>${n == null ? '–' : fmtNum(n)}</td>` : '');
+  const viewsByPlatform = new Map((views?.byPlatform ?? []).map((p) => [p.platform.toLowerCase(), p.liveViews]));
+  const viewsByLanguage = new Map((views?.byLanguage ?? []).map((l) => [l.language.toLowerCase(), l.liveViews]));
+  const viewsByTier = new Map((views?.byTier ?? []).map((t) => [t.tier.toLowerCase(), t.liveViews]));
+  const viewsInfoTitle = esc((views?.info ?? []).join(' '));
+  const viewsHead = views
+    ? `<th>Views${viewsInfoTitle ? ` <span class="info-q" title="${viewsInfoTitle}">?</span>` : ''}</th>`
+    : '';
+  const viewsTotalCell = views ? `<td>${fmtNum(views.totals.liveViews)}</td>` : '';
+
   const platTableRows = aggregated.platformBreakdown.map((p) => ({
     label: capitalize(p.platform),
     dotClass: `dot-${p.platform.toLowerCase()}`,
     vh: fmtNum(Math.round(p.totalCCV / 60)),
     avg: fmtNum(Math.round(p.avgCCV)),
     peak: fmtNum(p.peakCCV),
+    views: viewsCell(viewsByPlatform.get(p.platform.toLowerCase())),
   }));
 
   const langTableRows = aggregated.languageBreakdown.map((l, i) => ({
@@ -427,6 +425,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
     vh: fmtNum(Math.round(l.totalCCV / 60)),
     avg: fmtNum(Math.round(l.avgCCV)),
     peak: fmtNum(l.peakCCV),
+    views: viewsCell(viewsByLanguage.get(String(l.language ?? '').toLowerCase())),
   }));
 
   const tierTableRows = tierEntries.map(([tier, v]) => ({
@@ -435,6 +434,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
     vh: fmtNum(Math.round(v.totalCCV / 60)),
     avg: fmtNum(Math.round(v.avgCCV)),
     peak: fmtNum(v.peakCCV),
+    views: viewsCell(viewsByTier.get(String(tier ?? 'community').toLowerCase())),
   }));
 
   return `<!DOCTYPE html>
@@ -561,6 +561,23 @@ export function buildHTMLReport(data: HTMLReportData): string {
     font-weight: 600;
     margin-top: 4px;
     font-family: 'Space Mono', monospace;
+  }
+
+  /* Question mark next to "Views": the explanation lives in its tooltip. */
+  .info-q {
+    display: inline-block;
+    width: 13px;
+    height: 13px;
+    line-height: 13px;
+    border-radius: 50%;
+    border: 1px solid var(--text-muted);
+    color: var(--text-muted);
+    font-size: 9px;
+    text-align: center;
+    cursor: help;
+    vertical-align: 1px;
+    text-transform: none;
+    letter-spacing: 0;
   }
 
   .section-title {
@@ -885,6 +902,7 @@ export function buildHTMLReport(data: HTMLReportData): string {
     td { border-color: #eee; color: #333; }
     .total-row td { color: #FF154D; border-color: #ddd; }
     .section-title { color: #666; }
+    .info-q { display: none; }
     .dot { box-shadow: none; }
     footer { color: #999; border-color: #ddd; }
     @page { size: A4; margin: 2cm; }
@@ -974,17 +992,17 @@ ${narratives.executive_summary ? `
     <div class="table-card">
       <h3>Platform Breakdown</h3>
       <table>
-        <thead><tr><th>Platform</th><th>VH</th><th>Avg</th><th>Peak</th></tr></thead>
+        <thead><tr><th>Platform</th><th>VH</th><th>Avg</th><th>Peak</th>${viewsHead}</tr></thead>
         <tbody>
 ${platTableRows.map((r) => `          <tr>
             <td><span class="badge"><span class="dot ${esc(r.dotClass)}"></span>${esc(r.label)}</span></td>
-            <td>${r.vh}</td><td>${r.avg}</td><td>${r.peak}</td>
+            <td>${r.vh}</td><td>${r.avg}</td><td>${r.peak}</td>${r.views}
           </tr>`).join('\n')}
           <tr class="total-row">
             <td>Total</td>
             <td>${fmtNum(Math.round(aggregated.totalViewedHours))}</td>
             <td>${fmtNum(aggregated.avgCCV)}</td>
-            <td>${fmtNum(aggregated.peakCCV)}</td>
+            <td>${fmtNum(aggregated.peakCCV)}</td>${viewsTotalCell}
           </tr>
         </tbody>
       </table>
@@ -993,17 +1011,17 @@ ${platTableRows.map((r) => `          <tr>
     <div class="table-card">
       <h3>Language Breakdown</h3>
       <table>
-        <thead><tr><th>Language</th><th>VH</th><th>Avg</th><th>Peak</th></tr></thead>
+        <thead><tr><th>Language</th><th>VH</th><th>Avg</th><th>Peak</th>${viewsHead}</tr></thead>
         <tbody>
 ${langTableRows.map((r) => `          <tr>
             <td><span class="badge"><span class="dot" style="background:${langColor(r.colorIdx)};box-shadow:0 0 6px ${langColor(r.colorIdx)}40"></span>${esc(r.label)}</span></td>
-            <td>${r.vh}</td><td>${r.avg}</td><td>${r.peak}</td>
+            <td>${r.vh}</td><td>${r.avg}</td><td>${r.peak}</td>${r.views}
           </tr>`).join('\n')}
           <tr class="total-row">
             <td>Total</td>
             <td>${fmtNum(Math.round(aggregated.totalViewedHours))}</td>
             <td>${fmtNum(aggregated.avgCCV)}</td>
-            <td>${fmtNum(aggregated.peakCCV)}</td>
+            <td>${fmtNum(aggregated.peakCCV)}</td>${viewsTotalCell}
           </tr>
         </tbody>
       </table>
@@ -1012,17 +1030,17 @@ ${langTableRows.map((r) => `          <tr>
     <div class="table-card">
       <h3>Category Breakdown</h3>
       <table>
-        <thead><tr><th>Category</th><th>VH</th><th>Avg</th><th>Peak</th></tr></thead>
+        <thead><tr><th>Category</th><th>VH</th><th>Avg</th><th>Peak</th>${viewsHead}</tr></thead>
         <tbody>
 ${tierTableRows.map((r) => `          <tr>
             <td><span class="tag ${esc(r.tierClass)}">${esc(r.label)}</span></td>
-            <td>${r.vh}</td><td>${r.avg}</td><td>${r.peak}</td>
+            <td>${r.vh}</td><td>${r.avg}</td><td>${r.peak}</td>${r.views}
           </tr>`).join('\n')}
           <tr class="total-row">
             <td>Total</td>
             <td>${fmtNum(Math.round(aggregated.totalViewedHours))}</td>
             <td>${fmtNum(aggregated.avgCCV)}</td>
-            <td>${fmtNum(aggregated.peakCCV)}</td>
+            <td>${fmtNum(aggregated.peakCCV)}</td>${viewsTotalCell}
           </tr>
         </tbody>
       </table>
@@ -1033,32 +1051,6 @@ ${narratives.viewership_timeline ? `
   <div class="narrative">${esc(narratives.viewership_timeline)}</div>
 ` : ''}
 
-${views ? `
-  <!-- Live Views (opt-in) -->
-  <div class="section-title">Live Views</div>
-  <div class="table-card">
-    <table>
-      <thead><tr><th>Platform</th><th>Live Views</th><th>Channels</th><th style="text-align:left">What counts as a view</th></tr></thead>
-      <tbody>
-${views.byPlatform.map((p) => `        <tr>
-          <td><span class="badge"><span class="dot dot-${esc(p.platform)}"></span>${esc(p.platform.charAt(0).toUpperCase() + p.platform.slice(1))}</span></td>
-          <td>${fmtNum(p.liveViews)}</td>
-          <td>${p.channels.measured} measured, ${p.channels.adjusted} adjusted, ${p.channels.estimated} estimated</td>
-          <td style="text-align:left;color:#9ca3af;font-size:11px">${esc(VIEWS_DEFINITIONS[p.platform] ?? 'estimated from viewer-hours')}</td>
-        </tr>`).join('\n')}
-        <tr class="total-row">
-          <td>Total</td>
-          <td>${fmtNum(views.totals.liveViews)}</td>
-          <td colspan="2" style="text-align:left;font-weight:400;color:#9ca3af;font-size:11px">${views.totals.estimated > 0 ? `of which about ${fmtNum(views.totals.estimated)} estimated` : 'all measured'}${views.totals.adjusted > 0 ? `, ${fmtNum(views.totals.adjusted)} adjusted to the broadcast window` : ''}</td>
-        </tr>
-      </tbody>
-    </table>
-    <div style="font-size:10.5px;color:#7a82a0;margin-top:8px;line-height:1.5">
-      A view is a playback session as each platform counts it, so the figures are not comparable across platforms and sit far above concurrent viewers.
-      M = measured, A = adjusted (the broadcast ran longer than the event window, only its share counts), E = estimated from our own minute data.${(views.notes ?? []).map((n) => `<br>${esc(n)}`).join('')}
-    </div>
-  </div>
-` : ''}
   <!-- Streamer Table -->
   <div class="section-title">${isDetailed ? `All Streamers · Detailed Breakdown (${aggregated.channelLeaderboard.length})` : 'Streamer Breakdown'}</div>
   <div class="table-card">
@@ -1072,7 +1064,7 @@ ${views.byPlatform.map((p) => `        <tr>
           <th class="sortable-th desc" data-key="avg" data-type="number">Avg CCU<span class="sort-icon"></span></th>
           <th class="sortable-th" data-key="peak" data-type="number">Peak CCU<span class="sort-icon"></span></th>
           <th class="sortable-th" data-key="vh" data-type="number">Viewed Hours<span class="sort-icon"></span></th>
-${views ? `          <th class="sortable-th" data-key="views" data-type="number">Live Views<span class="sort-icon"></span></th>` : ''}
+${views ? `          <th class="sortable-th" data-key="views" data-type="number">Views<span class="sort-icon"></span></th>` : ''}
         </tr>
       </thead>
       <tbody id="streamerBody"></tbody>
@@ -1340,7 +1332,7 @@ function renderTable(data) {
       '<td>' + s.avg.toLocaleString() + '</td>' +
       '<td>' + s.peak.toLocaleString() + '</td>' +
       '<td>' + s.vh.toLocaleString() + '</td>' +
-      (showViews ? '<td title="' + String(s.vnote || '').replace(/"/g, '&quot;') + '">' + (s.views >= 0 ? s.views.toLocaleString() + ' <span style="font-size:9px;color:#7a82a0;font-weight:600">' + s.vconf + '</span>' : '<span style="color:#7a82a0">n/a</span>') + '</td>' : '') +
+      (showViews ? '<td>' + (s.views >= 0 ? s.views.toLocaleString() : '<span style="color:#7a82a0">–</span>') + '</td>' : '') +
     '</tr>';
   });
 }
