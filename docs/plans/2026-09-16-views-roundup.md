@@ -1,6 +1,8 @@
 # Views round-up per tournament
 
-Status: build plan, 2026-09-16. Author: Claude with Simon.
+Status: steps 1 to 5 shipped 2026-09-17 (backend commits 9c5d74c, bdc19d0; dashboard the same day). Author: Claude with Simon.
+
+Shipped, in short: tables `stream_views`, `stream_view_readings`, `stream_views_runs`; the collector runs hourly at :40 (never while a day is live; `VIEWS_COLLECTOR=0` switches it off, `VIEWS_READINGS=0` the per-minute YouTube readings, `VIEWS_FACTORS` overrides the estimate factors as JSON) and catches up completed days up to 10 days back; older days and hand-read CSVs go through `scripts/views-collect.ts`. Views appear only where an export ticked "Include views": the report link carries `?views=1`, CSV and JSON `views=1`, the legacy HTML `includeViews`. The editor has a Views panel per day (rows, passes, Collect now, manual entry). A YouTube stream first read more than a day late carries a replay caveat that reaches the dialog warning and the reports.
 Related: the GeoGuessr WC 2026 day-by-day views pull (scratch CSV `ggwc26-views-by-day.csv`, 2026-09-16) that motivated this.
 
 ## 0. Decisions so far (Simon, 2026-09-16)
