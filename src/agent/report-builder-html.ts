@@ -405,9 +405,9 @@ export function buildHTMLReport(data: HTMLReportData): string {
   const viewsByLanguage = new Map((views?.byLanguage ?? []).map((l) => [l.language.toLowerCase(), l.liveViews]));
   const viewsByTier = new Map((views?.byTier ?? []).map((t) => [t.tier.toLowerCase(), t.liveViews]));
   const viewsInfoTitle = esc((views?.info ?? []).join(' '));
-  const viewsHead = views
-    ? `<th>Views${viewsInfoTitle ? ` <span class="info-q" title="${viewsInfoTitle}">?</span>` : ''}</th>`
-    : '';
+  const viewsHead = views ? '<th>Views</th>' : '';
+  // One question mark for the whole report, in the streamer table where there is room for it.
+  const viewsInfoMark = viewsInfoTitle ? ` <span class="info-q" title="${viewsInfoTitle}">?</span>` : '';
   const viewsTotalCell = views ? `<td>${fmtNum(views.totals.liveViews)}</td>` : '';
 
   const platTableRows = aggregated.platformBreakdown.map((p) => ({
@@ -661,6 +661,12 @@ export function buildHTMLReport(data: HTMLReportData): string {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* A fifth column (Views): numbers take what they need, the label column gets the rest. */
+  .tables-grid.with-views table { table-layout: auto; }
+  .tables-grid.with-views th,
+  .tables-grid.with-views td { padding: 10px 6px; white-space: nowrap; }
+  .tables-grid.with-views th:first-child,
+  .tables-grid.with-views td:first-child { width: 100%; max-width: 0; }
   th {
     text-align: left;
     font-weight: 600;
@@ -988,7 +994,7 @@ ${narratives.executive_summary ? `
   </div>
 
   <!-- 3 Breakdown Tables -->
-  <div class="tables-grid">
+  <div class="tables-grid${views ? ' with-views' : ''}">
     <div class="table-card">
       <h3>Platform Breakdown</h3>
       <table>
@@ -1064,7 +1070,7 @@ ${narratives.viewership_timeline ? `
           <th class="sortable-th desc" data-key="avg" data-type="number">Avg CCU<span class="sort-icon"></span></th>
           <th class="sortable-th" data-key="peak" data-type="number">Peak CCU<span class="sort-icon"></span></th>
           <th class="sortable-th" data-key="vh" data-type="number">Viewed Hours<span class="sort-icon"></span></th>
-${views ? `          <th class="sortable-th" data-key="views" data-type="number">Views<span class="sort-icon"></span></th>` : ''}
+${views ? `          <th class="sortable-th" data-key="views" data-type="number">Views${viewsInfoMark}<span class="sort-icon"></span></th>` : ''}
         </tr>
       </thead>
       <tbody id="streamerBody"></tbody>
