@@ -74,6 +74,22 @@ interface SoopCategoryResponse {
  * SOOP timestamps are naive KST strings ("2026-08-05 21:30:00"). Parse as
  * Asia/Seoul or every session start shifts nine hours.
  */
+/**
+ * Which SOOP searches one call runs. Scout hands over its keywords together
+ * with the series' category: that is a keyword search, and the category only
+ * confines the hits afterwards (soop-discovery-gate). Listing the category
+ * as well put every live streamer of the game into the Scout feed, keyword
+ * or not (PEC Fall, 2026-09-18: 302 candidates). The full listing is for a
+ * call without keywords, which is how the Discover trackers ask.
+ */
+export function soopSearchPlan(
+  gameId: string | undefined,
+  keywords: string[] | undefined,
+): { keywords: string[]; listCategory: boolean } {
+  const kws = (keywords ?? []).map((k) => k.trim()).filter(Boolean);
+  return { keywords: kws, listCategory: Boolean(gameId) && kws.length === 0 };
+}
+
 export function soopKstToIso(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const m = raw.trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
@@ -200,23 +216,23 @@ export class SoopAdapter implements PlatformAdapter {
     gameId?: string,
     keywords?: string[],
   ): Promise<DiscoveredStream[]> {
-    // Two modes, both zero-auth JSON off sch.sooplive.co.kr:
-    //   keywords → liveSearch, one request per keyword (event discovery)
+    // Two modes, both zero-auth JSON off sch.sooplive.co.kr, never both:
+    //   keywords → liveSearch, one request per keyword (Scout; the series'
+    //              category only gates the hits afterwards)
     //   gameId   → categoryContentsList paginated (Discover trackers;
     //              8-digit zero-padded category codes, e.g. PUBG 00040066)
     // Fail soft everywhere — discovery must never take a poll cycle down.
     const byId = new Map<string, DiscoveredStream>();
 
-    const kws = (keywords ?? []).map((k) => k.trim()).filter(Boolean);
-    for (let i = 0; i < kws.length; i++) {
+    const plan = soopSearchPlan(gameId, keywords);
+    for (let i = 0; i < plan.keywords.length; i++) {
       if (i > 0) await this.delay(INTER_REQUEST_DELAY_MS);
-      for (const stream of await this.searchByKeyword(kws[i]!)) {
+      for (const stream of await this.searchByKeyword(plan.keywords[i]!)) {
         if (!byId.has(stream.channelIdentifier)) byId.set(stream.channelIdentifier, stream);
       }
     }
 
-    if (gameId) {
-      if (kws.length > 0) await this.delay(INTER_REQUEST_DELAY_MS);
+    if (plan.listCategory && gameId) {
       for (const stream of await this.listCategory(gameId)) {
         if (!byId.has(stream.channelIdentifier)) byId.set(stream.channelIdentifier, stream);
       }

@@ -6,7 +6,21 @@
  * become real ISO instants (+09:00), viewer counts survive string typing,
  * broad_no becomes the streamId sessions key off.
  */
-import { mapSoopSearchItem, mapSoopCategoryItem, soopKstToIso } from '../../src/adapters/soop';
+import { mapSoopSearchItem, mapSoopCategoryItem, soopKstToIso, soopSearchPlan } from '../../src/adapters/soop';
+
+describe('soopSearchPlan', () => {
+  it('Scout (keywords plus the series category) searches by keyword only, never the whole category', () => {
+    expect(soopSearchPlan('00040066', ['PEC', ' PUBG EMEA ', ''])).toEqual({ keywords: ['PEC', 'PUBG EMEA'], listCategory: false });
+  });
+  it('a Discover tracker (category, no keywords) lists the category', () => {
+    expect(soopSearchPlan('00040066', undefined)).toEqual({ keywords: [], listCategory: true });
+    expect(soopSearchPlan('00040066', [])).toEqual({ keywords: [], listCategory: true });
+  });
+  it('keywords without a category stay a keyword search; nothing at all runs nothing', () => {
+    expect(soopSearchPlan(undefined, ['PEC'])).toEqual({ keywords: ['PEC'], listCategory: false });
+    expect(soopSearchPlan(undefined, undefined)).toEqual({ keywords: [], listCategory: false });
+  });
+});
 
 describe('soopKstToIso', () => {
   it('parses naive KST as +09:00', () => {
