@@ -232,7 +232,11 @@ export class ViewsCollector {
     const rows: ViewsRow[] = [];
     const reasons = new Map<string, string>();
 
-    await this.step('live readings', () => this.collectLiveReadings(day, cds, rows));
+    // null = the API could not be asked, so stored live rows are not judged this run
+    const live: { verified: Set<string> | null } = { verified: null };
+    await this.step('live readings', async () => {
+      live.verified = await this.collectLiveReadings(day, cds, rows);
+    });
     await this.step('youtube', () => this.collectYouTube(day, cds, snapshot, rows, reasons));
     await this.step('soop', () => this.collectSoop(day, cds, snapshot, rows, reasons));
     if (snapshot !== 'plus_3h') {
@@ -247,7 +251,13 @@ export class ViewsCollector {
     }
     this.addEstimates(day, cds, rows, reasons);
 
-    if (!opts.dryRun) await this.upsert(rows);
+    if (!opts.dryRun) {
+      await this.upsert(rows);
+      if (live.verified) {
+        const retired = await this.retireUnverifiedLiveRows(day, cds, live.verified);
+        if (retired > 0) logger.warn(`[Views] ${day.label}: ${retired} live counter row(s) carried a video that is not the channel's own and no longer count`);
+      }
+    }
     const rowsBySource: Record<string, number> = {};
     for (const r of rows) rowsBySource[r.source] = (rowsBySource[r.source] ?? 0) + 1;
     const measured = new Set(rows.filter((r) => r.counted && r.source !== 'estimate').map((r) => r.channel_id));
@@ -463,14 +473,22 @@ export class ViewsCollector {
 
   // ── Platform steps ───────────────────────────────────────────────────
 
-  private async collectLiveReadings(day: DayRow, cds: ChannelDay[], rows: ViewsRow[]): Promise<void> {
+  /**
+   * Live counter readings become rows only for videos the API confirms as the
+   * channel's own and as live inside the tracked span. The poll loop stores
+   * whatever id the /live page named, and in scrape mode that id can be any
+   * video on YouTube (2026-09-18 night: 80 foreign ids on one watch party,
+   * up to 31M views each). Returns the verified (channel|video) keys, or null
+   * when the API could not be asked, in which case nothing is judged.
+   */
+  private async collectLiveReadings(day: DayRow, cds: ChannelDay[], rows: ViewsRow[]): Promise<Set<string> | null> {
     const yt = cds.filter((cd) => cd.platform === 'youtube');
-    if (yt.length === 0) return;
+    if (yt.length === 0) return new Set();
     const readings = (await this.db('stream_view_readings')
       .where('broadcast_day_id', day.id)
       .whereIn('channel_id', yt.map((cd) => cd.channelId))
       .select('channel_id', 'stream_ref', 'read_at', 'views')) as Array<{ channel_id: string; stream_ref: string; read_at: Date; views: string }>;
-    if (readings.length === 0) return;
+    if (readings.length === 0) return new Set();
     const byStream = new Map<string, Array<{ readAt: Date; views: number }>>();
     for (const r of readings) {
       const k = `${r.channel_id}|${r.stream_ref}`;
@@ -478,13 +496,32 @@ export class ViewsCollector {
       list.push({ readAt: new Date(r.read_at), views: Number(r.views) });
       byStream.set(k, list);
     }
+
+    const adapter = this.registry.getAdapter('youtube') as YouTubeAdapter;
+    const refs = [...new Set(readings.map((r) => r.stream_ref))];
+    const facts = new Map<string, YouTubeVideoFacts>();
+    for (const f of await adapter.getVideosByIds(refs)) facts.set(f.videoId, f);
+    if (facts.size === 0) {
+      logger.warn(`[Views] ${day.label}: live counter readings not verified (no answer from the YouTube API), left as they are`);
+      return null;
+    }
+
+    const verified = new Set<string>();
+    const now = new Date();
     for (const cd of yt) {
+      const uc = cd.identifier.split(':')[0];
+      if (!uc.startsWith('UC')) continue; // ownership cannot be shown for a handle
       const windowStart = day.broadcast_start ? new Date(Math.min(day.broadcast_start.getTime(), cd.t0.getTime())) : cd.t0;
       const windowEnd = day.broadcast_end ? new Date(Math.max(day.broadcast_end.getTime(), cd.t1.getTime())) : cd.t1;
       for (const [k, list] of byStream) {
         if (!k.startsWith(`${cd.channelId}|`)) continue;
+        const f = facts.get(k.split('|')[1]);
+        if (!f || !f.actualStartTime || f.channelId.toLowerCase() !== uc.toLowerCase()) continue;
+        const end = f.actualEndTime ? new Date(f.actualEndTime) : now;
+        if (!overlaps(new Date(f.actualStartTime), end, cd.t0, cd.t1, MATCH_MARGIN_MS)) continue;
         const w = windowedViews(list, windowStart, windowEnd);
         if (!w) continue;
+        verified.add(k);
         const row = this.baseRow(day, cd, 'youtube_live', 'live_end');
         row.stream_ref = k.split('|')[1];
         row.views = w.last;
@@ -499,6 +536,24 @@ export class ViewsCollector {
         rows.push(row);
       }
     }
+    return verified;
+  }
+
+  /** Rows of earlier runs that carry a video the channel does not own stop counting (kept, never deleted). */
+  private async retireUnverifiedLiveRows(day: DayRow, cds: ChannelDay[], verified: Set<string>): Promise<number> {
+    const ytIds = cds.filter((cd) => cd.platform === 'youtube').map((cd) => cd.channelId);
+    if (ytIds.length === 0) return 0;
+    const existing = (await this.db('stream_views')
+      .where({ broadcast_day_id: day.id, source: 'youtube_live', counted: true })
+      .whereIn('channel_id', ytIds)
+      .select('id', 'channel_id', 'stream_ref')) as Array<{ id: string; channel_id: string; stream_ref: string }>;
+    const stale = existing.filter((r) => !verified.has(`${r.channel_id}|${r.stream_ref}`)).map((r) => r.id);
+    for (let i = 0; i < stale.length; i += 500) {
+      await this.db('stream_views')
+        .whereIn('id', stale.slice(i, i + 500))
+        .update({ counted: false, confidence: 'replay', note: "not counted: the video is not this channel's own stream on this day (a bled id from the live page)" });
+    }
+    return stale.length;
   }
 
   private async collectYouTube(

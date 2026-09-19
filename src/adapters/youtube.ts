@@ -1934,6 +1934,12 @@ export class YouTubeAdapter implements PlatformAdapter {
       const finalViewers = this.resolveViewerCount(scraped, apiVideo, originalId);
       // A bled page's title and start time belong to the other page.
       const singleTitle = apiVideo?.snippet.title ?? (bled ? null : scraped.title);
+      // The /live page's video id can be another channel's (field bleed), and
+      // videos.list answers for any id. The view counter is only this
+      // channel's when the API says the video is its own: on 2026-09-18 night
+      // a watch party's readings carried 80 foreign ids with up to 31M views.
+      const ownVideo =
+        apiVideo && resolvedId && apiVideo.snippet.channelId?.toLowerCase() === resolvedId.toLowerCase() ? apiVideo : undefined;
 
       results.push({
         channelIdentifier: originalId,
@@ -1946,7 +1952,7 @@ export class YouTubeAdapter implements PlatformAdapter {
         startedAt: apiVideo?.liveStreamingDetails?.actualStartTime ?? (bled ? null : scraped.startedAt),
         streamId: singleVideoId.startsWith('unknown-') ? undefined : singleVideoId,
         streamTitle: singleTitle ?? undefined,
-        platformViews: parseViewCount(apiVideo),
+        platformViews: parseViewCount(ownVideo),
       });
     }
 
