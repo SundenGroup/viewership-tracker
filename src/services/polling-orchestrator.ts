@@ -839,15 +839,8 @@ export class PollingOrchestrator {
         }
       }
 
-      const assignment = assignMultiStreamSlots(
-        withIds.map((s) => ({ videoId: s.streamId as string, viewers: s.concurrentViewers ?? 0 })),
-        readBinding(parentMeta),
-        nowMs,
-        BIND_TTL_MS,
-      );
-      const byId = new Map(withIds.map((s) => [s.streamId as string, s]));
-
-      // Load existing children for this parent
+      // Load existing children for this parent (their names tell a side
+      // stream such as "[MAP] …" which row is its home)
       if (!childChannelCache.has(parent.id)) {
         const children = await this.db('channels')
           .where('series_id', parent.series_id)
@@ -856,6 +849,20 @@ export class PollingOrchestrator {
         childChannelCache.set(parent.id, children);
       }
       const existingChildren = childChannelCache.get(parent.id)!;
+      const childLabels = new Map<number, string>();
+      for (const c of existingChildren) {
+        const idx = Number((c.metadata as Record<string, unknown>)?.multi_stream_index);
+        if (Number.isFinite(idx)) childLabels.set(idx, String(c.display_name ?? ''));
+      }
+
+      const assignment = assignMultiStreamSlots(
+        withIds.map((s) => ({ videoId: s.streamId as string, viewers: s.concurrentViewers ?? 0, title: s.streamTitle ?? s.title ?? null })),
+        readBinding(parentMeta),
+        nowMs,
+        BIND_TTL_MS,
+        childLabels,
+      );
+      const byId = new Map(withIds.map((s) => [s.streamId as string, s]));
 
       const ensureChild = async (streamIndex: number, snap: ChannelSnapshot) => {
         let child = existingChildren.find(

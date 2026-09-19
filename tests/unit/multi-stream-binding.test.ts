@@ -1,4 +1,4 @@
-import { assignMultiStreamSlots, reattributeLoneUnverified, type MultiStreamBindings } from '../../src/utils/multi-stream-binding';
+import { assignMultiStreamSlots, reattributeLoneUnverified, type MultiStreamBindings, sideStreamMarker, labelMatchesMarker } from '../../src/utils/multi-stream-binding';
 
 const TTL = 15 * 60_000;
 const fresh = (): MultiStreamBindings => ({ parent: { videoId: null, seenAt: null }, children: new Map() });
@@ -62,6 +62,67 @@ describe('assignMultiStreamSlots', () => {
     expect(r.childAssignments.get(2)).toBe('map');
     expect(r.childAssignments.get(3)).toBe('hindi');
     expect(r.newChildIndexes).toEqual([3]);
+  });
+});
+
+describe('side streams never take the parent row (PAS2 Finals 1 Day 1, 2026-09-18)', () => {
+  const NOW2 = 1_700_000_000_000;
+  const TTL2 = 15 * 60_000;
+  const fresh = () => ({ parent: { videoId: null, seenAt: null }, children: new Map([[2, { videoId: null, seenAt: null }]]) });
+  const labels = new Map([[2, 'PUBG Esports Map']]);
+  it('the map stream leads at the first poll (25 against 14) and still goes to the Map row', () => {
+    const a = assignMultiStreamSlots(
+      [
+        { videoId: 'gFtVm3l2mIs', viewers: 25, title: '[MAP] PUBG Americas Series 2: Finals 1 - Day 1' },
+        { videoId: 'lp1hkf_GuRU', viewers: 14, title: 'PUBG Americas Series 2: Finals 1 - Day 1' },
+      ],
+      fresh(), NOW2, TTL2, labels,
+    );
+    expect(a.parentVideoId).toBe('lp1hkf_GuRU');
+    expect(a.childAssignments.get(2)).toBe('gFtVm3l2mIs');
+    expect(a.newChildIndexes).toEqual([]);
+  });
+  it('a map stream that is live alone waits in its own row and leaves the parent free for the main broadcast', () => {
+    const first = assignMultiStreamSlots([{ videoId: 'map1', viewers: 30, title: '[MAP] Finals' }], fresh(), NOW2, TTL2, labels);
+    expect(first.parentVideoId).toBeNull();
+    expect(first.childAssignments.get(2)).toBe('map1');
+    const next = assignMultiStreamSlots(
+      [{ videoId: 'map1', viewers: 40, title: '[MAP] Finals' }, { videoId: 'main1', viewers: 10, title: 'Finals' }],
+      first.bindings, NOW2 + 60_000, TTL2, labels,
+    );
+    expect(next.parentVideoId).toBe('main1');
+    expect(next.childAssignments.get(2)).toBe('map1');
+  });
+  it('a lettered side stream finds the child named after it, not the first free one', () => {
+    const bindings = { parent: { videoId: null, seenAt: null }, children: new Map([[2, { videoId: null, seenAt: null }], [3, { videoId: null, seenAt: null }]]) };
+    const a = assignMultiStreamSlots(
+      [
+        { videoId: 'main', viewers: 900, title: 'GeoGuessr World Championship' },
+        { videoId: 'bbb', viewers: 300, title: 'GeoGuessr World Championship | B-Stream' },
+        { videoId: 'ccc', viewers: 100, title: 'GeoGuessr World Championship | C-Stream' },
+      ],
+      bindings, NOW2, TTL2, new Map([[2, 'GeoGuessr - C-Stream'], [3, 'GeoGuessr - B-Stream (Stream 3)']]),
+    );
+    expect(a.parentVideoId).toBe('main');
+    expect(a.childAssignments.get(3)).toBe('bbb');
+    expect(a.childAssignments.get(2)).toBe('ccc');
+  });
+  it('without titles nothing changes: biggest stream takes the parent', () => {
+    const a = assignMultiStreamSlots([{ videoId: 'x', viewers: 5 }, { videoId: 'y', viewers: 50 }], fresh(), NOW2, TTL2);
+    expect(a.parentVideoId).toBe('y');
+    expect(a.childAssignments.get(2)).toBe('x');
+  });
+  it('markers are narrow', () => {
+    expect(sideStreamMarker('[MAP] PUBG Americas Series 2: Finals 1 - Day 1')).toBe('map');
+    expect(sideStreamMarker('MAP | PUBG EMEA Championship')).toBe('map');
+    expect(sideStreamMarker('PUBG Esports: new map reveal')).toBeNull();
+    expect(sideStreamMarker('Mapping the meta with the casters')).toBeNull();
+    expect(sideStreamMarker('World Championship - B Stream')).toBe('b-stream');
+    expect(sideStreamMarker('PUBG Americas Series 2: Finals 1 - Day 1')).toBeNull();
+    expect(labelMatchesMarker('PUBG Esports Map', 'map')).toBe(true);
+    expect(labelMatchesMarker('PUBGEsports (Stream 3)', 'map')).toBe(false);
+    expect(labelMatchesMarker('GeoGuessr - C-Stream', 'c-stream')).toBe(true);
+    expect(labelMatchesMarker('GeoGuessr - C-Stream', 'b-stream')).toBe(false);
   });
 });
 

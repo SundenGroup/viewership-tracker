@@ -13,6 +13,13 @@
  * absent longer than `ttlMs`. A stream that is missing this cycle leaves
  * its slot EMPTY (no row) rather than letting another stream take it.
  *
+ * Which unbound stream takes the parent is decided by what the stream IS,
+ * not by its audience at that second: a title that marks a side stream
+ * ("[MAP] …", "B-Stream") never takes the parent row. On 2026-09-18 the
+ * PAS2 map stream had 25 viewers and the main broadcast 14 at the first
+ * poll, the map took the parent, and the binding kept the two rows swapped
+ * for the whole day.
+ *
  * Pure: the caller loads/persists bindings and creates child rows.
  */
 
@@ -32,6 +39,30 @@ export interface MultiStreamBindings {
 export interface StreamCandidate {
   videoId: string;
   viewers: number;
+  /** Live title, when the adapter has one: tells a side stream from the main one. */
+  title?: string | null;
+}
+
+/**
+ * The side-stream marker in a live title, normalised ("map", "b-stream"), or
+ * null for a main broadcast. Deliberately narrow: "[MAP] PUBG Americas Series"
+ * and "World Championship | B-Stream" are side streams, "New map reveal" is not.
+ */
+export function sideStreamMarker(title: string | null | undefined): string | null {
+  if (!title) return null;
+  if (/^\s*[\[(【]?\s*map\s*[\])】]?(?=$|[\s:|-])/i.test(title)) return 'map';
+  const lettered = /(?:^|[\s\[(|:-])([b-d])[\s-]?stream\b/i.exec(title);
+  if (lettered) return `${lettered[1].toLowerCase()}-stream`;
+  return null;
+}
+
+/** Whether a child row's name says it is the home of that side stream ("PUBG Esports Map", "GeoGuessr - C-Stream"). */
+export function labelMatchesMarker(label: string | null | undefined, marker: string): boolean {
+  if (!label) return false;
+  const l = label.toLowerCase();
+  if (marker === 'map') return /\bmap\b/.test(l);
+  const letter = marker.charAt(0);
+  return new RegExp(`(^|[^a-z])${letter}[\\s-]?stream\\b`).test(l);
 }
 
 export interface SlotAssignment {
@@ -54,9 +85,11 @@ const isStale = (b: SlotBinding, now: number, ttl: number): boolean =>
  *
  * Rules, in order:
  *  1. A stream whose id is bound to a slot goes to that slot (parent or child).
- *  2. Unbound streams, highest viewers first: take the parent slot if it is
- *     free or its binding is stale; else the first stale/free child slot;
- *     else a new child slot (next index).
+ *  2. Unbound streams, main broadcasts before side streams, then highest
+ *     viewers first. A main broadcast takes the parent slot if it is free or
+ *     its binding is stale. A side stream ("[MAP] …") never takes the parent:
+ *     it goes to the free child whose name carries its marker, else like any
+ *     other stream to the first stale/free child slot, else a new child slot.
  *  3. A bound slot whose stream is absent this cycle stays EMPTY. It is
  *     released only once the binding is older than `ttlMs`.
  */
@@ -65,6 +98,8 @@ export function assignMultiStreamSlots(
   current: MultiStreamBindings,
   nowMs: number,
   ttlMs: number,
+  /** Child index → display name, so a side stream finds the row named after it. */
+  childLabels: Map<number, string> = new Map(),
 ): SlotAssignment {
   // Work on copies so the caller's object is untouched until persisted.
   const bindings: MultiStreamBindings = {
@@ -93,20 +128,24 @@ export function assignMultiStreamSlots(
     }
   }
 
-  // 2. Place unbound streams, biggest first.
+  // 2. Place unbound streams: main broadcasts first, then biggest first.
   const remaining = [...unassigned]
-    .map((id) => byId.get(id)!)
-    .sort((a, b) => b.viewers - a.viewers);
-  for (const cand of remaining) {
-    if (parentVideoId === null && isStale(bindings.parent, nowMs, ttlMs)) {
+    .map((id) => ({ cand: byId.get(id)!, marker: sideStreamMarker(byId.get(id)!.title) }))
+    .sort((a, b) => Number(a.marker !== null) - Number(b.marker !== null) || b.cand.viewers - a.cand.viewers);
+  for (const { cand, marker } of remaining) {
+    if (marker === null && parentVideoId === null && isStale(bindings.parent, nowMs, ttlMs)) {
       bindings.parent = { videoId: cand.videoId, seenAt: nowMs };
       parentVideoId = cand.videoId;
       changed = true;
       continue;
     }
-    // First child slot that is free/stale AND not assigned this cycle.
+    // First child slot that is free/stale AND not assigned this cycle; a side
+    // stream looks for the child named after it before taking any other.
     let placed = false;
-    const indexes = [...bindings.children.keys()].sort((a, b) => a - b);
+    const free = [...bindings.children.keys()].sort((a, b) => a - b);
+    const indexes = marker
+      ? [...free.filter((i) => labelMatchesMarker(childLabels.get(i), marker)), ...free.filter((i) => !labelMatchesMarker(childLabels.get(i), marker))]
+      : free;
     for (const idx of indexes) {
       const b = bindings.children.get(idx)!;
       if (childAssignments.has(idx)) continue;
@@ -119,7 +158,7 @@ export function assignMultiStreamSlots(
       }
     }
     if (placed) continue;
-    const nextIdx = indexes.length > 0 ? Math.max(...indexes) + 1 : 2;
+    const nextIdx = free.length > 0 ? Math.max(...free) + 1 : 2;
     bindings.children.set(nextIdx, { videoId: cand.videoId, seenAt: nowMs });
     childAssignments.set(nextIdx, cand.videoId);
     newChildIndexes.push(nextIdx);
