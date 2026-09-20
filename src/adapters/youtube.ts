@@ -397,6 +397,11 @@ export class YouTubeAdapter implements PlatformAdapter {
     partner: string | null,
     context: string,
   ): Promise<{ client: AxiosInstance; keyId: string; keyLabel: string } | null> {
+    // The day roll-over has to come before the pick: with every key spent no key is
+    // picked, so a reset that only ran on a charge never ran again, and the pool stayed
+    // "exhausted" after Google's reset until a restart or an admin opening the quota
+    // panel (2026-09-20: no YouTube Scout for the first 52 minutes of a broadcast).
+    this.resetPoolQuotaIfNewDay();
     const picked = await YouTubeApiKeyModel.pickBestKey(partner, cost, this.perKeyUsed);
     if (!picked) {
       logger.error(
@@ -1986,12 +1991,13 @@ export class YouTubeAdapter implements PlatformAdapter {
   ): Promise<DiscoveredStream[]> {
     // Determine search term(s):
     // - If gameId is set: single search for the game name (e.g. "Counter-Strike 2")
-    // - If no gameId: search each keyword individually (fallback)
+    // - If no gameId: the keywords, merged into as few queries as possible
+    //   (see youtubeSearchQueries: search.list costs 100 units per call)
     const searchTerms: string[] = [];
     if (gameId) {
       searchTerms.push(gameId);
     } else if (keywords && keywords.length > 0) {
-      searchTerms.push(...keywords);
+      searchTerms.push(...youtubeSearchQueries(keywords));
     } else {
       return [];
     }
@@ -2141,6 +2147,51 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * The search.list queries for a Scout keyword search. Every call costs 100 quota
+ * units, so one call per keyword (eleven keywords on a ten-minute cycle) spent a
+ * 10,000-unit key in ninety minutes and the whole pool in a day. The keywords go
+ * into one query instead, each as a quoted phrase, joined with YouTube's OR
+ * operator. Measured on a live broadcast (2026-09-20): the merged query found all
+ * 15 event streams that the eleven separate searches found, for 100 units instead
+ * of 1,100, also with the keyword order reversed (no truncation at 165 characters).
+ * The quoted phrase matches what the title filter after the search asks for anyway.
+ *
+ * Long lists are split so no query grows past `maxChars`. `YOUTUBE_SCOUT_MERGED=0`
+ * goes back to one search per keyword.
+ */
+export function youtubeSearchQueries(
+  keywords: string[],
+  merged: boolean = process.env.YOUTUBE_SCOUT_MERGED !== '0',
+  maxChars = 300,
+): string[] {
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  for (const raw of keywords) {
+    // A quote or a pipe inside a keyword would break the query syntax.
+    const kw = raw.replace(/["|]/g, ' ').replace(/\s+/g, ' ').trim();
+    const key = kw.toLowerCase();
+    if (!kw || seen.has(key)) continue;
+    seen.add(key);
+    terms.push(kw);
+  }
+  if (!merged || terms.length <= 1) return terms;
+
+  const queries: string[] = [];
+  let current = '';
+  for (const kw of terms) {
+    const phrase = `"${kw}"`;
+    if (current && current.length + 1 + phrase.length > maxChars) {
+      queries.push(current);
+      current = phrase;
+    } else {
+      current = current ? `${current}|${phrase}` : phrase;
+    }
+  }
+  if (current) queries.push(current);
+  return queries;
 }
 
 function todayDateString(): string {
