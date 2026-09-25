@@ -85,58 +85,81 @@ export async function getKeyById(id: string): Promise<YouTubeApiKeyPublic | null
   return row ? toPublic(row) : null;
 }
 
+export interface PoolPick {
+  row: YouTubeApiKeyRow;
+  /** Our estimate says the key is spent; it is tried anyway until Google refuses it. */
+  overEstimate: boolean;
+}
+
 /**
- * Resolve a usable key for a given partner. Returns the active key with the
- * most remaining quota — tries partner-specific keys first, then partner=NULL
- * shared keys. Returns null if no key has enough remaining quota.
- *
- * `usedSoFar` is a per-key map maintained by the caller (the YouTube adapter).
+ * Which key to use for a call of `cost` units. Our per-key counters are an
+ * estimate of what Google has charged (they miss calls made elsewhere with
+ * the same key, and a project's limit may have been raised), so they ORDER
+ * the keys and never rule one out: a key we count as spent is still tried
+ * until Google itself refuses it for the day (`refused`). The order is the
+ * partner's keys with estimated room, then shared keys with room, then the
+ * partner's keys past the estimate, then shared keys past it; within a
+ * group the most estimated room wins. With no partner only shared keys count.
+ */
+export function choosePoolKey(
+  rows: YouTubeApiKeyRow[],
+  partner: string | null,
+  cost: number,
+  usedSoFar: Map<string, number>,
+  refused: Set<string>,
+): PoolPick | null {
+  const remaining = (r: YouTubeApiKeyRow) => r.daily_quota - (usedSoFar.get(r.id) ?? 0);
+  const eligible = rows.filter((r) => r.is_active && !refused.has(r.id));
+  const ofPartner = (r: YouTubeApiKeyRow) => partner !== null && r.partner === partner;
+  const shared = (r: YouTubeApiKeyRow) => r.partner === null;
+  const groups = [
+    eligible.filter((r) => ofPartner(r) && remaining(r) >= cost),
+    eligible.filter((r) => shared(r) && remaining(r) >= cost),
+    eligible.filter((r) => ofPartner(r) && remaining(r) < cost),
+    eligible.filter((r) => shared(r) && remaining(r) < cost),
+  ];
+  for (const group of groups) {
+    if (group.length === 0) continue;
+    const row = [...group].sort((x, y) => remaining(y) - remaining(x))[0];
+    return { row, overEstimate: remaining(row) < cost };
+  }
+  return null;
+}
+
+/**
+ * Resolve the key to use for a given partner (see `choosePoolKey` for the
+ * order). `usedSoFar` and `refused` are kept by the caller (the YouTube
+ * adapter). Returns null when no eligible key is left.
  */
 export async function pickBestKey(
   partner: string | null,
   cost: number,
   usedSoFar: Map<string, number>,
-): Promise<ResolvedKey | null> {
-  const tryPool = async (where: Partial<Pick<YouTubeApiKeyRow, 'partner'>>) => {
-    const rows = await db<YouTubeApiKeyRow>(TABLE)
-      .where('is_active', true)
-      .andWhere(where)
-      .select();
-    const candidates = rows
-      .map((r) => ({
-        row: r,
-        remaining: r.daily_quota - (usedSoFar.get(r.id) ?? 0),
-      }))
-      .filter((c) => c.remaining >= cost)
-      .sort((a, b) => b.remaining - a.remaining);
-    if (candidates.length === 0) return null;
-    const winner = candidates[0].row;
-    try {
-      return {
-        id: winner.id,
-        label: winner.label,
-        partner: winner.partner,
-        secret: decryptSecret(winner.secret_encrypted),
-        daily_quota: winner.daily_quota,
-      } satisfies ResolvedKey;
-    } catch (err) {
-      logger.error('Failed to decrypt YouTube API key — disabling row', {
-        keyId: winner.id,
-        error: (err as Error).message,
-      });
-      // If decryption fails the key row is corrupt; flip is_active off so
-      // we don't try it again. JWT_SECRET must have rotated.
-      await db<YouTubeApiKeyRow>(TABLE).where({ id: winner.id }).update({ is_active: false });
-      return null;
-    }
-  };
-
-  if (partner) {
-    const partnerHit = await tryPool({ partner });
-    if (partnerHit) return partnerHit;
+  refused: Set<string> = new Set(),
+): Promise<(ResolvedKey & { overEstimate: boolean }) | null> {
+  const rows = await db<YouTubeApiKeyRow>(TABLE).where('is_active', true).select();
+  const pick = choosePoolKey(rows, partner, cost, usedSoFar, refused);
+  if (!pick) return null;
+  const winner = pick.row;
+  try {
+    return {
+      id: winner.id,
+      label: winner.label,
+      partner: winner.partner,
+      secret: decryptSecret(winner.secret_encrypted),
+      daily_quota: winner.daily_quota,
+      overEstimate: pick.overEstimate,
+    };
+  } catch (err) {
+    logger.error('Failed to decrypt YouTube API key, disabling row', {
+      keyId: winner.id,
+      error: (err as Error).message,
+    });
+    // If decryption fails the key row is corrupt; flip is_active off so
+    // we don't try it again. JWT_SECRET must have rotated.
+    await db<YouTubeApiKeyRow>(TABLE).where({ id: winner.id }).update({ is_active: false });
+    return null;
   }
-  const sharedHit = await tryPool({ partner: null });
-  return sharedHit;
 }
 
 // ── Mutations ─────────────────────────────────────────────────────────────

@@ -35,6 +35,25 @@ const QUOTA_COST = {
   videosList: 1,
 } as const;
 
+/** How many keys one pool call may try before giving up (each refusal retires a key). */
+const MAX_POOL_KEYS_PER_CALL = 10;
+
+interface PoolClient {
+  client: AxiosInstance;
+  keyId: string;
+  keyLabel: string;
+  dailyQuota: number;
+}
+
+/** Google's "this project is out of quota for the day" answer: a 403 with one of these reasons. */
+function isQuotaExceeded(err: unknown): boolean {
+  const ax = err as AxiosError<{ error?: { errors?: Array<{ reason?: string }>; message?: string } }>;
+  if (ax?.response?.status !== 403) return false;
+  const reasons = ax.response.data?.error?.errors?.map((e) => e.reason) ?? [];
+  const message = ax.response.data?.error?.message ?? '';
+  return reasons.some((r) => r === 'quotaExceeded' || r === 'dailyLimitExceeded') || /exceeded your quota/i.test(message);
+}
+
 // Multi-stream API path: how long to trust a search.list result before
 // refreshing. This TTL governs ONLY the discovery of which videos a
 // multi-stream channel has live (search.list, 100 units per refresh per
@@ -220,6 +239,9 @@ export class YouTubeAdapter implements PlatformAdapter {
   private perKeyUsed = new Map<string, number>();
   private perKeyResetDate: string = todayDateString();
   private static readonly POOL_QUOTA_FILE = path.resolve(process.cwd(), '.youtube-pool-quota.json');
+  /** Keys Google refused today (quotaExceeded): key id to the day it happened. */
+  private poolRefused = new Map<string, string>();
+  private poolOverEstimateLogged = new Set<string>();
 
   constructor(apiKey?: string, quotaLimit?: number) {
     this.apiKey = apiKey ?? config.youtube.apiKey;
@@ -334,12 +356,20 @@ export class YouTubeAdapter implements PlatformAdapter {
   /**
    * Pool quota state for the partner-tagged key pool used by discovery.
    * Polling continues using the legacy single-key tracking above.
+   *
+   * The per-key counters are OUR estimate of what Google has charged, kept
+   * for ordering the keys and for the quota panel. They never stop a call:
+   * a key we count as spent is still tried, and only a quotaExceeded answer
+   * from Google retires it (`poolRefused`) until the daily reset. Until
+   * 2026-09-25 the estimate was a hard stop, and that day the pool called
+   * itself empty at 48,854 units while every key still answered 200 OK.
    */
-  getPoolQuotaUsage(): { date: string; perKey: Record<string, number> } {
+  getPoolQuotaUsage(): { date: string; perKey: Record<string, number>; refused: string[] } {
     this.resetPoolQuotaIfNewDay();
     return {
       date: this.perKeyResetDate,
       perKey: Object.fromEntries(this.perKeyUsed),
+      refused: [...this.poolRefused.keys()],
     };
   }
 
@@ -347,6 +377,8 @@ export class YouTubeAdapter implements PlatformAdapter {
     const today = todayDateString();
     if (today !== this.perKeyResetDate) {
       this.perKeyUsed.clear();
+      this.poolRefused.clear();
+      this.poolOverEstimateLogged.clear();
       this.perKeyResetDate = today;
       this.savePoolQuotaToDisk();
     }
@@ -356,10 +388,11 @@ export class YouTubeAdapter implements PlatformAdapter {
     try {
       if (fs.existsSync(YouTubeAdapter.POOL_QUOTA_FILE)) {
         const raw = fs.readFileSync(YouTubeAdapter.POOL_QUOTA_FILE, 'utf-8');
-        const data = JSON.parse(raw) as { date: string; perKey: Record<string, number> };
+        const data = JSON.parse(raw) as { date: string; perKey: Record<string, number>; refused?: Record<string, string> };
         if (data.date === todayDateString()) {
           this.perKeyResetDate = data.date;
           this.perKeyUsed = new Map(Object.entries(data.perKey ?? {}));
+          this.poolRefused = new Map(Object.entries(data.refused ?? {}));
         }
       }
     } catch {
@@ -374,6 +407,7 @@ export class YouTubeAdapter implements PlatformAdapter {
         JSON.stringify({
           date: this.perKeyResetDate,
           perKey: Object.fromEntries(this.perKeyUsed),
+          refused: Object.fromEntries(this.poolRefused),
         }),
       );
     } catch {
@@ -382,57 +416,94 @@ export class YouTubeAdapter implements PlatformAdapter {
   }
 
   /**
-   * Pick a key from the discovery pool that has enough remaining quota,
-   * charge it, and return a one-shot axios client bound to that key. If
-   * no pool key has room, returns null — caller decides what to do
-   * (discovery skips the cycle; the API multi-stream path falls back to
-   * the existing scrape on null).
-   *
-   * `partner` filters which keys are eligible: pass `null` for the shared
-   * pool, or a partner string to restrict to keys tagged with that
-   * partner. The choice mirrors what `pickBestKey` accepts.
+   * Pick a pool key for a call of `cost` units, add the cost to our
+   * estimate, and return a one-shot axios client bound to it. `partner`
+   * puts that partner's keys before the shared ones (the order is in
+   * `choosePoolKey` of the key model). Returns null only when every
+   * eligible key has been refused by Google today, or none is configured.
    */
   private async acquirePoolClient(
     cost: number,
     partner: string | null,
     context: string,
-  ): Promise<{ client: AxiosInstance; keyId: string; keyLabel: string } | null> {
+  ): Promise<PoolClient | null> {
     // The day roll-over has to come before the pick: with every key spent no key is
     // picked, so a reset that only ran on a charge never ran again, and the pool stayed
     // "exhausted" after Google's reset until a restart or an admin opening the quota
     // panel (2026-09-20: no YouTube Scout for the first 52 minutes of a broadcast).
     this.resetPoolQuotaIfNewDay();
-    const picked = await YouTubeApiKeyModel.pickBestKey(partner, cost, this.perKeyUsed);
+    const picked = await YouTubeApiKeyModel.pickBestKey(partner, cost, this.perKeyUsed, new Set(this.poolRefused.keys()));
     if (!picked) {
       logger.error(
-        `YouTube discovery pool exhausted (partner=${partner ?? 'shared'}, ` +
-        `need ${cost} for ${context}). Add a key in Settings or wait for daily reset.`,
+        `YouTube discovery pool exhausted (partner=${partner ?? 'shared'}, need ${cost} for ${context}): ` +
+        `every eligible key was refused by Google today (${this.poolRefused.size} refused), or none is configured. ` +
+        `Add a key in Settings or wait for the daily reset.`,
       );
       return null;
     }
-    if (!this.chargePoolKey(picked.id, picked.daily_quota, cost)) {
-      logger.warn(`YouTube pool key ${picked.label} couldn't accept ${cost} units`);
-      return null;
+    if (picked.overEstimate && !this.poolOverEstimateLogged.has(picked.id)) {
+      this.poolOverEstimateLogged.add(picked.id);
+      logger.warn(
+        `YouTube pool key ${picked.label} is past our estimate (${this.perKeyUsed.get(picked.id) ?? 0}/${picked.daily_quota} units) ` +
+        `but Google has not refused it today; using it until it does`,
+      );
     }
+    this.chargePoolKey(picked.id, cost);
     YouTubeApiKeyModel.touchLastUsed(picked.id).catch(() => {});
     const client = axios.create({
       baseURL: API_BASE,
       params: { key: picked.secret },
     });
-    return { client, keyId: picked.id, keyLabel: picked.label };
+    return { client, keyId: picked.id, keyLabel: picked.label, dailyQuota: picked.daily_quota };
+  }
+
+  /** Add `cost` units to our estimate for a key. The estimate orders the keys; it never blocks a call. */
+  private chargePoolKey(keyId: string, cost: number): void {
+    this.resetPoolQuotaIfNewDay();
+    this.perKeyUsed.set(keyId, (this.perKeyUsed.get(keyId) ?? 0) + cost);
+    this.savePoolQuotaToDisk();
+  }
+
+  /** Google refused the key for the day: retire it until the reset and show it as spent. */
+  private markPoolKeyRefused(key: PoolClient, context: string): void {
+    this.poolRefused.set(key.keyId, this.perKeyResetDate);
+    this.perKeyUsed.set(key.keyId, Math.max(this.perKeyUsed.get(key.keyId) ?? 0, key.dailyQuota));
+    this.savePoolQuotaToDisk();
+    logger.error(
+      `YouTube pool key ${key.keyLabel} refused by Google (quotaExceeded) on ${context}; ` +
+      `retired until the daily reset (${this.poolRefused.size} of the pool's keys refused today)`,
+    );
   }
 
   /**
-   * Reserve `cost` units against a specific pool key. Returns true if charged,
-   * false if the key has insufficient remaining quota.
+   * Run one API call through the pool: pick a key, make the call, and when
+   * Google answers quotaExceeded retire that key and repeat with the next
+   * one. `exhausted` means no key is left to try; `failed` is a network or
+   * server error after the usual retries (the key is kept).
    */
-  private chargePoolKey(keyId: string, dailyQuota: number, cost: number): boolean {
-    this.resetPoolQuotaIfNewDay();
-    const used = this.perKeyUsed.get(keyId) ?? 0;
-    if (used + cost > dailyQuota) return false;
-    this.perKeyUsed.set(keyId, used + cost);
-    this.savePoolQuotaToDisk();
-    return true;
+  private async poolRequest<T>(
+    cost: number,
+    partner: string | null,
+    context: string,
+    fn: (client: AxiosInstance) => Promise<T>,
+  ): Promise<{ ok: true; data: T; keyLabel: string } | { ok: false; reason: 'exhausted' | 'failed' }> {
+    for (let attempt = 0; attempt < MAX_POOL_KEYS_PER_CALL; attempt++) {
+      const key = await this.acquirePoolClient(cost, partner, context);
+      if (!key) return { ok: false, reason: 'exhausted' };
+      let quotaRefused = false;
+      const data = await this.requestWithRetry(async () => {
+        try {
+          return await fn(key.client);
+        } catch (err) {
+          if (isQuotaExceeded(err)) quotaRefused = true;
+          throw err;
+        }
+      }, `${context}, key=${key.keyLabel}`);
+      if (data !== null) return { ok: true, data, keyLabel: key.keyLabel };
+      if (!quotaRefused) return { ok: false, reason: 'failed' };
+      this.markPoolKeyRefused(key, context);
+    }
+    return { ok: false, reason: 'exhausted' };
   }
 
   // ── Multi-stream management ──────────────────────────────────────────
@@ -740,48 +811,30 @@ export class YouTubeAdapter implements PlatformAdapter {
     if (cached && Date.now() - cached.cachedAt < API_MULTISTREAM_SEARCH_TTL_MS) {
       videoIds = cached.videoIds;
     } else {
-      const acquired = await this.acquirePoolClient(
-        QUOTA_COST.search,
-        null,
-        `multi-stream-API search.list(${channelId})`,
-      );
-      if (!acquired) {
-        // Pool exhausted. If we have a stale cache, use it rather than
-        // falling all the way back to scrape — the channel's video set
-        // changes infrequently, and stale ids stop returning data once
-        // they go offline (videos.list returns 0 viewers).
-        if (cached && cached.videoIds.length > 0) {
+      const res = await this.poolRequest(QUOTA_COST.search, null, `multi-stream-API search.list(${channelId})`, async (client) => {
+        const { data } = await client.get<YouTubeListResponse<YouTubeSearchItem>>('/search', {
+          params: { channelId, eventType: 'live', type: 'video', part: 'id', maxResults: 50 },
+        });
+        return data;
+      });
+      if (!res.ok) {
+        if (res.reason === 'exhausted' && cached && cached.videoIds.length > 0) {
+          // Pool exhausted. A stale cache beats falling all the way back to
+          // scrape: the channel's video set changes infrequently, and stale
+          // ids stop returning data once they go offline (videos.list
+          // returns 0 viewers).
           logger.warn(
             `YouTube: multi-stream-API pool exhausted for ${channelId}, ` +
             `reusing stale cache (${cached.videoIds.length} videoId(s))`,
           );
           videoIds = cached.videoIds;
         } else {
+          // Pool exhausted with nothing cached, or network / 5xx after
+          // retries. Fall back to scrape.
           return null;
         }
       } else {
-        const result = await this.requestWithRetry(async () => {
-          const { data } = await acquired.client.get<YouTubeListResponse<YouTubeSearchItem>>(
-            '/search',
-            {
-              params: {
-                channelId,
-                eventType: 'live',
-                type: 'video',
-                part: 'id',
-                maxResults: 50,
-              },
-            },
-          );
-          return data;
-        }, `multi-stream-API search.list(${channelId}, key=${acquired.keyLabel})`);
-
-        if (!result) {
-          // Network / 5xx after retries. Fall back to scrape.
-          return null;
-        }
-
-        const freshIds = result.items.map((it) => it.id.videoId);
+        const freshIds = res.data.items.map((it) => it.id?.videoId).filter((id): id is string => Boolean(id));
         // Sticky merge: a stream search.list momentarily omits stays a
         // candidate for STICKY_VIDEO_TTL_MS; videos.list below decides what
         // is actually live and ended ids are dropped there.
@@ -820,37 +873,20 @@ export class YouTubeAdapter implements PlatformAdapter {
       idChunks.push(videoIds.slice(i, i + MAX_VIDEO_IDS_PER_REQUEST));
     }
     for (const batch of idChunks) {
-      const acquired = await this.acquirePoolClient(
-        QUOTA_COST.videosList,
-        null,
-        `multi-stream-API videos.list(${channelId})`,
-      );
-      if (!acquired) {
-        // Pool exhausted mid-call. Caller falls back to scrape.
-        logger.warn(
-          `YouTube: multi-stream-API videos.list pool exhausted for ${channelId}, ` +
-          `falling back to scrape`,
-        );
-        return null;
-      }
-      const result = await this.requestWithRetry(async () => {
-        const { data } = await acquired.client.get<YouTubeListResponse<YouTubeVideoItem>>(
-          '/videos',
-          {
-            params: {
-              id: batch.join(','),
-              part: 'snippet,liveStreamingDetails,statistics',
-            },
-          },
-        );
+      const res = await this.poolRequest(QUOTA_COST.videosList, null, `multi-stream-API videos.list(${channelId})`, async (client) => {
+        const { data } = await client.get<YouTubeListResponse<YouTubeVideoItem>>('/videos', {
+          params: { id: batch.join(','), part: 'snippet,liveStreamingDetails,statistics' },
+        });
         return data;
-      }, `multi-stream-API videos.list(${channelId}, key=${acquired.keyLabel})`);
-
-      if (!result) {
-        // Network / 5xx after retries. Fall back to scrape.
+      });
+      if (!res.ok) {
+        if (res.reason === 'exhausted') {
+          logger.warn(`YouTube: multi-stream-API videos.list pool exhausted for ${channelId}, falling back to scrape`);
+        }
+        // No key left, or network / 5xx after retries: caller falls back to scrape.
         return null;
       }
-      details.push(...result.items);
+      details.push(...res.data.items);
     }
     if (details.length === 0 && videoIds.length > 0) {
       // search.list returned ids but videos.list returned no items — this
@@ -2006,56 +2042,46 @@ export class YouTubeAdapter implements PlatformAdapter {
     const searchResults: Array<{ videoId: string; snippet: YouTubeSearchItem['snippet'] }> = [];
     const MAX_PAGES = 4; // 4 pages × 50 = up to 200 results per search term
 
+    let poolExhausted = false;
     for (const searchTerm of searchTerms) {
-      const acquired = await this.acquirePoolClient(QUOTA_COST.search, partner ?? null, `searchLiveStreams("${searchTerm}")`);
-      if (!acquired) break;
-      let activeClient = acquired.client;
-      let activeKeyLabel = acquired.keyLabel;
-
+      if (poolExhausted) break;
       let nextPageToken: string | undefined;
-
       for (let page = 0; page < MAX_PAGES; page++) {
-        const result = await this.requestWithRetry(async () => {
-          const params: Record<string, string | number> = {
-            q: searchTerm,
-            eventType: 'live',
-            type: 'video',
-            part: 'id,snippet',
-            maxResults: 50,
-          };
-          if (nextPageToken) params.pageToken = nextPageToken;
-
-          const { data } = await activeClient.get<YouTubeListResponse<YouTubeSearchItem>>(
-            '/search',
-            { params },
-          );
-          return data;
-        }, `searchLiveStreams("${searchTerm}" p${page + 1}, key=${activeKeyLabel})`);
-
-        if (!result || result.items.length === 0) break;
+        // Every page is one search.list call; the pool picks a key per call.
+        const params: Record<string, string | number> = {
+          q: searchTerm,
+          eventType: 'live',
+          type: 'video',
+          part: 'id,snippet',
+          maxResults: 50,
+        };
+        if (nextPageToken) params.pageToken = nextPageToken;
+        const res = await this.poolRequest(
+          QUOTA_COST.search,
+          partner ?? null,
+          `searchLiveStreams("${searchTerm}" p${page + 1})`,
+          async (client) => {
+            const { data } = await client.get<YouTubeListResponse<YouTubeSearchItem>>('/search', { params });
+            return data;
+          },
+        );
+        if (!res.ok) {
+          if (res.reason === 'exhausted') poolExhausted = true;
+          break;
+        }
+        const result = res.data;
+        if (result.items.length === 0) break;
 
         for (const item of result.items) {
-          if (!seenVideoIds.has(item.id.videoId)) {
-            seenVideoIds.add(item.id.videoId);
-            searchResults.push({ videoId: item.id.videoId, snippet: item.snippet });
+          const videoId = item.id?.videoId;
+          if (videoId && !seenVideoIds.has(videoId)) {
+            seenVideoIds.add(videoId);
+            searchResults.push({ videoId, snippet: item.snippet });
           }
         }
 
         nextPageToken = result.nextPageToken;
         if (!nextPageToken) break; // No more pages
-
-        // Additional pages cost quota too — pick a (potentially different)
-        // pool key for the next page.
-        if (page < MAX_PAGES - 1) {
-          const nextAcquired = await this.acquirePoolClient(
-            QUOTA_COST.search,
-            partner ?? null,
-            `searchLiveStreams("${searchTerm}") p${page + 2}`,
-          );
-          if (!nextAcquired) break;
-          activeClient = nextAcquired.client;
-          activeKeyLabel = nextAcquired.keyLabel;
-        }
       }
     }
 

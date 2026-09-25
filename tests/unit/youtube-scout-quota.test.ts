@@ -1,21 +1,32 @@
 /**
  * YouTube quota and Scout (2026-09-20).
  *
- * 1. The key pool's per-key counters roll over to a new day before a key is
- *    picked. They used to roll over only while charging a picked key: once
- *    every key was spent no key was picked, the counters never rolled over,
- *    and Scout stayed blind on YouTube after Google's daily reset until a
- *    restart or an admin opening the quota panel.
+ * 1. The key pool rolls over to a new day before a key is picked. It used
+ *    to roll over only while charging a picked key: once every key was spent
+ *    no key was picked, the counters never rolled over, and Scout stayed
+ *    blind on YouTube after Google's daily reset until a restart or an admin
+ *    opening the quota panel. Since 2026-09-25 only Google's own refusal
+ *    retires a key (see youtube-pool-soft-limit.test.ts).
  * 2. Scout sends its keywords as one merged query (100 units) instead of one
  *    search per keyword (1,100 units per cycle with eleven keywords).
  */
 import { YouTubeAdapter, youtubeSearchQueries } from '../../src/adapters/youtube';
 import * as KeyModel from '../../src/models/youtube-api-key';
 
-jest.mock('../../src/models/youtube-api-key', () => ({
-  pickBestKey: jest.fn(),
-  touchLastUsed: jest.fn(async () => undefined),
-}));
+jest.mock('../../src/models/youtube-api-key', () => {
+  const actual = jest.requireActual('../../src/models/youtube-api-key');
+  return {
+    ...actual,
+    pickBestKey: jest.fn(async (partner: string | null, cost: number, used: Map<string, number>, refused: Set<string> = new Set()) => {
+      const pick = actual.choosePoolKey(mockRows(), partner, cost, used, refused);
+      return pick ? { id: pick.row.id, label: pick.row.label, partner: pick.row.partner, secret: 'secret', daily_quota: pick.row.daily_quota, overEstimate: pick.overEstimate } : null;
+    }),
+    touchLastUsed: jest.fn(async () => undefined),
+  };
+});
+function mockRows() {
+  return [{ id: 'key-1', label: 'test key', partner: null, secret_encrypted: '', secret_last4: '0000', daily_quota: 10_000, is_active: true, created_by: null, created_at: '', updated_at: '', last_used_at: null }];
+}
 
 type Mutable = Record<string, unknown>;
 const KEY = { id: 'key-1', label: 'test key', partner: null, secret: 'secret', daily_quota: 10_000 };
@@ -54,32 +65,23 @@ describe('youtubeSearchQueries', () => {
 });
 
 describe('YouTube key pool: the daily roll-over', () => {
-  const pickBestKey = KeyModel.pickBestKey as jest.Mock;
-
   function spentAdapter(resetDate?: string) {
     const a = new YouTubeAdapter('test-key') as unknown as Mutable;
     a.savePoolQuotaToDisk = jest.fn();
     a.perKeyUsed = new Map([[KEY.id, KEY.daily_quota]]);
+    a.poolRefused = new Map([[KEY.id, resetDate ?? '2026-09-25']]);
     if (resetDate) a.perKeyResetDate = resetDate;
     return a as unknown as { acquirePoolClient(cost: number, partner: string | null, context: string): Promise<{ keyId: string } | null> } & Mutable;
   }
 
-  beforeEach(() => {
-    // The real selection rule: a key is eligible while its remaining quota covers the cost.
-    pickBestKey.mockReset();
-    pickBestKey.mockImplementation(async (_partner: string | null, cost: number, used: Map<string, number>) =>
-      KEY.daily_quota - (used.get(KEY.id) ?? 0) >= cost ? KEY : null,
-    );
-  });
-
-  it('picks a key again on a new day although every key was spent the day before', async () => {
+  it('picks a key again on a new day although Google refused every key the day before', async () => {
     const a = spentAdapter('2000-01-01');
     const got = await a.acquirePoolClient(100, null, 'test');
     expect(got?.keyId).toBe(KEY.id);
     expect((a.perKeyUsed as Map<string, number>).get(KEY.id)).toBe(100);
   });
 
-  it('stays exhausted within the same day', async () => {
+  it('keeps a key Google refused today out of the picks', async () => {
     const a = spentAdapter();
     expect(await a.acquirePoolClient(100, null, 'test')).toBeNull();
     expect((a.perKeyUsed as Map<string, number>).get(KEY.id)).toBe(KEY.daily_quota);
