@@ -6,7 +6,7 @@
  * what retires a key for the day, and the next key takes over the call.
  */
 import axios, { type AxiosInstance } from 'axios';
-import { YouTubeAdapter } from '../../src/adapters/youtube';
+import { YouTubeAdapter, isQuotaExceeded } from '../../src/adapters/youtube';
 import { choosePoolKey, type YouTubeApiKeyRow } from '../../src/models/youtube-api-key';
 import * as KeyModel from '../../src/models/youtube-api-key';
 
@@ -137,5 +137,31 @@ describe('YouTube key pool: the estimate never stops a call', () => {
     const got = await a.acquirePoolClient(100, null, 'test');
     expect(got?.keyId).toBe('shared-a');
     expect(a.poolRefused.size).toBe(0);
+  });
+});
+
+describe('isQuotaExceeded: which answers from Google retire a key for the day', () => {
+  const answer = (status: number, error: Record<string, unknown>) => Object.assign(new Error(`Request failed with status code ${status}`), { response: { status, data: { error } } });
+  // Google's answer on 2026-09-25 for a project past its search.list limit.
+  const perDay429 = answer(429, {
+    code: 429,
+    message: "Quota exceeded for quota metric 'Search Queries' and limit 'Search Queries per day' of service 'youtube.googleapis.com' for consumer 'project_number:1'.",
+    errors: [{ reason: 'rateLimitExceeded', domain: 'global' }],
+    status: 'RESOURCE_EXHAUSTED',
+    details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'RATE_LIMIT_EXCEEDED', metadata: { quota_limit: 'defaultSearchListPerDayPerProject', quota_unit: '1/d/{project}', quota_limit_value: '100' } }],
+  });
+  const perMinute429 = answer(429, { code: 429, message: "Quota exceeded for quota metric 'Queries' and limit 'Queries per minute' of service 'youtube.googleapis.com'.", errors: [{ reason: 'rateLimitExceeded' }], status: 'RESOURCE_EXHAUSTED', details: [{ metadata: { quota_unit: '1/min/{project}' } }] });
+
+  it('recognises the newer 429 answer for a per-day limit', () => {
+    expect(isQuotaExceeded(perDay429)).toBe(true);
+  });
+  it('keeps a per-minute 429 as a passing failure', () => {
+    expect(isQuotaExceeded(perMinute429)).toBe(false);
+  });
+  it('recognises the documented 403 and nothing else', () => {
+    expect(isQuotaExceeded(answer(403, { message: 'The request cannot be completed because you have exceeded your quota.', errors: [{ reason: 'quotaExceeded' }] }))).toBe(true);
+    expect(isQuotaExceeded(answer(403, { message: 'Forbidden', errors: [{ reason: 'forbidden' }] }))).toBe(false);
+    expect(isQuotaExceeded(answer(500, { message: 'Backend Error' }))).toBe(false);
+    expect(isQuotaExceeded(new Error('socket hang up'))).toBe(false);
   });
 });

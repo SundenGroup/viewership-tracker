@@ -45,13 +45,39 @@ interface PoolClient {
   dailyQuota: number;
 }
 
-/** Google's "this project is out of quota for the day" answer: a 403 with one of these reasons. */
-function isQuotaExceeded(err: unknown): boolean {
-  const ax = err as AxiosError<{ error?: { errors?: Array<{ reason?: string }>; message?: string } }>;
-  if (ax?.response?.status !== 403) return false;
-  const reasons = ax.response.data?.error?.errors?.map((e) => e.reason) ?? [];
-  const message = ax.response.data?.error?.message ?? '';
-  return reasons.some((r) => r === 'quotaExceeded' || r === 'dailyLimitExceeded') || /exceeded your quota/i.test(message);
+interface GoogleErrorBody {
+  error?: {
+    message?: string;
+    status?: string;
+    errors?: Array<{ reason?: string }>;
+    details?: Array<{ metadata?: Record<string, string> }>;
+  };
+}
+
+/**
+ * Google's "this project is out of quota for the day" answer. Two shapes:
+ * the documented 403 (reason quotaExceeded or dailyLimitExceeded), and from
+ * Google's newer quota system a 429 RESOURCE_EXHAUSTED that names a per-day
+ * limit (seen 2026-09-25: "Quota exceeded for quota metric 'Search Queries'
+ * and limit 'Search Queries per day'", quota_unit "1/d/{project}"). A 429
+ * for a per-minute or per-second limit is transient, not a refusal.
+ */
+export function isQuotaExceeded(err: unknown): boolean {
+  const ax = err as AxiosError<GoogleErrorBody>;
+  const status = ax?.response?.status;
+  const error = ax?.response?.data?.error;
+  const reasons = error?.errors?.map((e) => e.reason ?? '') ?? [];
+  const message = error?.message ?? '';
+  if (status === 403) {
+    return reasons.some((r) => r === 'quotaExceeded' || r === 'dailyLimitExceeded') || /exceeded your quota/i.test(message);
+  }
+  if (status === 429) {
+    const units = (error?.details ?? []).map((d) => d.metadata?.quota_unit ?? '');
+    if (units.some((u) => /\/d\//.test(u))) return true;
+    if (/per (minute|second|\d+ seconds)/i.test(message)) return false;
+    return /per day/i.test(message);
+  }
+  return false;
 }
 
 // Multi-stream API path: how long to trust a search.list result before
