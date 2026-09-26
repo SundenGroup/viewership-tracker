@@ -6,7 +6,7 @@ import * as path from 'path';
 import logger from '../utils/logger';
 import { mergeStickyIds, dropStickyId, type StickyHistory } from '../utils/sticky-ids';
 import { config } from '../utils/config';
-import type { PlatformAdapter, ChannelSnapshot, DiscoveredStream } from './types';
+import type { PlatformAdapter, ChannelSnapshot, DiscoveredStream, SearchOptions } from './types';
 import * as YouTubeApiKeyModel from '../models/youtube-api-key';
 import { normalizeLanguageCode } from '../utils/language';
 import { getPushNotifier } from '../services/push-notifier';
@@ -268,6 +268,9 @@ export class YouTubeAdapter implements PlatformAdapter {
   /** Keys Google refused today (quotaExceeded): key id to the day it happened. */
   private poolRefused = new Map<string, string>();
   private poolOverEstimateLogged = new Set<string>();
+  /** Last time an "empty pool" line was logged, per message key: the state repeats every poll. */
+  private poolEmptyLoggedAt = new Map<string, number>();
+  private static readonly POOL_EMPTY_LOG_EVERY_MS = 10 * 60_000;
 
   constructor(apiKey?: string, quotaLimit?: number) {
     this.apiKey = apiKey ?? config.youtube.apiKey;
@@ -460,7 +463,8 @@ export class YouTubeAdapter implements PlatformAdapter {
     this.resetPoolQuotaIfNewDay();
     const picked = await YouTubeApiKeyModel.pickBestKey(partner, cost, this.perKeyUsed, new Set(this.poolRefused.keys()));
     if (!picked) {
-      logger.error(
+      this.logPoolEmpty(
+        `exhausted:${partner ?? 'shared'}`,
         `YouTube discovery pool exhausted (partner=${partner ?? 'shared'}, need ${cost} for ${context}): ` +
         `every eligible key was refused by Google today (${this.poolRefused.size} refused), or none is configured. ` +
         `Add a key in Settings or wait for the daily reset.`,
@@ -481,6 +485,18 @@ export class YouTubeAdapter implements PlatformAdapter {
       params: { key: picked.secret },
     });
     return { client, keyId: picked.id, keyLabel: picked.label, dailyQuota: picked.daily_quota };
+  }
+
+  /** An empty pool is reported once, then again every ten minutes while it stays empty. */
+  private logPoolEmpty(key: string, message: string, level: 'error' | 'warn' = 'error'): void {
+    const now = Date.now();
+    const last = this.poolEmptyLoggedAt.get(key) ?? 0;
+    if (now - last < YouTubeAdapter.POOL_EMPTY_LOG_EVERY_MS) {
+      logger.debug(message);
+      return;
+    }
+    this.poolEmptyLoggedAt.set(key, now);
+    logger[level](`${message} (repeats are logged every 10 minutes)`);
   }
 
   /** Add `cost` units to our estimate for a key. The estimate orders the keys; it never blocks a call. */
@@ -849,9 +865,10 @@ export class YouTubeAdapter implements PlatformAdapter {
           // scrape: the channel's video set changes infrequently, and stale
           // ids stop returning data once they go offline (videos.list
           // returns 0 viewers).
-          logger.warn(
-            `YouTube: multi-stream-API pool exhausted for ${channelId}, ` +
-            `reusing stale cache (${cached.videoIds.length} videoId(s))`,
+          this.logPoolEmpty(
+            `stale:${channelId}`,
+            `YouTube: multi-stream-API pool exhausted for ${channelId}, reusing stale cache (${cached.videoIds.length} videoId(s))`,
+            'warn',
           );
           videoIds = cached.videoIds;
         } else {
@@ -907,7 +924,7 @@ export class YouTubeAdapter implements PlatformAdapter {
       });
       if (!res.ok) {
         if (res.reason === 'exhausted') {
-          logger.warn(`YouTube: multi-stream-API videos.list pool exhausted for ${channelId}, falling back to scrape`);
+          this.logPoolEmpty(`videos:${channelId}`, `YouTube: multi-stream-API videos.list pool exhausted for ${channelId}, falling back to scrape`, 'warn');
         }
         // No key left, or network / 5xx after retries: caller falls back to scrape.
         return null;
@@ -2050,6 +2067,7 @@ export class YouTubeAdapter implements PlatformAdapter {
     keywords?: string[],
     _categoryIds?: string[],
     partner?: string | null,
+    options?: SearchOptions,
   ): Promise<DiscoveredStream[]> {
     // Determine search term(s):
     // - If gameId is set: single search for the game name (e.g. "Counter-Strike 2")
@@ -2066,7 +2084,9 @@ export class YouTubeAdapter implements PlatformAdapter {
 
     const seenVideoIds = new Set<string>();
     const searchResults: Array<{ videoId: string; snippet: YouTubeSearchItem['snippet'] }> = [];
-    const MAX_PAGES = 4; // 4 pages × 50 = up to 200 results per search term
+    // Pages per keyword: the series' setting (Scout, "YouTube search depth"),
+    // else the full four pages (4 × 50 = up to 200 results per search term).
+    const MAX_PAGES = youtubeSearchPageCap(options?.youtubeSearchPages);
 
     let poolExhausted = false;
     for (const searchTerm of searchTerms) {
@@ -2214,6 +2234,14 @@ function sleep(ms: number): Promise<void> {
  * Long lists are split so no query grows past `maxChars`. `YOUTUBE_SCOUT_MERGED=0`
  * goes back to one search per keyword.
  */
+/** The number of search pages one keyword may fetch: 1 to 4, the full 4 when unset. */
+export function youtubeSearchPageCap(value: unknown, fallback = 4): number {
+  if (value === undefined || value === null || value === '') return fallback;
+  const n = typeof value === 'string' ? parseInt(value, 10) : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(4, Math.max(1, Math.round(n)));
+}
+
 export function youtubeSearchQueries(
   keywords: string[],
   merged: boolean = process.env.YOUTUBE_SCOUT_MERGED !== '0',

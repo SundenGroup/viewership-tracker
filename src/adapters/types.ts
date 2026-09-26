@@ -60,5 +60,16 @@ export interface PlatformAdapter {
      *  the YouTube adapter for partner-tagged API key routing. Other
      *  adapters ignore this. */
     partner?: string | null,
+    /** Per-series knobs; only the YouTube adapter reads them today. */
+    options?: SearchOptions,
   ): Promise<DiscoveredStream[]>;
+}
+
+export interface SearchOptions {
+  /**
+   * How many result pages (50 hits, 100 quota units each) one keyword may
+   * fetch on YouTube. Each project allows 100 searches a day, so this is
+   * the series' main cost lever: the watch parties sit on the first page.
+   */
+  youtubeSearchPages?: number;
 }

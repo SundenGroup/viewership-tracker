@@ -1,4 +1,5 @@
 import type { Knex } from 'knex';
+import { youtubeSearchPageCap } from '../adapters/youtube';
 import logger from '../utils/logger';
 import { config } from '../utils/config';
 import { normalizeLanguageCode } from '../utils/language';
@@ -387,6 +388,7 @@ export class DiscoveryService {
           keywords.length > 0 ? keywords : undefined,
           categoryIds,
           series.partner,
+          { youtubeSearchPages: youtubeSearchPageCap((series.metadata as Record<string, unknown>)?.youtube_search_pages) },
         );
         return { platform, streams };
       } catch (err) {
