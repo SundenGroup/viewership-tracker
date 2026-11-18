@@ -57,3 +57,23 @@ export function tiktokExtraRule(metadata: unknown): TikTokExtraRule {
   if (!meta || typeof meta !== 'object') return 'named';
   return (meta as Record<string, unknown>).tiktok_extra_rule === 'all_but_excluded' ? 'all_but_excluded' : 'named';
 }
+
+/**
+ * True when a tracker's TikTok categories are captured with the wide
+ * language list (metadata.tiktok_wide_sweep = true). TikTok shows one
+ * viewer about 30 rooms of a category, picked by the viewer's language, so
+ * a category with streams in many languages is only seen by asking in many.
+ * It costs capture time, which is why it is per tracker.
+ */
+export function tiktokWideSweep(metadata: unknown): boolean {
+  let meta: unknown = metadata;
+  if (typeof meta === 'string') {
+    try {
+      meta = JSON.parse(meta);
+    } catch {
+      return false;
+    }
+  }
+  if (!meta || typeof meta !== 'object') return false;
+  return (meta as Record<string, unknown>).tiktok_wide_sweep === true;
+}

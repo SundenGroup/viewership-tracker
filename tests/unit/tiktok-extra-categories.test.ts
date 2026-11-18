@@ -1,7 +1,7 @@
 /**
  * Neighbouring TikTok categories read from a tracker's metadata.
  */
-import { tiktokExtraCategories, tiktokExtraRule } from '../../src/utils/tiktok-extra-categories';
+import { tiktokExtraCategories, tiktokExtraRule, tiktokWideSweep } from '../../src/utils/tiktok-extra-categories';
 import { titleExcluded, titleNamesGame } from '../../src/services/youtube-game-tracker';
 
 describe('tiktokExtraCategories', () => {
@@ -62,5 +62,15 @@ describe('rooms of the GTA V category on GTA VI launch day', () => {
     expect(counted('GTA V MOD DE POLIA')).toBe(false);
     expect(counted('FiveM Unive Roleplay')).toBe(false);
     expect(counted('GTA 6 LAUNCH DAY+ BYE GTA 5')).toBe(false);
+  });
+});
+
+describe('tiktokWideSweep', () => {
+  it('is on only for an explicit true', () => {
+    expect(tiktokWideSweep({ tiktok_wide_sweep: true })).toBe(true);
+    expect(tiktokWideSweep(JSON.stringify({ tiktok_wide_sweep: true }))).toBe(true);
+    expect(tiktokWideSweep({ tiktok_wide_sweep: 'true' })).toBe(false);
+    expect(tiktokWideSweep({})).toBe(false);
+    expect(tiktokWideSweep('not json')).toBe(false);
   });
 });

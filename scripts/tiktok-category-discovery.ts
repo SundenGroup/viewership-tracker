@@ -56,18 +56,39 @@ const MAX_FEED_PAGES = 12;
 /**
  * Language settings the category feed is asked again with, after the
  * browser's own. TikTok hands one viewer about 30 rooms of a category and
- * picks them by the viewer's language: on 2026-11-18 the GTA V grid gave a
- * Swedish browser 28 rooms, and the same feed asked as Arabic, Spanish,
- * US English, French, Portuguese and German gave 81 more. Repeating a
- * setting returns the same rooms, so the difference is the language, not
- * chance. The region parameter alone changes nothing.
+ * picks them by the viewer's language. Measured on 2026-11-18 with 45
+ * settings: the GTA V grid gave a Swedish browser 29 rooms and 249 across
+ * all of them. What the measurement showed:
+ *   - the code must be the bare language ("pt", "de"): "pt-BR" and "de-DE"
+ *     return nothing new, and regional variants ("en-US", "es-MX",
+ *     "ar-SA") return what the bare code already gave;
+ *   - the country parameters change nothing;
+ *   - asking a setting twice returns the same rooms, so the gain is the
+ *     language and not chance;
+ *   - every setting stops at about 30 rooms, so a large language is still
+ *     only seen in part.
  *
- * Override with TIKTOK_DISCOVER_LANGS="en|es|ar" (empty string = no sweep).
+ * Every category gets the short list. A tracker that sets
+ * metadata.tiktok_wide_sweep gets the wide one for its categories (the
+ * server names them in discover-config): it adds about 40 seconds per
+ * category to a pass.
+ *
+ * Override with TIKTOK_DISCOVER_LANGS / TIKTOK_DISCOVER_WIDE_LANGS
+ * ("en|es|ar"; an empty string turns that list off).
  */
-const SWEEP_LANGUAGES = (process.env.TIKTOK_DISCOVER_LANGS ?? 'en|es|ar|fr|pt-BR|de-DE')
-  .split('|').map((x) => x.trim()).filter(Boolean);
-/** Pages per extra language. The first pages hold what is new; later ones repeat. */
-const SWEEP_PAGES = 4;
+const pipeList = (raw: string) => raw.split('|').map((x) => x.trim()).filter(Boolean);
+const SWEEP_LANGUAGES = pipeList(process.env.TIKTOK_DISCOVER_LANGS ?? 'en|es|ar|fr|pt|de|ru');
+const WIDE_LANGUAGES = pipeList(
+  process.env.TIKTOK_DISCOVER_WIDE_LANGS ?? 'pl|uk|vi|it|id|hu|hr|tl|ms|uz|bn|hi|ne|az|tr|ro|cs',
+);
+/** Pages per language of the short list: these hold up to 25 new rooms each. */
+const SWEEP_PAGES = Math.max(1, Number(process.env.TIKTOK_DISCOVER_LANG_PAGES ?? 4) || 4);
+/** Pages per language of the wide list: a handful of rooms each. */
+const WIDE_PAGES = 2;
+/** Pause between pages of a language call (the page's own feed keeps its slower pace). */
+const SWEEP_PAGE_PAUSE_MS = 500;
+/** List languages that added nothing as well (for measuring which settings are worth asking). */
+const SWEEP_REPORT_EMPTY = process.env.TIKTOK_DISCOVER_REPORT_EMPTY === '1';
 const PAGE_SETTLE_MS = 8_000;
 /** Longest wait for the page to fire its signed feed call (a background tab is slower). */
 const FEED_WAIT_MS = 25_000;
@@ -149,14 +170,17 @@ class CDP {
  * Only the grid feed is worth capturing; channel_id=86 requests on the
  * same page are the "suggested hosts" rail — never touch those.
  */
-const CAPTURE_EXPR = (maxPages: number, language: string | null = null) => `
+const CAPTURE_EXPR = (maxPages: number, language: string | null = null, pauseMs = 900) => `
 (async () => {
   const out = [];
   const signed = performance.getEntriesByType('resource')
     .map(e => e.name)
     .filter(u => u.includes('webcast.tiktok.com/webcast/feed/')
               && u.includes('pc_web_game_category_feed'));
-  const base = signed[signed.length - 1];
+  // The page's own call, remembered the first time: our replays below show
+  // up among the page's requests too, and the "last feed call" would then be
+  // one of ours, with another language and a cursor deep into its list.
+  const base = window.__clutchFeedBase || (window.__clutchFeedBase = signed[signed.length - 1]);
   if (!base) return { error: 'no signed category-grid feed URL on page', feeds: [] };
   const lang = ${JSON.stringify(language)};
   let cursor = null;
@@ -164,10 +188,11 @@ const CAPTURE_EXPR = (maxPages: number, language: string | null = null) => `
     try {
       let u = base;
       if (lang) {
-        // The same signed call, asked as a viewer of another language.
+        // The same signed call, asked as a viewer of another language, from the top of its list.
         const url = new URL(base);
         for (const key of ['app_language', 'webcast_language', 'browser_language']) url.searchParams.set(key, lang);
         if (cursor != null) url.searchParams.set('max_time', cursor);
+        else url.searchParams.delete('max_time');
         u = url.toString();
       } else if (cursor != null) {
         u = u.includes('max_time=')
@@ -179,14 +204,14 @@ const CAPTURE_EXPR = (maxPages: number, language: string | null = null) => `
       out.push(j);
       if (j.status_code !== 0 || !j.extra || !j.extra.has_more) break;
       cursor = j.extra.max_time;
-      await new Promise(res => setTimeout(res, 900));
+      await new Promise(res => setTimeout(res, ${pauseMs}));
     } catch (e) { out.push({ error: String(e) }); break; }
   }
   return { feeds: out };
 })()
 `;
 
-async function captureCategory(cdp: CDP, category: string): Promise<TikTokFeedRoom[]> {
+async function captureCategory(cdp: CDP, category: string, wide = false): Promise<TikTokFeedRoom[]> {
   // The /live/category/ GRID page — not the /live/ player, whose feed
   // only samples a handful of rooms (see CAPTURE_EXPR).
   const pageUrl = `https://www.tiktok.com/live/category/${category}`;
@@ -233,40 +258,51 @@ async function captureCategory(cdp: CDP, category: string): Promise<TikTokFeedRo
     if (value?.error) log(`  ${category}: ${value.error}`);
 
     const byUser = new Map<string, TikTokFeedRoom>();
-    const merge = (feeds: unknown[]): number => {
+    /** Adds the rooms of some feed pages; returns how many were new and the viewers they hold. */
+    const merge = (feeds: unknown[]): { fresh: number; viewers: number } => {
       let fresh = 0;
+      let viewers = 0;
       for (const feed of feeds) {
         for (const room of parseFeedRooms(feed)) {
           const key = room.username.toLowerCase();
           const prev = byUser.get(key);
-          if (!prev) fresh++;
+          if (!prev) {
+            fresh++;
+            viewers += room.viewerCount;
+          }
           if (!prev || room.viewerCount > prev.viewerCount) byUser.set(key, room);
         }
       }
-      return fresh;
+      return { fresh, viewers };
     };
-    const own = merge(value?.feeds ?? []);
+    const own = merge(value?.feeds ?? []).fresh;
 
     // The same feed as a viewer of other languages, one short call each so
     // a slow one cannot run into the browser connection's 30 s limit. Only
     // when the page gave a feed at all: without it there is nothing to ask.
     const added: string[] = [];
     if (own > 0) {
-      for (const language of SWEEP_LANGUAGES) {
+      const asks: Array<[string, number]> = [
+        ...SWEEP_LANGUAGES.map((l): [string, number] => [l, SWEEP_PAGES]),
+        ...(wide ? WIDE_LANGUAGES.filter((l) => !SWEEP_LANGUAGES.includes(l)).map((l): [string, number] => [l, WIDE_PAGES]) : []),
+      ];
+      for (const [language, pages] of asks) {
         try {
           const res = await cdp.send<Captured>(
             'Runtime.evaluate',
-            { expression: CAPTURE_EXPR(SWEEP_PAGES, language), awaitPromise: true, returnByValue: true },
+            { expression: CAPTURE_EXPR(pages, language, SWEEP_PAGE_PAUSE_MS), awaitPromise: true, returnByValue: true },
             sessionId,
           );
-          const fresh = merge(res.result?.value?.feeds ?? []);
-          if (fresh > 0) added.push(`${language} +${fresh}`);
+          const got = merge(res.result?.value?.feeds ?? []);
+          if (got.fresh > 0) added.push(`${language} +${got.fresh}/${got.viewers}`);
+          else if (SWEEP_REPORT_EMPTY) added.push(`${language} +0`);
         } catch (err) {
           log(`  ${category}: language ${language} failed: ${(err as Error).message}`);
         }
-        await sleep(600);
+        await sleep(300);
       }
-      if (SWEEP_LANGUAGES.length > 0) {
+      if (asks.length > 0) {
+        // Per language: rooms it added / viewers in those rooms.
         log(`  ${category}: ${own} room(s) as loaded, ${byUser.size} with other languages${added.length ? ` (${added.join(', ')})` : ''}`);
       }
     }
@@ -278,12 +314,12 @@ async function captureCategory(cdp: CDP, category: string): Promise<TikTokFeedRo
 
 // ── Relay I/O ────────────────────────────────────────────────────────────
 
-async function fetchConfig(): Promise<{ categories: string[]; intervalSeconds: number }> {
+async function fetchConfig(): Promise<{ categories: string[]; wideCategories?: string[]; intervalSeconds: number }> {
   const res = await fetch(`${RELAY_URL}/api/relay/tiktok/discover-config`, {
     headers: { Authorization: `Bearer ${RELAY_SECRET}` },
   });
   if (!res.ok) throw new Error(`discover-config ${res.status}`);
-  return (await res.json()) as { categories: string[]; intervalSeconds: number };
+  return (await res.json()) as { categories: string[]; wideCategories?: string[]; intervalSeconds: number };
 }
 
 async function pushRooms(category: string, rooms: TikTokFeedRoom[]): Promise<void> {
@@ -300,7 +336,9 @@ async function pushRooms(category: string, rooms: TikTokFeedRoom[]): Promise<voi
 // ── Main ─────────────────────────────────────────────────────────────────
 
 async function runPass(): Promise<void> {
-  const configured = (await fetchConfig()).categories;
+  const config = await fetchConfig();
+  const configured = config.categories;
+  const wide = new Set(config.wideCategories ?? []);
   const categories = ONLY_CATEGORIES.length > 0 ? configured.filter((c) => ONLY_CATEGORIES.includes(c)) : configured;
   if (categories.length === 0) {
     log('No categories configured (TIKTOK_DISCOVER_CATEGORIES on server).');
@@ -311,11 +349,12 @@ async function runPass(): Promise<void> {
   try {
     for (const category of categories) {
       try {
-        let rooms = await captureCategory(cdp, category);
+        let rooms = await captureCategory(cdp, category, wide.has(category));
         // An empty capture is usually a page that never fired its feed call:
         // one more try before this category goes without rooms for a pass.
-        if (rooms.length === 0) rooms = await captureCategory(cdp, category);
-        const top = rooms.slice(0, 3).map((r) => `${r.username}=${r.viewerCount}`).join(', ');
+        if (rooms.length === 0) rooms = await captureCategory(cdp, category, wide.has(category));
+        const top = [...rooms].sort((x, y) => y.viewerCount - x.viewerCount).slice(0, 3)
+          .map((r) => `${r.username}=${r.viewerCount}`).join(', ');
         log(`  ${category}: ${rooms.length} live room(s)${top ? ` — top: ${top}` : ''}`);
         if (rooms.length > 0) await pushRooms(category, rooms);
       } catch (err) {

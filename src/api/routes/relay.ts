@@ -16,7 +16,7 @@ import db from '../../utils/db';
 import logger from '../../utils/logger';
 import { getPushNotifier } from '../../services/push-notifier';
 import * as TikTokDiscoveredModel from '../../models/tiktok-discovered-stream';
-import { tiktokExtraCategories } from '../../utils/tiktok-extra-categories';
+import { tiktokExtraCategories, tiktokWideSweep } from '../../utils/tiktok-extra-categories';
 import { ingestTikTokReadings, type TikTokReading } from '../../services/tiktok-ingest';
 
 /** One guard for the process — state must persist across pushes. */
@@ -582,7 +582,8 @@ router.get('/tiktok/channels', requireRelayToken, async (_req: Request, res: Res
  * tracker's tiktok_category_slug (so enabling TikTok on a tracker
  * starts capture automatically), each tracker's neighbouring categories
  * (metadata.tiktok_extra_categories), plus any env extras
- * (TIKTOK_DISCOVER_CATEGORIES="slug|slug").
+ * (TIKTOK_DISCOVER_CATEGORIES="slug|slug"). `wideCategories` are the ones
+ * to capture with the wide language list.
  */
 router.get('/tiktok/discover-config', requireRelayToken, async (_req: Request, res: Response, next: NextFunction) => {
   try {
@@ -595,7 +596,16 @@ router.get('/tiktok/discover-config', requireRelayToken, async (_req: Request, r
     const extra = (process.env.TIKTOK_DISCOVER_CATEGORIES ?? '')
       .split('|').map((s) => s.trim()).filter(Boolean);
     const categories = [...new Set([...rows, ...neighbours, ...extra])];
-    res.json({ categories, intervalSeconds: 300 });
+    // Categories of trackers that ask for the wide language list
+    // (metadata.tiktok_wide_sweep): their own category and its neighbours.
+    const wideCategories = [
+      ...new Set(
+        trackers
+          .filter((t) => tiktokWideSweep(t.metadata))
+          .flatMap((t) => [t.tiktok_category_slug, ...tiktokExtraCategories(t.metadata)]),
+      ),
+    ];
+    res.json({ categories, wideCategories, intervalSeconds: 300 });
   } catch (err) {
     next(err);
   }
