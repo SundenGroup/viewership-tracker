@@ -23,8 +23,10 @@ import { Avatar } from './DiscoverDetailPage';
  */
 interface TrackerPulse {
   buckets: Array<{ ts: string; total_ccv: number }>;
-  /** Current live rows — feeds the platform split + top-3. */
+  /** Current live rows — feeds the top-3. */
   live?: api.GameTrackerLeaderboardRow[];
+  /** Totals over every live channel — viewers now and the platform split. */
+  summary?: api.GameTrackerLiveSummary | null;
 }
 
 export function DiscoverListPage() {
@@ -60,9 +62,10 @@ export function DiscoverListPage() {
       Promise.all([
         api.getGameTrackerRange(t.slug, from, to, 3600),
         api.getGameTrackerLeaderboard(t.slug, undefined, 60).catch(() => []),
+        api.getGameTrackerLiveSummary(t.slug).catch(() => null),
       ])
-        .then(([r, live]) => {
-          if (!cancelled) setPulse((prev) => ({ ...prev, [t.slug]: { buckets: r.buckets, live } }));
+        .then(([r, live, summary]) => {
+          if (!cancelled) setPulse((prev) => ({ ...prev, [t.slug]: { buckets: r.buckets, live, summary } }));
         })
         .catch(() => {
           if (!cancelled) setPulse((prev) => ({ ...prev, [t.slug]: null }));
@@ -242,6 +245,7 @@ export function DiscoverListPage() {
                 {t.youtube_enabled && <PlatformPip id="youtube" size={12} />}
                 {t.soop_category_id && <PlatformPip id="soop" size={12} />}
                 {t.tiktok_category_slug && <PlatformPip id="tiktok" size={12} />}
+                {typeof t.metadata?.chzzk_category_id === 'string' && <PlatformPip id="chzzk" size={12} />}
               </Row>
               <TrackerPulseStrip pulse={pulse[t.slug]} />
               {isAdmin && (
@@ -268,7 +272,9 @@ function TrackerPulseStrip({ pulse }: { pulse: TrackerPulse | null | undefined }
   const stats = useMemo(() => {
     const buckets = pulse?.buckets ?? [];
     if (buckets.length === 0) return null;
-    const now = buckets[buckets.length - 1]?.total_ccv ?? 0;
+    // Every live channel right now when the server has the summary; the
+    // latest hourly bucket otherwise.
+    const now = pulse?.summary ? pulse.summary.viewers : buckets[buckets.length - 1]?.total_ccv ?? 0;
     const last24 = buckets.slice(-24);
     const peak24 = last24.reduce((m, b) => Math.max(m, b.total_ccv), 0);
     const peak7d = buckets.reduce((m, b) => Math.max(m, b.total_ccv), 0);
@@ -281,8 +287,10 @@ function TrackerPulseStrip({ pulse }: { pulse: TrackerPulse | null | undefined }
   if (pulse === null || !stats) return null;
 
   const live = pulse.live ?? [];
+  // The split covers every live channel on every platform, not the top rows.
   const byPlat = new Map<string, number>();
-  for (const r of live) byPlat.set(r.platform, (byPlat.get(r.platform) ?? 0) + r.concurrent_viewers);
+  if (pulse.summary) for (const p of pulse.summary.platforms) byPlat.set(p.platform, p.viewers);
+  else for (const r of live) byPlat.set(r.platform, (byPlat.get(r.platform) ?? 0) + r.concurrent_viewers);
   const platTotal = [...byPlat.values()].reduce((a, b) => a + b, 0);
   const split = [...byPlat.entries()]
     .sort((a, b) => b[1] - a[1])

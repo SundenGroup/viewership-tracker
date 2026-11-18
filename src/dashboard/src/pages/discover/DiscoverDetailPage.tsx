@@ -69,6 +69,9 @@ export function DiscoverDetailPage() {
 
   const [detail, setDetail] = useState<GameTrackerDetail | null>(null);
   const [leaderboard, setLeaderboard] = useState<GameTrackerLeaderboardRow[] | null>(null);
+  // Totals over EVERY live channel. The leaderboard holds 200 rows at most,
+  // so summing it understates a large tracker and shows a small platform as 0.
+  const [liveSummary, setLiveSummary] = useState<api.GameTrackerLiveSummary | null>(null);
   // Category mappings are operator detail — folded away until asked for.
   const [showCategories, setShowCategories] = useState(false);
   const [pendingReview, setPendingReview] = useState<number | null>(null);
@@ -106,13 +109,16 @@ export function DiscoverDetailPage() {
     let cancelled = false;
     const refresh = async () => {
       try {
-        const [d, lb] = await Promise.all([
+        const [d, lb, summary] = await Promise.all([
           api.getGameTracker(slug),
-          api.getGameTrackerLeaderboard(slug, undefined, 200),
+          // Filtered on the server, so a platform's own largest channels come back.
+          api.getGameTrackerLeaderboard(slug, undefined, 200, platform),
+          api.getGameTrackerLiveSummary(slug).catch(() => null),
         ]);
         if (cancelled) return;
         setDetail(d);
         setLeaderboard(lb);
+        setLiveSummary(summary);
         setLastUpdatedAt(Date.now());
         setError(null);
       } catch (err) {
@@ -125,12 +131,19 @@ export function DiscoverDetailPage() {
       cancelled = true;
       clearInterval(handle);
     };
-  }, [slug]);
+  }, [slug, platform]);
 
   const totalCcvNow = useMemo(
     () => (leaderboard ?? []).reduce((sum, row) => sum + row.concurrent_viewers, 0),
     [leaderboard],
   );
+  // Live totals for the current platform scope, from the server's summary.
+  const scopeTotals = useMemo(() => {
+    if (!liveSummary) return null;
+    if (platform === 'all') return { channels: liveSummary.channels, viewers: liveSummary.viewers };
+    const p = liveSummary.platforms.find((x) => x.platform === platform);
+    return { channels: p?.channels ?? 0, viewers: p?.viewers ?? 0 };
+  }, [liveSummary, platform]);
   const peakNow = useMemo(
     () => (leaderboard ?? []).reduce((max, row) => Math.max(max, row.concurrent_viewers), 0),
     [leaderboard],
@@ -153,6 +166,10 @@ export function DiscoverDetailPage() {
     return { lang: best.lang, sharePct: Math.round((best.ccv / total) * 100) };
   }, [leaderboard]);
 
+  // CHZZK's category lives in the tracker's metadata, not in a column.
+  const chzzkCategoryId = typeof detail?.metadata?.chzzk_category_id === 'string' ? detail.metadata.chzzk_category_id : null;
+  const chzzkCategoryName = typeof detail?.metadata?.chzzk_category_name === 'string' ? detail.metadata.chzzk_category_name : null;
+  const livePlatformKeys = (liveSummary?.platforms ?? []).map((p) => p.platform).sort().join(',');
   // Platforms this tracker is configured to cover — deterministic, so the
   // control doesn't flicker as small streams enter and leave the top 25.
   const trackedPlatforms = useMemo(() => {
@@ -162,9 +179,12 @@ export function DiscoverDetailPage() {
     if (detail?.youtube_enabled) out.push('youtube');
     if (detail?.soop_category_id) out.push('soop');
     if (detail?.tiktok_category_slug) out.push('tiktok');
+    if (chzzkCategoryId) out.push('chzzk');
+    // Anything else with live channels right now still gets a chip.
+    for (const p of livePlatformKeys.split(',')) if (p && !out.includes(p)) out.push(p);
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail?.twitch_game_id, detail?.kick_category_id, detail?.youtube_enabled, detail?.soop_category_id, detail?.tiktok_category_slug]);
+  }, [detail?.twitch_game_id, detail?.kick_category_id, detail?.youtube_enabled, detail?.soop_category_id, detail?.tiktok_category_slug, chzzkCategoryId, livePlatformKeys]);
 
   // Review tab: editors see the YouTube queue as a tab of its own, with a
   // pending badge — no more hunting for it behind the YouTube filter.
@@ -325,6 +345,12 @@ export function DiscoverDetailPage() {
                     <span>{detail.soop_category_name ?? detail.soop_category_id}</span>
                   </Row>
                 )}
+                {chzzkCategoryId && (
+                  <Row gap={6} align="center">
+                    <PlatformPip id="chzzk" size={12} />
+                    <span>{chzzkCategoryName ?? chzzkCategoryId}</span>
+                  </Row>
+                )}
                 {detail.tiktok_category_slug && (
                   <Row gap={6} align="center">
                     <PlatformPip id="tiktok" size={12} />
@@ -430,6 +456,7 @@ export function DiscoverDetailPage() {
               totalCcvNow={totalCcvNow}
               peakNow={peakNow}
               activeChannelCount={detail.active_channel_count}
+              scopeTotals={scopeTotals}
               topLanguage={topLanguage}
               leaderboard={leaderboard}
               lastCycle={detail.last_cycle}
@@ -667,6 +694,7 @@ function LiveTab({
   totalCcvNow,
   peakNow,
   activeChannelCount,
+  scopeTotals,
   topLanguage,
   leaderboard,
   lastCycle,
@@ -680,6 +708,8 @@ function LiveTab({
   totalCcvNow: number;
   peakNow: number;
   activeChannelCount: number;
+  /** Channels and viewers over every live channel in the current platform scope. */
+  scopeTotals: { channels: number; viewers: number } | null;
   topLanguage: { lang: string; sharePct: number } | null;
   leaderboard: GameTrackerLeaderboardRow[] | null;
   lastCycle: GameTrackerDetail['last_cycle'];
@@ -761,11 +791,13 @@ function LiveTab({
       if (lang !== '—' && (!best || ccv > best.ccv)) best = { lang, ccv };
     }
     return {
-      total,
+      // The rows are the 200 largest at most; the headline total is every live channel.
+      total: scopeTotals ? scopeTotals.viewers : total,
       peak,
       topLang: best && total > 0 ? { lang: best.lang, sharePct: Math.round((best.ccv / total) * 100) } : null,
     };
-  }, [shown]);
+  }, [shown, scopeTotals]);
+  const scopeChannelCount = scopeTotals ? scopeTotals.channels : platform === 'all' ? activeChannelCount : (shown?.length ?? 0);
   const scopeSuffix = platform === 'all' ? '' : ` · ${platform}`;
   const deltaVs6h =
     baseline6h != null && baseline6h > 0 && kpis.total > 0
@@ -815,7 +847,7 @@ function LiveTab({
         />
         <StatBlock
           label="Live channels"
-          value={fmtN(platform === 'all' ? activeChannelCount : (shown?.length ?? 0))}
+          value={fmtN(scopeChannelCount)}
           sub={platform === 'all' ? 'all platforms' : 'matching filter'}
         />
         <StatBlock
@@ -831,7 +863,7 @@ function LiveTab({
       <Section
         title="Top streams now"
         eyebrow={`Live now · ${(shown ?? []).length}${
-          activeChannelCount > (shown?.length ?? 0) && platform === 'all' ? ` of ${fmtN(activeChannelCount)}` : ''
+          scopeChannelCount > (shown?.length ?? 0) ? ` of ${fmtN(scopeChannelCount)}` : ''
         } streams`}
         right={
           <Row gap={10} align="center" wrap>

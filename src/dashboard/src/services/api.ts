@@ -1502,13 +1502,28 @@ export function deleteGameTracker(slug: string) {
   return request<void>(`/api/game-trackers/${slug}`, { method: 'DELETE' });
 }
 
-export function getGameTrackerLeaderboard(slug: string, at?: Date, limit = 50) {
+export function getGameTrackerLeaderboard(slug: string, at?: Date, limit = 50, platform?: string) {
   const params = new URLSearchParams();
   if (at) params.set('at', at.toISOString());
   params.set('limit', String(limit));
+  // Applied on the server: the largest channels OF that platform, not the
+  // few of them that happen to sit in the overall top list.
+  if (platform && platform !== 'all') params.set('platform', platform);
   return request<GameTrackerLeaderboardRow[]>(
     `/api/game-trackers/${slug}/leaderboard?${params.toString()}`,
   );
+}
+
+/** Live channels and viewers over every live channel, in total and per platform. */
+export interface GameTrackerLiveSummary {
+  at: string;
+  channels: number;
+  viewers: number;
+  platforms: Array<{ platform: string; channels: number; viewers: number }>;
+}
+
+export function getGameTrackerLiveSummary(slug: string) {
+  return request<GameTrackerLiveSummary>(`/api/game-trackers/${slug}/live-summary`);
 }
 
 /**
