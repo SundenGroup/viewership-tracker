@@ -37,6 +37,10 @@ const QUOTA_COST = {
 
 /** How many keys one pool call may try before giving up (each refusal retires a key). */
 const MAX_POOL_KEYS_PER_CALL = 10;
+/** Batches of 50 video ids read at the same time through the pool. */
+const POOL_VIDEOS_CONCURRENCY = 4;
+/** One videos.list call may take this long before it counts as failed. */
+const POOL_VIDEOS_TIMEOUT_MS = 10_000;
 
 interface PoolClient {
   client: AxiosInstance;
@@ -1466,27 +1470,61 @@ export class YouTubeAdapter implements PlatformAdapter {
    */
   async getLiveVideos(videoIds: string[]): Promise<YouTubeLiveVideo[]> {
     const items = await this.getVideoDetails(videoIds);
-    const out: YouTubeLiveVideo[] = [];
-    for (const v of items) {
-      const live = v.liveStreamingDetails;
-      if (!live || live.concurrentViewers == null) continue; // not live now
-      const ccv = Number(live.concurrentViewers);
-      if (!Number.isFinite(ccv)) continue;
-      out.push({
-        videoId: v.id,
-        channelId: v.snippet.channelId,
-        channelTitle: v.snippet.channelTitle,
-        title: v.snippet.title,
-        description: v.snippet.description ?? '',
-        tags: v.snippet.tags ?? [],
-        concurrentViewers: ccv,
-        language: normalizeLanguageCode(v.snippet.defaultAudioLanguage ?? v.snippet.defaultLanguage ?? null),
-        categoryId: v.snippet.categoryId ?? null,
-        startedAt: live.actualStartTime ?? null,
-        activeLiveChatId: live.activeLiveChatId ?? null,
-      });
-    }
-    return out;
+    return items.map(toLiveVideo).filter((v): v is YouTubeLiveVideo => v !== null);
+  }
+
+  /**
+   * The same read through the shared key pool, for a tracker that follows
+   * more streams than one key can read for a day (one key is 10,000 calls,
+   * a tracker reading 1,500 streams a minute makes 43,200). Each call picks
+   * the shared key with the most room left; a key Google refuses is retired
+   * until the daily reset and the next one is tried. Partner keys are never
+   * picked.
+   *
+   * A few calls run at once so a long roster does not stretch the poll.
+   * `degraded` is returned with the result, not kept on the adapter: it
+   * means some batch could not be read, so "absent" is not "ended".
+   */
+  async getLiveVideosFromPool(
+    videoIds: string[],
+  ): Promise<{ videos: YouTubeLiveVideo[]; degraded: boolean; calls: number }> {
+    const batches = chunk(videoIds, MAX_VIDEO_IDS_PER_REQUEST);
+    const videos: YouTubeLiveVideo[] = [];
+    let degraded = false;
+    let calls = 0;
+    let exhausted = false;
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < batches.length && !exhausted) {
+        const batch = batches[next++];
+        calls++;
+        const res = await this.poolRequest(
+          QUOTA_COST.videosList,
+          null,
+          'game-tracker videos.list',
+          async (client) => {
+            const { data } = await client.get<YouTubeListResponse<YouTubeVideoItem>>('/videos', {
+              params: { id: batch.join(','), part: 'snippet,liveStreamingDetails,statistics' },
+              timeout: POOL_VIDEOS_TIMEOUT_MS,
+            });
+            return data;
+          },
+        );
+        if (!res.ok) {
+          degraded = true;
+          if (res.reason === 'exhausted') exhausted = true;
+          continue;
+        }
+        for (const item of res.data.items ?? []) {
+          const video = toLiveVideo(item);
+          if (video) videos.push(video);
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(POOL_VIDEOS_CONCURRENCY, batches.length) }, () => worker()),
+    );
+    return { videos, degraded, calls };
   }
 
   /**
@@ -2208,6 +2246,27 @@ export class YouTubeAdapter implements PlatformAdapter {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
+
+/** A videos.list item as a live stream, or null when it is not live right now. */
+function toLiveVideo(v: YouTubeVideoItem): YouTubeLiveVideo | null {
+  const live = v.liveStreamingDetails;
+  if (!live || live.concurrentViewers == null) return null; // not live now
+  const ccv = Number(live.concurrentViewers);
+  if (!Number.isFinite(ccv)) return null;
+  return {
+    videoId: v.id,
+    channelId: v.snippet.channelId,
+    channelTitle: v.snippet.channelTitle,
+    title: v.snippet.title,
+    description: v.snippet.description ?? '',
+    tags: v.snippet.tags ?? [],
+    concurrentViewers: ccv,
+    language: normalizeLanguageCode(v.snippet.defaultAudioLanguage ?? v.snippet.defaultLanguage ?? null),
+    categoryId: v.snippet.categoryId ?? null,
+    startedAt: live.actualStartTime ?? null,
+    activeLiveChatId: live.activeLiveChatId ?? null,
+  };
+}
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];

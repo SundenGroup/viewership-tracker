@@ -281,6 +281,8 @@ const NUMERIC_KEYS: Record<string, { min: number; max: number }> = {
   maxRoster: { min: 1, max: 2_000 },
   discoveryIntervalSeconds: { min: 120, max: 86_400 },
 };
+/** On/off settings the rules editor may save. Anything else in the stored config is kept as it is. */
+const BOOLEAN_KEYS = ['useKeyPool'] as const;
 
 router.put(
   '/:slug/youtube/config',
@@ -315,6 +317,15 @@ router.put(
           return;
         }
         merged[key] = Math.round(n);
+      }
+
+      for (const key of BOOLEAN_KEYS) {
+        if (incoming[key] === undefined) continue;
+        if (typeof incoming[key] !== 'boolean') {
+          res.status(400).json({ error: `${key} must be true or false` });
+          return;
+        }
+        merged[key] = incoming[key];
       }
 
       const patch: Record<string, unknown> = { youtube_config: merged };

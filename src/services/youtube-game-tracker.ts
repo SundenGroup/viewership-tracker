@@ -54,6 +54,7 @@ import type { GameTracker } from '../models/game-tracker';
 import * as GatingModel from '../models/game-tracker-youtube-channel';
 import * as Quarantine from '../models/game-tracker-youtube-quarantine';
 import { discoverLive } from './youtube-live-discovery';
+import { DiscoveryRunner } from './youtube-discovery-runner';
 import { watchlistVideoIds } from './youtube-channel-watch';
 
 /**
@@ -131,6 +132,13 @@ export interface YouTubeTrackerConfig {
   maxRoster?: number;
   /** Seconds between Live-search scrapes (default 600, floor 120). */
   discoveryIntervalSeconds?: number;
+  /**
+   * Read viewer counts through the shared key pool instead of the single
+   * legacy key. One key reads about 300 streams a minute for a day at
+   * most, so a tracker that follows more needs the pool. Partner keys are
+   * never used: the pool is asked for shared keys only.
+   */
+  useKeyPool?: boolean;
   /**
    * Category ids accepted besides Gaming (20), for streams whose TITLE
    * names the game. Creators file launch streams under Entertainment (24)
@@ -445,8 +453,8 @@ export function gateVideo(
 export class YouTubeGameTracker {
   private readonly adapter: YouTubeAdapter;
   private readonly db: Knex;
-  /** trackerId → last discovery run (discovery is slower than polling). */
-  private readonly lastDiscovery = new Map<string, number>();
+  /** The Live-search pass runs beside the polls, never inside one. */
+  private readonly discovery = new DiscoveryRunner(discoverLive);
 
   constructor(adapter: YouTubeAdapter, db: Knex) {
     this.adapter = adapter;
@@ -512,18 +520,24 @@ export class YouTubeGameTracker {
       MIN_DISCOVERY_INTERVAL_S,
       cfg.discoveryIntervalSeconds ?? DEFAULT_DISCOVERY_INTERVAL_S,
     );
-    const discoveryDue =
-      Date.now() - (this.lastDiscovery.get(tracker.id) ?? 0) >= discoveryEverySeconds * 1000;
-    if (discoveryDue && (cfg.queries?.length ?? 0) > 0) {
-      this.lastDiscovery.set(tracker.id, Date.now());
+    // Kick a search pass off when one is due; it runs in the background and
+    // a later poll picks its result up. Nothing here waits for YouTube.
+    this.discovery.kick(
+      tracker.id,
+      tracker.slug,
+      cfg.queries ?? [],
+      cfg.discoveryPagesPerQuery ?? 3,
+      discoveryEverySeconds * 1000,
+    );
+    const candidates = this.discovery.take(tracker.id);
+    if (candidates) {
       result.discoveryRan = true;
-      const candidates = await discoverLive(cfg.queries!, cfg.discoveryPagesPerQuery ?? 3);
       for (const c of candidates) {
         if (c.roughViewers == null) unsized.add(c.videoId);
         else roster.set(c.videoId, Math.max(roster.get(c.videoId) ?? 0, c.roughViewers));
       }
       logger.debug(
-        `[YT:${tracker.slug}] discovery found ${candidates.length}, roster now ${roster.size} sized + ${unsized.size} unsized`,
+        `[YT:${tracker.slug}] search pass added ${candidates.length}, roster now ${roster.size} sized + ${unsized.size} unsized`,
       );
     }
 
@@ -534,10 +548,18 @@ export class YouTubeGameTracker {
     result.quotaCalls = Math.ceil(ids.length / 50);
 
     // ── 2. Track ───────────────────────────────────────────────────────
-    const live = await this.adapter.getLiveVideos(ids);
+    let live: YouTubeLiveVideo[];
+    if (cfg.useKeyPool) {
+      const read = await this.adapter.getLiveVideosFromPool(ids);
+      live = read.videos;
+      result.degraded = read.degraded;
+      result.quotaCalls = read.calls;
+    } else {
+      live = await this.adapter.getLiveVideos(ids);
+      result.degraded =
+        (this.adapter as { lastVideoDetailsDegraded?: boolean }).lastVideoDetailsDegraded === true;
+    }
     result.liveFound = live.length;
-    result.degraded =
-      (this.adapter as { lastVideoDetailsDegraded?: boolean }).lastVideoDetailsDegraded === true;
     if (result.degraded) {
       logger.warn(`[YT:${tracker.slug}] videos.list incomplete this cycle — roster kept, sessions left open`);
     }
