@@ -33,6 +33,7 @@ import {
   Kpi,
   HeroKPIs,
   ThemeToggle,
+  InfoTip,
 } from '@/components/design';
 import { fmtCompact, fmtN, fmtDateLong } from '@/design/format';
 import { getPlatform } from '@/design/platforms';
@@ -68,6 +69,12 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
   // Custom comparison baseline riding the link (?vs_scope&vs_id&vs_label&vs_sn)
   // — "every view is a URL" applies to comparisons too.
   const vsScope = searchParams.get('vs_scope');
+  // ?vs_scope=none is the export dialog's "no comparison" choice: no trend
+  // chips at all, not even the automatic previous-day ones.
+  const noCompare = vsScope === 'none';
+  // ?views=1 is the export dialog's "Include views": without it the report
+  // never asks for views and renders exactly as before.
+  const includeViews = searchParams.get('views') === '1';
   const vsId = searchParams.get('vs_id');
   const vsLabel = searchParams.get('vs_label');
   const vsShortName = searchParams.get('vs_sn');
@@ -339,6 +346,20 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
     { intervalMs: 300_000, enabled: !!shortName },
   );
 
+  // Live views, only for reports exported with "Include views".
+  const { data: viewsData } = usePollingApi<api.ViewsSummary>(
+    () => {
+      if (!shortName || !includeViews) return Promise.resolve(null as unknown as api.ViewsSummary);
+      if (resolvedScope && resolvedScope.level === 'multi_stage') {
+        return api.getPublicViews(shortName, 'multi_stage', resolvedScope.ids, viewFilter.languages, viewFilter.platforms, excludeChannelIds);
+      }
+      return api.getPublicViews(shortName, resolvedScope?.level, resolvedScope?.id, viewFilter.languages, viewFilter.platforms, excludeChannelIds);
+    },
+    [shortName, scopeCacheKey, filterKey, includeViews ? 'v' : ''],
+    { intervalMs: 600_000, enabled: !!shortName && includeViews },
+  );
+  const views = includeViews && viewsData && viewsData.channels.length > 0 ? viewsData : null;
+
   // Belt & braces: even if a fetch raced ahead of the view-group resolving,
   // never RENDER languages outside the active view.
   const filteredLanguagePeaks = useMemo(() => {
@@ -383,6 +404,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
   const previousScope = useMemo<
     { level: 'day' | 'stage' | 'series'; id: string; label: string } | null
   >(() => {
+    if (noCompare) return null;
     // A hand-picked baseline replaces the automatic previous-day trend.
     if (customCompare) return customCompare;
     if (!seriesInfo || !resolvedScope) return null;
@@ -415,7 +437,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       return prev ? { level: 'stage', id: prev.id, label: prev.name } : null;
     }
     return null;
-  }, [seriesInfo, resolvedScope, customCompare]);
+  }, [seriesInfo, resolvedScope, customCompare, noCompare]);
 
   const { data: prevMetrics } = usePollingApi<MetricsResponse>(
     () =>
@@ -669,6 +691,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
         trend={trend}
         dayBoundaries={dayBoundaries}
         viewLabel={viewLabel}
+        views={views}
       />
     );
   }
@@ -687,6 +710,7 @@ export function ReportPage({ variant }: { variant: ReportVariant }) {
       viewLabel={viewLabel}
       languagePeaks={filteredLanguagePeaks}
       prevLanguagePeaks={trend ? prevLanguagePeaks : null}
+      views={views}
     />
   );
 }
@@ -716,6 +740,7 @@ function SimpleReport({
   trend,
   dayBoundaries,
   viewLabel,
+  views,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
@@ -728,6 +753,7 @@ function SimpleReport({
   trend: TrendDeltas | null;
   dayBoundaries: Array<{ index: number; label: string }>;
   viewLabel: string | null;
+  views: api.ViewsSummary | null;
 }) {
   const totalDayCount = useMemo(() => {
     if (scopeLevel === 'day') return 1;
@@ -758,6 +784,10 @@ function SimpleReport({
       return tp != null && tp > 0 ? { ...t, peak: tp } : t;
     });
   }, [model.tierRows, timeline.region]);
+
+  const viewsBy = useMemo(() => viewsLookup(views), [views]);
+  const hasViews = viewsBy.total > 0;
+  const [tierMetric, setTierMetric] = useState<Metric>('peak');
 
   const eyebrow =
     scopeLevel === 'stage'
@@ -868,11 +898,14 @@ function SimpleReport({
           (t) => (t.peak ?? 0) > 0 || (t.viewedHours ?? 0) > 0 || (t.ccv ?? 0) > 0,
         );
         if (visibleTiers.length === 0) return null;
+        const showViews = hasViews && tierMetric === 'views';
+        const viewsDenom = visibleTiers.reduce((a, t) => a + (viewsBy.tier.get(t.key) ?? 0), 0);
         return (
           <>
-            <div className="eyebrow" style={{ marginBottom: 8 }}>
-              By category
-            </div>
+            <Row justify="space-between" style={{ marginBottom: 8, flexWrap: 'wrap', rowGap: 6 }}>
+              <div className="eyebrow">By category</div>
+              {hasViews && <MetricToggle value={tierMetric} onChange={setTierMetric} options={['peak', 'views']} />}
+            </Row>
             <div
               style={{
                 display: 'grid',
@@ -883,7 +916,10 @@ function SimpleReport({
                 marginBottom: 28,
               }}
             >
-              {visibleTiers.map((t) => (
+              {visibleTiers.map((t) => {
+                const tViews = viewsBy.tier.get(t.key) ?? 0;
+                const share = showViews ? (viewsDenom > 0 ? tViews / viewsDenom : 0) : t.share;
+                return (
                 <div key={t.key} className="card" style={{ padding: 14 }}>
                   <Row justify="space-between">
                     <div style={{ fontSize: 12, fontWeight: 600 }}>{t.label}</div>
@@ -891,17 +927,17 @@ function SimpleReport({
                       className="tabular"
                       style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}
                     >
-                      {(t.share * 100).toFixed(0)}%
+                      {(share * 100).toFixed(0)}%
                     </span>
                   </Row>
                   <div
                     className="tabular"
                     style={{ fontSize: 24, fontWeight: 500, marginTop: 4 }}
                   >
-                    {fmtCompact(t.peak || t.ccv)}
+                    {fmtCompact(showViews ? tViews : t.peak || t.ccv)}
                   </div>
                   <div style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>
-                    Peak CCV
+                    {showViews ? 'Live views' : 'Peak CCV'}
                   </div>
                   <div
                     style={{
@@ -914,18 +950,22 @@ function SimpleReport({
                   >
                     <div
                       style={{
-                        width: t.share * 100 + '%',
+                        width: share * 100 + '%',
                         height: '100%',
                         background: t.color,
                       }}
                     />
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </>
         );
       })()}
+
+      {/* Live views total (opt-in): one quiet band, the explanation behind its question mark. */}
+      {hasViews && views && <LiveViewsCard views={views} band />}
 
       <div style={{ marginTop: 40, fontSize: 10, color: 'var(--fg-dim)' }}>
         Clutch Viewership Tracker · tracker.clutch.game/public/{shortName}
@@ -950,6 +990,7 @@ function DetailedReport({
   viewLabel,
   languagePeaks,
   prevLanguagePeaks,
+  views,
 }: {
   seriesInfo: PublicSeriesInfo;
   model: ReturnType<typeof useDashboardModel>;
@@ -965,6 +1006,8 @@ function DetailedReport({
   languagePeaks: api.PublicLanguagePeak[] | null;
   /** lang(lower) → baseline peak, present only when a comparison is active. */
   prevLanguagePeaks: Map<string, number> | null;
+  /** Live views, present only when the report was exported with "Include views". */
+  views: api.ViewsSummary | null;
 }) {
   const narrow = useIsNarrow(640);
   const compact = useIsNarrow(900);
@@ -1196,10 +1239,17 @@ function DetailedReport({
     [model.tierRows, tierPeakFromTimeline],
   );
 
-  // ── Per-section metric toggles (Peak CCV vs Viewed Hours) ─────────────
-  const [tierMetric, setTierMetric] = useState<'peak' | 'hours'>('peak');
-  const [platformMetric, setPlatformMetric] = useState<'peak' | 'hours'>('hours');
-  const [languageMetric, setLanguageMetric] = useState<'peak' | 'hours'>('hours');
+  // ── Per-section metric toggles (Peak CCV, Viewed Hours, and Views when included) ──
+  const viewsBy = useMemo(() => viewsLookup(views), [views]);
+  const hasViews = viewsBy.total > 0;
+  const metricOptions: Metric[] = hasViews ? ['peak', 'hours', 'views'] : ['peak', 'hours'];
+  const [tierMetricRaw, setTierMetric] = useState<Metric>('peak');
+  const [platformMetricRaw, setPlatformMetric] = useState<Metric>('hours');
+  const [languageMetricRaw, setLanguageMetric] = useState<Metric>('hours');
+  // "Views" only exists while the views are loaded; without them fall back to the default.
+  const tierMetric: Metric = tierMetricRaw === 'views' && !hasViews ? 'peak' : tierMetricRaw;
+  const platformMetric: Metric = platformMetricRaw === 'views' && !hasViews ? 'hours' : platformMetricRaw;
+  const languageMetric: Metric = languageMetricRaw === 'views' && !hasViews ? 'hours' : languageMetricRaw;
 
   return (
     <div
@@ -1296,7 +1346,8 @@ function DetailedReport({
 
       <div style={{ height: 24 }} />
 
-      {/* Leaders strip — 3 cards per v5, with PlatformPip on relevant cards */}
+      {/* Leaders strip — 3 cards per v5, with PlatformPip on relevant cards
+          (plus the live views total when the export included views) */}
       <div
         style={{
           display: 'grid',
@@ -1351,6 +1402,8 @@ function DetailedReport({
               </div>
             );
           })}
+        {/* Live views total (opt-in): a fact card next to the leaders, never a hero KPI. */}
+        {hasViews && views && <LiveViewsCard views={views} />}
       </div>
 
       {/* Section 02 — By category (tier breakdown) */}
@@ -1361,23 +1414,28 @@ function DetailedReport({
           (t) => (t.peak ?? 0) > 0 || (t.viewedHours ?? 0) > 0 || (t.ccv ?? 0) > 0,
         );
         if (visibleTiers.length === 0) return null;
+        const tierValue = (t: (typeof visibleTiers)[number]) =>
+          tierMetric === 'views'
+            ? viewsBy.tier.get(t.key) ?? 0
+            : tierMetric === 'hours'
+              ? t.viewedHours ?? 0
+              : t.peak || t.ccv || 0;
         // Recompute share based on the selected metric within visible tiers
         // so the percentages sum to ~100% against what's shown.
-        const denom =
-          tierMetric === 'hours'
-            ? visibleTiers.reduce((a, t) => a + (t.viewedHours ?? 0), 0)
-            : visibleTiers.reduce((a, t) => a + (t.peak || t.ccv || 0), 0);
+        const denom = visibleTiers.reduce((a, t) => a + tierValue(t), 0);
         return (
           <>
             <Section
               eyebrow="By category"
               title={
-                tierMetric === 'hours'
-                  ? 'Viewed hours by category'
-                  : 'Peak concurrent by category'
+                tierMetric === 'views'
+                  ? 'Live views by category'
+                  : tierMetric === 'hours'
+                    ? 'Viewed hours by category'
+                    : 'Peak concurrent by category'
               }
               right={
-                <MetricToggle value={tierMetric} onChange={setTierMetric} />
+                <MetricToggle value={tierMetric} onChange={setTierMetric} options={metricOptions} />
               }
             >
               <div
@@ -1389,8 +1447,7 @@ function DetailedReport({
                 }}
               >
                 {visibleTiers.map((t) => {
-                  const val =
-                    tierMetric === 'hours' ? t.viewedHours ?? 0 : t.peak || t.ccv || 0;
+                  const val = tierValue(t);
                   const share = denom > 0 ? val / denom : 0;
                   return (
                     <div key={t.key} className="card" style={{ padding: 16 }}>
@@ -1419,7 +1476,7 @@ function DetailedReport({
                       <div
                         style={{ fontSize: 11, color: 'var(--fg-muted)' }}
                       >
-                        {tierMetric === 'hours' ? 'Viewed hours' : 'Peak CCV'}
+                        {tierMetric === 'views' ? 'Live views' : tierMetric === 'hours' ? 'Viewed hours' : 'Peak CCV'}
                       </div>
                       <div
                         style={{
@@ -1459,19 +1516,28 @@ function DetailedReport({
         <Section
           eyebrow="Platforms"
           title={
-            platformMetric === 'hours'
-              ? 'Share of viewed hours'
-              : 'Share of peak CCV'
+            platformMetric === 'views'
+              ? 'Share of live views'
+              : platformMetric === 'hours'
+                ? 'Share of viewed hours'
+                : 'Share of peak CCV'
           }
           right={
-            <MetricToggle value={platformMetric} onChange={setPlatformMetric} />
+            <MetricToggle value={platformMetric} onChange={setPlatformMetric} options={metricOptions} />
           }
         >
           <Col gap={10}>
             {platformStats.map((p) => {
+              const pViews = viewsBy.platform.get(p.id.toLowerCase()) ?? 0;
               const share =
-                platformMetric === 'hours' ? p.hoursShare : p.peakShare;
-              const val = platformMetric === 'hours' ? p.hours : p.peak;
+                platformMetric === 'views'
+                  ? viewsBy.total > 0
+                    ? pViews / viewsBy.total
+                    : 0
+                  : platformMetric === 'hours'
+                    ? p.hoursShare
+                    : p.peakShare;
+              const val = platformMetric === 'views' ? pViews : platformMetric === 'hours' ? p.hours : p.peak;
               return (
                 <Row key={p.id} gap={10}>
                   <Row gap={6} style={{ width: 120 }}>
@@ -1504,9 +1570,11 @@ function DetailedReport({
                       color: 'var(--fg-muted)',
                     }}
                     title={
-                      platformMetric === 'hours'
-                        ? `${fmtN(val)} viewed hours`
-                        : `${fmtN(val)} peak CCV`
+                      platformMetric === 'views'
+                        ? `${fmtN(val)} live views`
+                        : platformMetric === 'hours'
+                          ? `${fmtN(val)} viewed hours`
+                          : `${fmtN(val)} peak CCV`
                     }
                   >
                     {fmtCompact(val)}
@@ -1524,25 +1592,33 @@ function DetailedReport({
         </Section>
         {languageStats.length > 0 && (
           <Section
-            eyebrow="Languages"
+            // The count rides in the eyebrow: next to a three-option toggle the
+            // title has no room for it.
+            eyebrow={`Languages · ${languageStats.length} tracked`}
             title={
-              languageMetric === 'hours'
-                ? `Viewed hours by language · ${languageStats.length} tracked`
-                : `Peak CCV by language · ${languageStats.length} tracked`
+              languageMetric === 'views'
+                ? 'Live views by language'
+                : languageMetric === 'hours'
+                  ? 'Viewed hours by language'
+                  : 'Peak CCV by language'
             }
             right={
-              <MetricToggle value={languageMetric} onChange={setLanguageMetric} />
+              <MetricToggle value={languageMetric} onChange={setLanguageMetric} options={metricOptions} />
             }
           >
             {(() => {
+              const langValue = (l: (typeof languageStats)[number]) =>
+                languageMetric === 'views'
+                  ? viewsBy.language.get(l.key) ?? 0
+                  : languageMetric === 'hours'
+                    ? l.hours
+                    : l.peak;
               const items = [...languageStats]
-                .sort((a, b) =>
-                  languageMetric === 'hours' ? b.hours - a.hours : b.peak - a.peak,
-                )
+                .sort((a, b) => langValue(b) - langValue(a))
                 .slice(0, 8)
                 .map((l, i) => ({
                   label: l.label,
-                  value: languageMetric === 'hours' ? l.hours : l.peak,
+                  value: langValue(l),
                   sub: '',
                   color: palette[i % palette.length]!,
                 }));
@@ -1610,111 +1686,18 @@ function DetailedReport({
 
       {/* Section 04b — peak by language (the post-event table partners ask
           for: each language's single best minute, when it happened, and how
-          it grew across broadcast days) */}
+          it compares to the baseline). Every column sorts; the change against
+          the baseline is its own column at the far right. */}
       {languagePeaks && languagePeaks.filter((l) => l.peakCCV > 0).length > 1 && (
         <>
-          <Section
-            eyebrow="Language peaks"
-            title="Peak viewership per language"
-            right={<Pill>{languagePeaks.filter((l) => l.peakCCV > 0).length} languages</Pill>}
-          >
-            <div>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: narrow
-                    ? 'minmax(0, 1fr) 96px 88px'
-                    : 'minmax(120px, 1fr) 120px 80px 110px 120px',
-                  padding: '0 4px 6px',
-                  fontSize: 10,
-                  fontFamily: 'var(--font-mono)',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.06em',
-                  color: 'var(--fg-dim)',
-                  borderBottom: '1px solid var(--border)',
-                }}
-              >
-                <div>Language</div>
-                <div style={{ textAlign: 'right' }}>Peak</div>
-                {!narrow && <div style={{ textAlign: 'right' }}>At</div>}
-                {!narrow && <div style={{ textAlign: 'right' }}>Avg viewers</div>}
-                <div style={{ textAlign: 'right' }}>{narrow ? 'Hours' : 'Viewed hours'}</div>
-              </div>
-              {languagePeaks
-                .filter((l) => l.peakCCV > 0)
-                .slice(0, 14)
-                .map((l) => {
-                  const peakTime = new Intl.DateTimeFormat('sv-SE', {
-                    timeZone: seriesInfo.timezone,
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  }).format(new Date(l.peakAt));
-                  return (
-                    <div
-                      key={l.language ?? '—'}
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: narrow
-                    ? 'minmax(0, 1fr) 96px 88px'
-                    : 'minmax(120px, 1fr) 120px 80px 110px 120px',
-                        padding: '7px 4px',
-                        borderBottom: '1px solid var(--border-faint)',
-                        fontSize: 12.5,
-                        alignItems: 'center',
-                      }}
-                    >
-                      <div>{languageFullName(l.language)}</div>
-                      <div className="tabular" style={{ textAlign: 'right', fontWeight: 600 }}>
-                        {fmtN(l.peakCCV)}
-                        {(() => {
-                          const base = l.language
-                            ? prevLanguagePeaks?.get(l.language.toLowerCase())
-                            : undefined;
-                          if (!base) return null;
-                          // Small moves used to round to 0 and vanish (German: +0.5%
-                          // read as "no comparison"); show one decimal under 1%.
-                          const raw = ((l.peakCCV - base) / base) * 100;
-                          const flat = Math.abs(raw) < 0.05;
-                          const label = flat ? '0' : Math.abs(raw) < 1 ? raw.toFixed(1) : String(Math.round(raw));
-                          return (
-                            <span
-                              className="tabular"
-                              title={`vs comparison: ${fmtN(base)} peak`}
-                              style={{
-                                marginLeft: 6,
-                                fontSize: 10,
-                                fontWeight: 500,
-                                color: flat ? 'var(--fg-dim)' : raw > 0 ? 'var(--live)' : 'var(--danger)',
-                              }}
-                            >
-                              {raw > 0 && !flat ? '+' : ''}{label}%
-                            </span>
-                          );
-                        })()}
-                        {narrow && (
-                          <div style={{ fontSize: 10, fontWeight: 400, color: 'var(--fg-dim)' }}>
-                            at {peakTime}
-                          </div>
-                        )}
-                      </div>
-                      {!narrow && (
-                        <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
-                          {peakTime}
-                        </div>
-                      )}
-                      {!narrow && (
-                        <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
-                          {fmtN(l.avgCCV)}
-                        </div>
-                      )}
-                      <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
-                        {fmtN(l.viewedHours)}
-                      </div>
-                    </div>
-                  );
-                })}
-            </div>
-          </Section>
+          <LanguagePeaksTable
+            rows={languagePeaks}
+            timezone={seriesInfo.timezone}
+            baseline={prevLanguagePeaks}
+            baselineLabel={trend?.label ?? null}
+            changeLabel={trend?.kind === 'custom' ? 'vs baseline' : scopeLevel === 'stage' ? 'vs prev stage' : 'vs prev day'}
+            narrow={narrow}
+          />
           <div style={{ height: 24 }} />
         </>
       )}
@@ -1791,7 +1774,7 @@ function DetailedReport({
         eyebrow="Leaderboard"
         title={`All ${model.leaderboard.length} tracked channels: sort any column`}
       >
-        <Leaderboard channels={model.leaderboard} />
+        <Leaderboard channels={model.leaderboard} views={views} />
       </Section>
 
       <div
@@ -1855,14 +1838,236 @@ function useIsNarrow(maxWidth = 640): boolean {
   return narrow;
 }
 
-function Leaderboard({ channels }: { channels: ChannelRow[] }) {
-  const [sort, setSort] = useState<keyof ChannelRow>('peak');
+type LangSortKey = 'language' | 'peak' | 'at' | 'avg' | 'hours' | 'delta';
+
+/** How many languages the peaks table lists at most; beyond it the pill says "Top N of M". */
+const LANGUAGE_PEAKS_CAP = 20;
+
+/** Peak viewership per language: the biggest languages by peak, sortable on
+ *  every column. When a comparison is active the change in peak against the
+ *  baseline is a narrow column of its own right after Peak (it belongs to the
+ *  peak, so it sits next to it), never glued to the number itself. */
+function LanguagePeaksTable({
+  rows,
+  timezone,
+  baseline,
+  baselineLabel,
+  changeLabel,
+  narrow,
+}: {
+  rows: api.PublicLanguagePeak[];
+  timezone: string;
+  baseline: Map<string, number> | null;
+  baselineLabel: string | null;
+  changeLabel: string;
+  narrow: boolean;
+}) {
+  const [sort, setSort] = useState<LangSortKey>('peak');
+  const [dir, setDir] = useState<'asc' | 'desc'>('desc');
+  const hasCmp = !!baseline && baseline.size > 0;
+  const fmtTime = useMemo(
+    () => new Intl.DateTimeFormat('sv-SE', { timeZone: timezone, hour: '2-digit', minute: '2-digit' }),
+    [timezone],
+  );
+  const totalLanguages = useMemo(() => rows.filter((l) => l.peakCCV > 0).length, [rows]);
+  const items = useMemo(() => {
+    const top = rows
+      .filter((l) => l.peakCCV > 0)
+      .sort((a, b) => b.peakCCV - a.peakCCV)
+      .slice(0, LANGUAGE_PEAKS_CAP);
+    return top.map((l) => {
+      const base = l.language ? baseline?.get(l.language.toLowerCase()) : undefined;
+      return {
+        ...l,
+        name: languageFullName(l.language),
+        atMs: new Date(l.peakAt).getTime(),
+        atText: fmtTime.format(new Date(l.peakAt)),
+        base: base ?? null,
+        delta: base ? ((l.peakCCV - base) / base) * 100 : null,
+      };
+    });
+  }, [rows, baseline, fmtTime]);
+  const sorted = useMemo(() => {
+    const val = (x: (typeof items)[number]): string | number =>
+      sort === 'language'
+        ? x.name
+        : sort === 'peak'
+          ? x.peakCCV
+          : sort === 'at'
+            ? x.atMs
+            : sort === 'avg'
+              ? x.avgCCV
+              : sort === 'hours'
+                ? x.viewedHours
+                : (x.delta ?? Number.NEGATIVE_INFINITY);
+    return [...items].sort((a, b) => {
+      const av = val(a);
+      const bv = val(b);
+      if (typeof av === 'string' && typeof bv === 'string') {
+        return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+      }
+      return dir === 'asc' ? Number(av) - Number(bv) : Number(bv) - Number(av);
+    });
+  }, [items, sort, dir]);
+  const toggle = (k: LangSortKey) => {
+    if (sort === k) setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSort(k);
+      setDir(k === 'language' ? 'asc' : 'desc');
+    }
+  };
+  const cols = narrow
+    ? 'minmax(0, 1fr) 100px 84px'
+    : `minmax(120px, 1fr) 110px${hasCmp ? ' 96px' : ''} 70px 110px 120px`;
+  const H = ({
+    k,
+    children,
+    align = 'right',
+    title,
+  }: {
+    k: LangSortKey;
+    children: React.ReactNode;
+    align?: 'left' | 'right';
+    title?: string;
+  }) => (
+    <button
+      type="button"
+      onClick={() => toggle(k)}
+      title={title}
+      aria-sort={sort === k ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      style={{
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        cursor: 'pointer',
+        color: sort === k ? 'var(--fg)' : 'var(--fg-dim)',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 10,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        display: 'flex',
+        gap: 4,
+        alignItems: 'center',
+        justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
+        width: '100%',
+        textAlign: align,
+      }}
+    >
+      {children} {sort === k && <span>{dir === 'asc' ? '▲' : '▼'}</span>}
+    </button>
+  );
+  const chip = (d: number | null, base: number | null) => {
+    if (d === null || base === null) return <span style={{ color: 'var(--fg-dim)' }}>–</span>;
+    // Small moves used to round to 0 and vanish (German: +0.5% read as "no
+    // comparison"); show one decimal under 1%.
+    const flat = Math.abs(d) < 0.05;
+    const label = flat ? '0' : Math.abs(d) < 1 ? d.toFixed(1) : String(Math.round(d));
+    return (
+      <span
+        className="tabular"
+        title={`baseline peak ${fmtN(base)}`}
+        style={{ fontSize: 11, fontWeight: 500, color: flat ? 'var(--fg-dim)' : d > 0 ? 'var(--live)' : 'var(--danger)' }}
+      >
+        {d > 0 && !flat ? '+' : ''}{label}%
+      </span>
+    );
+  };
+  return (
+    <Section
+      eyebrow="Language peaks"
+      title="Peak viewership per language"
+      right={
+        <Pill>
+          {totalLanguages > items.length ? `Top ${items.length} of ${totalLanguages}` : `${items.length} languages`}
+        </Pill>
+      }
+    >
+      <div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: cols,
+            padding: '0 4px 6px',
+            borderBottom: '1px solid var(--border)',
+          }}
+        >
+          <H k="language" align="left">Language</H>
+          <H k="peak">Peak</H>
+          {!narrow && hasCmp && (
+            <H k="delta" title={baselineLabel ? `Peak vs ${baselineLabel}` : 'Peak vs the comparison baseline'}>
+              {changeLabel}
+            </H>
+          )}
+          {!narrow && <H k="at">At</H>}
+          {!narrow && <H k="avg">Avg viewers</H>}
+          <H k="hours">{narrow ? 'Hours' : 'Viewed hours'}</H>
+        </div>
+        {sorted.map((l) => (
+          <div
+            key={l.language ?? '—'}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: cols,
+              padding: '7px 4px',
+              borderBottom: '1px solid var(--border-faint)',
+              fontSize: 12.5,
+              alignItems: 'center',
+            }}
+          >
+            <div>{l.name}</div>
+            <div className="tabular" style={{ textAlign: 'right', fontWeight: 600 }}>
+              {fmtN(l.peakCCV)}
+              {narrow && (
+                <div style={{ fontSize: 10, fontWeight: 400, color: 'var(--fg-dim)' }}>
+                  at {l.atText}
+                  {hasCmp && l.delta !== null && <> · {chip(l.delta, l.base)}</>}
+                </div>
+              )}
+            </div>
+            {!narrow && hasCmp && (
+              <div className="tabular" style={{ textAlign: 'right' }}>{chip(l.delta, l.base)}</div>
+            )}
+            {!narrow && (
+              <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+                {l.atText}
+              </div>
+            )}
+            {!narrow && (
+              <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+                {fmtN(l.avgCCV)}
+              </div>
+            )}
+            <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
+              {fmtN(l.viewedHours)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+
+type LbRow = ChannelRow & { views: number };
+
+function Leaderboard({ channels, views }: { channels: ChannelRow[]; views?: api.ViewsSummary | null }) {
+  // Live views ride along only when the report was exported with "Include views".
+  const viewsByChannel = useMemo(
+    () => new Map((views?.channels ?? []).map((c) => [c.channelId, c])),
+    [views],
+  );
+  const hasViews = viewsByChannel.size > 0;
+  const rows: LbRow[] = useMemo(
+    () => channels.map((c) => ({ ...c, views: viewsByChannel.get(c.id)?.liveViews ?? -1 })),
+    [channels, viewsByChannel],
+  );
+  const [sort, setSort] = useState<keyof LbRow>('peak');
   const [dir, setDir] = useState<'asc' | 'desc'>('desc');
   // On phones the full 8-column grid needs ~700px — collapse to the four
   // essential columns (rank, channel, peak, viewed hours) instead.
   const narrow = useIsNarrow(640);
 
-  const sorted = [...channels].sort((a, b) => {
+  const sorted = [...rows].sort((a, b) => {
     const av = a[sort] ?? 0;
     const bv = b[sort] ?? 0;
     if (typeof av === 'string' && typeof bv === 'string') {
@@ -1871,7 +2076,7 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
     return dir === 'asc' ? Number(av) - Number(bv) : Number(bv) - Number(av);
   });
 
-  const toggle = (k: keyof ChannelRow) => {
+  const toggle = (k: keyof LbRow) => {
     if (sort === k) setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else {
       setSort(k);
@@ -1884,7 +2089,7 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
     children,
     align = 'left',
   }: {
-    k: keyof ChannelRow;
+    k: keyof LbRow;
     children: React.ReactNode;
     align?: 'left' | 'right' | 'center';
   }) => (
@@ -1915,7 +2120,7 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
 
   const cols = narrow
     ? '24px minmax(0, 1.6fr) 78px 84px'
-    : '28px 1.4fr 95px 110px 100px 90px 90px 110px';
+    : `28px 1.4fr 95px 110px 100px 90px 90px 110px${hasViews ? ' 132px' : ''}`;
 
   return (
     <div>
@@ -1943,6 +2148,15 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
         <H k="hours" align="right">
           {narrow ? 'Hours' : 'Viewed Hours'}
         </H>
+        {!narrow && hasViews && (
+          // The question mark sits beside the sort button, not inside it.
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+            <H k="views" align="right">
+              Live views
+            </H>
+            <InfoTip label="About live views" lines={views?.info ?? []} size={13} />
+          </div>
+        )}
       </div>
       {sorted.map((c, i) => {
         return (
@@ -1994,6 +2208,25 @@ function Leaderboard({ channels }: { channels: ChannelRow[] }) {
             <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-muted)' }}>
               {fmtN(c.hours)}
             </div>
+            {!narrow && hasViews && (() => {
+              const v = viewsByChannel.get(c.id);
+              if (!v) {
+                return (
+                  <div className="tabular" style={{ textAlign: 'right', color: 'var(--fg-dim)' }}>
+                    –
+                  </div>
+                );
+              }
+              return (
+                <div
+                  className="tabular"
+                  style={{ textAlign: 'right', color: 'var(--fg-muted)' }}
+                  title={v.confidence === 'estimated' ? 'Estimated from watch time' : undefined}
+                >
+                  {fmtN(v.liveViews)}
+                </div>
+              );
+            })()}
           </div>
         );
       })}
@@ -2016,19 +2249,23 @@ function formatScopeDateRange(
   return `Until ${fmtDateLong(end!)} · `;
 }
 
-// ── Peak / Viewed Hours segmented toggle ───────────────────────────────────
+// ── Peak / Viewed Hours / Views segmented toggle ──────────────────────────
 
+type Metric = 'peak' | 'hours' | 'views';
+
+const METRIC_LABEL: Record<Metric, string> = { peak: 'Peak', hours: 'Viewed Hours', views: 'Views' };
+
+/** "Views" is offered only when the report was exported with "Include views". */
 function MetricToggle({
   value,
   onChange,
+  options = ['peak', 'hours'],
 }: {
-  value: 'peak' | 'hours';
-  onChange: (v: 'peak' | 'hours') => void;
+  value: Metric;
+  onChange: (v: Metric) => void;
+  options?: Metric[];
 }) {
-  const opts: Array<{ id: 'peak' | 'hours'; label: string }> = [
-    { id: 'peak', label: 'Peak' },
-    { id: 'hours', label: 'Viewed Hours' },
-  ];
+  const opts = options.map((id) => ({ id, label: METRIC_LABEL[id] }));
   return (
     <div
       role="tablist"
@@ -2067,6 +2304,49 @@ function MetricToggle({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/** Live views per platform, category and language, keyed the way the report keys its rows. */
+function viewsLookup(views: api.ViewsSummary | null) {
+  const platform = new Map<string, number>();
+  const tier = new Map<string, number>();
+  const language = new Map<string, number>();
+  if (!views) return { platform, tier, language, total: 0 };
+  for (const p of views.byPlatform) platform.set(p.platform.toLowerCase(), p.liveViews);
+  if (views.byTier && views.byLanguage) {
+    for (const t of views.byTier) tier.set(t.tier.toLowerCase(), t.liveViews);
+    for (const l of views.byLanguage) language.set(l.language.toLowerCase(), l.liveViews);
+  } else {
+    // A response cached before the server carried the splits: sum the channels.
+    for (const c of views.channels) {
+      const t = (c.tier || 'community').toLowerCase();
+      tier.set(t, (tier.get(t) ?? 0) + c.liveViews);
+      const l = (c.language ?? '').toLowerCase();
+      if (l) language.set(l, (language.get(l) ?? 0) + c.liveViews);
+    }
+  }
+  return { platform, tier, language, total: views.totals.liveViews };
+}
+
+/** The total and its question mark: the one place a report explains the number. */
+function LiveViewsCard({ views, band = false }: { views: api.ViewsSummary; band?: boolean }) {
+  const platforms = views.byPlatform.filter((p) => p.liveViews > 0).length;
+  return (
+    <div className="card" style={{ padding: band ? '14px 18px' : '14px 16px' }}>
+      <Row justify="space-between" style={{ alignItems: 'flex-start' }}>
+        <div className="eyebrow" style={{ fontSize: 9, marginBottom: 4 }}>
+          Live views
+        </div>
+        <InfoTip label="About live views" lines={views.info ?? []} placement="top" />
+      </Row>
+      <div className="tabular" style={{ fontSize: band ? 24 : 18, fontWeight: band ? 500 : 600, letterSpacing: '-0.01em' }}>
+        {fmtN(views.totals.liveViews)}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 2 }}>
+        total across {platforms} {platforms === 1 ? 'platform' : 'platforms'}
+      </div>
     </div>
   );
 }

@@ -29,6 +29,7 @@ import {
   IconSearch,
   IconDownload,
   IconArrowUp,
+  IconEye,
   IconPlus,
   IconBolt,
   IconPause,
@@ -54,6 +55,7 @@ import * as api from '@/services/api';
 import { ChannelsSection } from '@/components/editor/ChannelsSection';
 import { DiscoveryFeedSection } from '@/components/editor/DiscoveryFeedSection';
 import { ExportDialog } from '@/components/editor/ExportDialog';
+import { ViewsDialog } from '@/components/editor/ViewsDialog';
 import { ImportCsvDialog } from '@/components/editor/ImportCsvDialog';
 import { AddChannelDialog } from '@/components/editor/AddChannelDialog';
 import type {
@@ -150,6 +152,7 @@ export function EditorDesktop({
   const [viewGroup, setViewGroup] = useState<string>('all');
   const [exportOpen, setExportOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [viewsOpen, setViewsOpen] = useState(false);
   const [sidebarAddOpen, setSidebarAddOpen] = useState(false);
 
   const stageOptions = useMemo(() => {
@@ -733,6 +736,19 @@ export function EditorDesktop({
               title="Replace a channel's data from an official platform CSV"
             >
               <IconArrowUp size={13} /> Import
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setViewsOpen(true)}
+              disabled={!activeDay}
+              title={
+                activeDay
+                  ? 'Live views collected for this day: check them before ticking "Include views" on an export'
+                  : 'Pick a day to see its live views'
+              }
+            >
+              <IconEye size={13} /> Views
             </button>
             <button
               type="button"
@@ -1585,6 +1601,15 @@ export function EditorDesktop({
                         ? 'Running'
                         : 'Stopped'}
                     </span>
+                    {seriesDetail?.auto_start_discovery && (
+                      <span
+                        className="mono"
+                        title="Auto-start Scout is on: Scout starts by itself when a day goes live"
+                        style={{ fontSize: 10, color: 'var(--fg-dim)' }}
+                      >
+                        auto
+                      </span>
+                    )}
                   </Row>
                   <span className="mono" style={{ fontSize: 10, color: 'var(--fg-dim)' }}>
                     Last{' '}
@@ -1708,6 +1733,13 @@ export function EditorDesktop({
         }}
         activeViewGroupName={viewGroup === 'all' ? null : viewGroup}
         viewGroups={viewGroups as ViewGroup[]}
+      />
+
+      <ViewsDialog
+        open={viewsOpen}
+        onClose={() => setViewsOpen(false)}
+        dayId={activeDay?.id ?? null}
+        dayLabel={activeDay ? `${seriesName} · ${activeDay.label}` : seriesName}
       />
 
       <ImportCsvDialog

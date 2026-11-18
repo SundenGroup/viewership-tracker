@@ -76,6 +76,11 @@ const GRANULARITY_TILES: Array<{
     sub: 'Every poll (~2 rows/channel/min). Forensic grain. Dedup before summing.',
     adminOnly: true,
   },
+  {
+    id: 'views',
+    label: 'Views data',
+    sub: 'Every stored views row: source, snapshot, share, note. Data, not a total.',
+  },
 ];
 
 type ScopeChoice = 'current' | 'series' | 'stage' | 'multi_stage' | 'day';
@@ -100,6 +105,9 @@ export function ExportDialog({
   const [selectedStageIds, setSelectedStageIds] = useState<string[]>([]);
   const [reRender, setReRender] = useState(false);
   const [detail, setDetail] = useState<'simple' | 'detailed'>('simple');
+  // Views are opt-in per export: off every time the dialog opens, never remembered.
+  const [includeViews, setIncludeViews] = useState(false);
+  const [viewsStatus, setViewsStatus] = useState<api.ViewsStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [publicLink, setPublicLink] = useState<string | null>(null);
@@ -143,6 +151,8 @@ export function ExportDialog({
       setScope('current');
       setSelectedStageIds([]);
       setReRender(false);
+      setIncludeViews(false);
+      setViewsStatus(null);
       setViewGroupOverride(activeViewGroupName ?? null);
       setExcludeChannelIds([]);
       setChannelSearch('');
@@ -290,9 +300,11 @@ export function ExportDialog({
       const shortName = seriesDetail?.short_name?.trim();
       if (!shortName) return 'needs short_name';
       const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+      // The preview shows the views flag too, so the link visibly differs when ticked.
+      const withViews = (path: string) => (includeViews ? `${path}${path.includes('?') ? '&' : '?'}views=1` : path);
       if (target.kind === 'multi_stage') {
         const orders = orderedSelectedStages.map((s) => s.order).join(',');
-        return withViewParam(`${base}/public/${shortName}/report/${detail}?stages=${orders}`);
+        return withViews(withViewParam(`${base}/public/${shortName}/report/${detail}?stages=${orders}`));
       }
       const { scopeLevel, id } = target;
       let slug = '';
@@ -306,7 +318,7 @@ export function ExportDialog({
         const stage = seriesDetail?.stages.find((s) => s.id === id);
         slug = stage ? `stage-${stage.order}` : `${id.slice(0, 6)}…`;
       }
-      return withViewParam(`${base}/public/${shortName}/report/${detail}${slug ? `/${slug}` : ''}`);
+      return withViews(withViewParam(`${base}/public/${shortName}/report/${detail}${slug ? `/${slug}` : ''}`));
     }
     const slugBase =
       seriesDetail?.short_name?.trim() || seriesDetail?.name || 'series';
@@ -339,6 +351,7 @@ export function ExportDialog({
     reRender,
     orderedSelectedStages,
     selectedStageIds,
+    includeViews,
   ]);
 
   const resolvedViewGroup = useMemo(() => {
@@ -360,7 +373,10 @@ export function ExportDialog({
   // Collapsed by default; expanding lazily loads the series list, and
   // picking a series loads its stages/days. Same-level rule: a day report
   // compares to a day, stage to stage, series to series.
-  const [cmpOpen, setCmpOpen] = useState(false);
+  // 'auto' = the standard chips (% vs the previous day / stage), 'none' =
+  // no comparison at all, 'custom' = a baseline of the operator's choice.
+  const [cmpMode, setCmpMode] = useState<'auto' | 'none' | 'custom'>('auto');
+  const cmpOpen = cmpMode === 'custom';
   const [cmpSeriesList, setCmpSeriesList] = useState<TournamentSeries[] | null>(null);
   const [cmpSeriesId, setCmpSeriesId] = useState('');
   const [cmpDetail, setCmpDetail] = useState<SeriesWithStages | null>(null);
@@ -406,6 +422,7 @@ export function ExportDialog({
 
   /** The resolved comparison, or null when unset/invalid for this scope. */
   const resolvedCompare = (): { scope: 'day' | 'stage' | 'series'; id: string; label: string } | null => {
+    if (cmpMode !== 'custom') return null;
     const t = resolveTarget();
     if (t.kind !== 'single') return null;
     if (t.scopeLevel === 'series') {
@@ -464,11 +481,11 @@ export function ExportDialog({
         const url =
           target.kind === 'multi_stage'
             ? format === 'csv'
-              ? api.getExportCsvUrlMulti(target.ids, granularity)
-              : api.getExportJsonUrlMulti(target.ids, granularity)
+              ? api.getExportCsvUrlMulti(target.ids, granularity, includeViews)
+              : api.getExportJsonUrlMulti(target.ids, granularity, includeViews)
             : format === 'csv'
-              ? api.getExportCsvUrl(target.scopeLevel, target.id, granularity)
-              : api.getExportJsonUrl(target.scopeLevel, target.id, granularity);
+              ? api.getExportCsvUrl(target.scopeLevel, target.id, granularity, includeViews)
+              : api.getExportJsonUrl(target.scopeLevel, target.id, granularity, includeViews);
         window.open(url, '_blank', 'noopener,noreferrer');
         onClose();
         return;
@@ -483,8 +500,13 @@ export function ExportDialog({
           ...(target.kind === 'multi_stage'
             ? { scope: 'multi_stage' as const, ids: target.ids }
             : { scope: target.scopeLevel, id: target.id }),
-          ...(cmp ? { compare: { scope: cmp.scope, id: cmp.id } } : {}),
+          ...(cmpMode === 'none'
+            ? { compare: 'none' as const }
+            : cmp
+              ? { compare: { scope: cmp.scope, id: cmp.id } }
+              : {}),
           format: 'html',
+          ...(includeViews ? { includeViews: true } : {}),
           skipNarratives: false,
           detail,
           viewGroup: resolvedViewGroup
@@ -512,13 +534,23 @@ export function ExportDialog({
         // from the API, so it's always up-to-date and matches the v7 UI.
         let spaUrl = buildSpaReportUrl();
         const cmpSpa = resolvedCompare();
-        if (spaUrl && cmpSpa) {
+        if (spaUrl && cmpMode === 'none') {
+          // Explicit "no comparison": the report page skips the trend chips.
+          const u = new URL(spaUrl);
+          u.searchParams.set('vs_scope', 'none');
+          spaUrl = u.toString();
+        } else if (spaUrl && cmpSpa) {
           const u = new URL(spaUrl);
           u.searchParams.set('vs_scope', cmpSpa.scope);
           u.searchParams.set('vs_id', cmpSpa.id);
           u.searchParams.set('vs_label', cmpSpa.label);
           const vsShort = (cmpDetail?.short_name || cmpSeriesList?.find((x) => x.id === cmpSeriesId)?.short_name || '').trim();
           if (vsShort) u.searchParams.set('vs_sn', vsShort);
+          spaUrl = u.toString();
+        }
+        if (spaUrl && includeViews) {
+          const u = new URL(spaUrl);
+          u.searchParams.set('views', '1');
           spaUrl = u.toString();
         }
         if (!spaUrl) {
@@ -544,7 +576,82 @@ export function ExportDialog({
     }
   };
 
+  // "Include views" asks the server how complete the views are for the chosen
+  // scope, so a half-collected day is exported knowingly, not by accident.
+  useEffect(() => {
+    if (!open || !includeViews) {
+      setViewsStatus(null);
+      return;
+    }
+    const t = resolveTarget();
+    let cancelled = false;
+    const req = t.kind === 'multi_stage' ? api.getViewsStatus('multi_stage', t.ids) : api.getViewsStatus(t.scopeLevel, t.id);
+    req
+      .then((st) => {
+        if (!cancelled) setViewsStatus(st);
+      })
+      .catch(() => {
+        if (!cancelled) setViewsStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, includeViews, scope, selectedStageIds, activeScope.dayId, activeScope.stageId, seriesId]);
+
   if (!open) return null;
+
+  const viewsBlock = (
+    <div
+      style={{
+        padding: '8px 10px',
+        borderRadius: 5,
+        border: '1px solid var(--border-faint)',
+        background: includeViews ? 'var(--bg-sunken)' : 'transparent',
+      }}
+    >
+      <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={includeViews}
+          onChange={(e) => setIncludeViews(e.target.checked)}
+          style={{ marginTop: 2 }}
+        />
+        <Col gap={2}>
+          <span style={{ fontSize: 12, fontWeight: 600 }}>Include views</span>
+          <span style={{ fontSize: 10.5, color: 'var(--fg-dim)' }}>
+            {format === 'html'
+              ? 'Adds live views to the report. Off unless ticked.'
+              : 'Adds a live_views column per channel. Off unless ticked.'}
+          </span>
+        </Col>
+      </label>
+      {includeViews && viewsStatus && viewsStatus.warnings.length > 0 && (
+        <div
+          role="alert"
+          style={{
+            marginTop: 8,
+            padding: '6px 8px',
+            borderRadius: 4,
+            fontSize: 11,
+            lineHeight: 1.45,
+            color: 'var(--fg)',
+            background: 'color-mix(in oklab, var(--warn) 15%, transparent)',
+            border: '1px solid color-mix(in oklab, var(--warn) 30%, transparent)',
+          }}
+        >
+          {viewsStatus.warnings.map((w) => (
+            <div key={w}>{w}</div>
+          ))}
+        </div>
+      )}
+      {includeViews && viewsStatus && viewsStatus.ready && (
+        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--fg-muted)' }}>
+          Views are collected for every day in this scope.
+        </div>
+      )}
+    </div>
+  );
 
   const scopeOptions: Array<{
     id: ScopeChoice;
@@ -1311,26 +1418,26 @@ export function ExportDialog({
                     }}
                   >
                     {!cmpOpen ? (
-                      <button
-                        type="button"
-                        onClick={() => setCmpOpen(true)}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          cursor: 'pointer',
-                          fontSize: 11.5,
-                          color: 'var(--fg-muted)',
-                          padding: 0,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 6,
-                        }}
-                      >
-                        <span style={{ color: 'var(--fg-dim)' }}>+</span> Compare against another event
-                        <span style={{ color: 'var(--fg-dim)', fontSize: 10.5 }}>
-                          % chips vs a baseline of your choice
+                      <Row gap={8} align="center" wrap>
+                        <span className="eyebrow" style={{ fontSize: 9.5, color: 'var(--fg-muted)' }}>
+                          Comparison
                         </span>
-                      </button>
+                        <select
+                          value={cmpMode}
+                          onChange={(e) => setCmpMode(e.target.value as 'auto' | 'none' | 'custom')}
+                          aria-label="Comparison mode"
+                          style={cmpSelectStyle}
+                        >
+                          <option value="auto">Standard: % vs the previous day / stage</option>
+                          <option value="none">None: no % comparison</option>
+                          <option value="custom">Another event of my choice…</option>
+                        </select>
+                        <span style={{ color: 'var(--fg-dim)', fontSize: 10.5 }}>
+                          {cmpMode === 'none'
+                            ? 'No comparison chips in the report'
+                            : 'Chips compare with the previous day or stage'}
+                        </span>
+                      </Row>
                     ) : (
                       <Col gap={8}>
                         <Row gap={8} align="center" wrap>
@@ -1382,7 +1489,7 @@ export function ExportDialog({
                           <button
                             type="button"
                             onClick={() => {
-                              setCmpOpen(false);
+                              setCmpMode('auto');
                               setCmpSeriesId('');
                               setCmpTargetId('');
                             }}
@@ -1412,6 +1519,10 @@ export function ExportDialog({
                 )}
               </>
             )}
+
+            {(format === 'html' ||
+              ((format === 'csv' || format === 'json') && granularity === 'channel_summary')) &&
+              viewsBlock}
 
             {/* Public dashboard link — always shown if series is public */}
             {publicDashUrl && (

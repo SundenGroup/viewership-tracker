@@ -738,26 +738,27 @@ export function backfillFromDiscover(payload: {
  * (raw = sub-minute polls, easy to double-count; the summaries are
  * pre-aggregated).
  */
-export type ExportGranularity = 'per_minute' | 'minute_totals' | 'channel_summary' | 'raw';
+export type ExportGranularity = 'per_minute' | 'minute_totals' | 'channel_summary' | 'raw' | 'views';
 
-function granSuffix(g?: ExportGranularity): string {
-  return g && g !== 'per_minute' ? `&granularity=${g}` : '';
+/** `views` adds the live views columns to the channel summary; nothing else reads it. */
+function granSuffix(g?: ExportGranularity, includeViews?: boolean): string {
+  return `${g && g !== 'per_minute' ? `&granularity=${g}` : ''}${includeViews && g === 'channel_summary' ? '&views=1' : ''}`;
 }
 
-export function getExportCsvUrl(scope: ScopeLevel, id: string, gran?: ExportGranularity) {
-  return `${BASE_URL}/api/export/csv?scope=${scope}&id=${id}${granSuffix(gran)}`;
+export function getExportCsvUrl(scope: ScopeLevel, id: string, gran?: ExportGranularity, includeViews?: boolean) {
+  return `${BASE_URL}/api/export/csv?scope=${scope}&id=${id}${granSuffix(gran, includeViews)}`;
 }
 
-export function getExportJsonUrl(scope: ScopeLevel, id: string, gran?: ExportGranularity) {
-  return `${BASE_URL}/api/export/json?scope=${scope}&id=${id}${granSuffix(gran)}`;
+export function getExportJsonUrl(scope: ScopeLevel, id: string, gran?: ExportGranularity, includeViews?: boolean) {
+  return `${BASE_URL}/api/export/json?scope=${scope}&id=${id}${granSuffix(gran, includeViews)}`;
 }
 
-export function getExportCsvUrlMulti(stageIds: string[], gran?: ExportGranularity) {
-  return `${BASE_URL}/api/export/csv?scope=multi_stage&ids=${stageIds.join(',')}${granSuffix(gran)}`;
+export function getExportCsvUrlMulti(stageIds: string[], gran?: ExportGranularity, includeViews?: boolean) {
+  return `${BASE_URL}/api/export/csv?scope=multi_stage&ids=${stageIds.join(',')}${granSuffix(gran, includeViews)}`;
 }
 
-export function getExportJsonUrlMulti(stageIds: string[], gran?: ExportGranularity) {
-  return `${BASE_URL}/api/export/json?scope=multi_stage&ids=${stageIds.join(',')}${granSuffix(gran)}`;
+export function getExportJsonUrlMulti(stageIds: string[], gran?: ExportGranularity, includeViews?: boolean) {
+  return `${BASE_URL}/api/export/json?scope=multi_stage&ids=${stageIds.join(',')}${granSuffix(gran, includeViews)}`;
 }
 
 // ── Report Generation ─────────────────────────────────────────────────────
@@ -776,6 +777,13 @@ export interface GenerateReportParams {
   excludeTiers?: string[];
   excludeLanguages?: string[];
   excludeChannelIds?: string[];
+  /**
+   * Comparison baseline for the % chips: a same-level target, or 'none'
+   * for no comparison at all. Absent = the standard previous day / stage.
+   */
+  compare?: { scope: 'day' | 'stage' | 'series'; id: string } | 'none';
+  /** Add the live views section and column. Off unless the exporter ticks it. */
+  includeViews?: boolean;
 }
 
 export interface GenerateReportResult {
@@ -807,6 +815,129 @@ export function getReportUrl(filePath: string) {
 export function getPublicReportUrl(shortName: string, filename: string) {
   // Public reports are served at /api/public/:shortName/reports/:filename (no auth)
   return `${BASE_URL}/api/public/${shortName}/reports/${filename}`;
+}
+
+// ── Live views ─────────────────────────────────────────────────────────────
+
+export type ViewsConfidence = 'measured' | 'adjusted' | 'estimated' | 'replay';
+
+export interface ViewsSplit {
+  liveViews: number;
+  measured: number;
+  adjusted: number;
+  estimated: number;
+  channels: { measured: number; adjusted: number; estimated: number };
+}
+
+export interface ChannelViews {
+  channelId: string;
+  displayName: string;
+  platform: string;
+  tier: string | null;
+  language: string | null;
+  liveViews: number;
+  platformViews: number;
+  confidence: ViewsConfidence;
+  sources: string[];
+  methods: string[];
+  note: string | null;
+  days: number;
+}
+
+export interface ViewsDayStatus {
+  dayId: string;
+  label: string;
+  date: string;
+  status: string;
+  passes: string[];
+  collected: boolean;
+  complete: boolean;
+  channels: { measured: number; adjusted: number; estimated: number };
+}
+
+export interface ViewsSummary {
+  channels: ChannelViews[];
+  totals: ViewsSplit;
+  byPlatform: Array<{ platform: string } & ViewsSplit>;
+  /** Per category (channel tier; none counts as community). */
+  byTier?: Array<{ tier: string } & ViewsSplit>;
+  /** Per language code, lower case. */
+  byLanguage?: Array<{ language: string } & ViewsSplit>;
+  days: ViewsDayStatus[];
+  lateReads?: number;
+  /** Two or three short sentences about the number, shown behind a question mark only. */
+  info?: string[];
+}
+
+export interface StreamViewsRow {
+  id: string;
+  channel_id: string;
+  display_name: string;
+  channel_identifier: string;
+  tier: string | null;
+  platform: string;
+  stream_ref: string;
+  source: string;
+  snapshot: string;
+  views: string | number | null;
+  counted: boolean;
+  event_views: string | number | null;
+  event_share: string | number | null;
+  event_share_method: string | null;
+  confidence: ViewsConfidence;
+  broadcast_minutes: number | null;
+  tracked_minutes: number | null;
+  note: string | null;
+  fetched_at: string;
+  extra: Record<string, unknown>;
+}
+
+export interface ViewsStatus {
+  days: ViewsDayStatus[];
+  totals: ViewsSplit;
+  ready: boolean;
+  warnings: string[];
+}
+
+export interface ManualViewsEntry {
+  channelId: string;
+  source: 'tiktok_livecenter' | 'twitch_stream_summary' | 'csv_import';
+  views: number;
+  extra?: Record<string, unknown>;
+  note?: string;
+}
+
+function viewsScopeQs(scope: ScopeLevel | 'multi_stage', id: string | string[]): string {
+  return scope === 'multi_stage'
+    ? `scope=multi_stage&ids=${(Array.isArray(id) ? id : [id]).join(',')}`
+    : `scope=${scope}&id=${Array.isArray(id) ? id[0] : id}`;
+}
+
+/** Which days in a scope have their views collected; feeds the export dialog's warning. */
+export function getViewsStatus(scope: ScopeLevel | 'multi_stage', id: string | string[]) {
+  return request<ViewsStatus>(`/api/views/status?${viewsScopeQs(scope, id)}`);
+}
+
+export function getDayViews(dayId: string) {
+  return request<{
+    summary: ViewsSummary;
+    rows: StreamViewsRow[];
+    runs: Array<{ snapshot: string; ran_at: string; summary: Record<string, unknown> }>;
+  }>(`/api/days/${dayId}/views`);
+}
+
+export function collectDayViews(dayId: string) {
+  return request<{ status: string; summary: { pass: string; channels: number; rowsBySource: Record<string, number>; missing: Array<{ channel: string; platform: string; reason: string }> } }>(
+    `/api/days/${dayId}/views/collect`,
+    { method: 'POST', body: JSON.stringify({}) },
+  );
+}
+
+export function importDayViews(dayId: string, entries: ManualViewsEntry[]) {
+  return request<{ status: string; imported: number }>(`/api/days/${dayId}/views/import`, {
+    method: 'POST',
+    body: JSON.stringify({ entries }),
+  });
 }
 
 // ── Report Payload ─────────────────────────────────────────────────────────
@@ -1014,6 +1145,22 @@ export function getPublicLanguagePeaks(
   return publicRequest<{ languages: PublicLanguagePeak[] }>(
     `/api/public/${shortName}/language-peaks${qs}`,
   );
+}
+
+/** Live views for a public scope. Only called by reports exported with "Include views". */
+export function getPublicViews(
+  shortName: string,
+  scope?: ScopeLevel | 'multi_stage',
+  id?: string | string[],
+  languages?: string[],
+  platforms?: string[],
+  excludeChannelIds?: string[],
+) {
+  const params = new URLSearchParams();
+  appendScopeParams(params, scope, id);
+  appendFilterParams(params, languages, platforms, excludeChannelIds);
+  const qs = params.toString() ? `?${params}` : '';
+  return publicRequest<ViewsSummary>(`/api/public/${shortName}/views${qs}`);
 }
 
 export function getPublicTimeSeries(

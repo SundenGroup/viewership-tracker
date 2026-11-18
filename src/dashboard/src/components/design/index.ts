@@ -28,6 +28,7 @@ export * from './tableStyles';
 export * from './SettingsShell';
 export * from './PublicLinkButton';
 export * from './FilterMultiSelect';
+export * from './InfoTip';
 export * from './ExpandableScroll';
 export * from './SegmentedControl';
 export * from './BackToTop';

@@ -278,3 +278,8 @@ h4 { font-size: 13px; color: var(--fg-muted); text-transform: uppercase; letter-
   outline: 2px solid var(--red);
   outline-offset: 2px;
 }
+
+/* The question-mark popovers explain a figure on screen; on paper they are noise. */
+@media print {
+  .info-tip { display: none !important; }
+}
