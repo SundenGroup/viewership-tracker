@@ -703,7 +703,7 @@ export function EditorMobile({
                 <Section
                   eyebrow="Scout"
                   title={
-                    isDiscoveryActive
+                    (isDiscoveryActive
                       ? `Running${
                           lastResult
                             ? ` · last ${fmtRelative(lastResult.timestamp)}`
@@ -711,7 +711,8 @@ export function EditorMobile({
                         }`
                       : lastResult
                         ? `Stopped · last ${fmtRelative(lastResult.timestamp)}`
-                        : 'Stopped'
+                        : 'Stopped') +
+                    (seriesDetail?.auto_start_discovery ? ' · auto' : '')
                   }
                   compact
                   right={

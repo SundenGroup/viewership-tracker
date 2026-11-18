@@ -71,6 +71,7 @@ interface SeriesFormState {
   partner: string;
   timezone: string;
   auto_start_polling: boolean;
+  auto_start_discovery: boolean;
   is_public: boolean;
   start_date: string;
   end_date: string;
@@ -80,6 +81,8 @@ interface SeriesFormState {
   discovery_game_ids_kick: string;
   discovery_default_tier: string;
   discovery_interval_ms: string;
+  /** Scout fetches only the first page of YouTube results per keyword (metadata.youtube_search_pages = 1). */
+  youtube_search_first_page_only: boolean;
   status: TournamentStatus;
   min_role: UserRole;
   stages: StageForm[];
@@ -133,6 +136,7 @@ function seriesDetailToForm(detail: SeriesWithStages): SeriesFormState {
     partner: detail.partner ?? '',
     timezone: tz,
     auto_start_polling: detail.auto_start_polling ?? true,
+    auto_start_discovery: detail.auto_start_discovery ?? false,
     is_public: detail.is_public ?? false,
     start_date: toDateStr(detail.start_date),
     end_date: toDateStr(detail.end_date),
@@ -144,6 +148,7 @@ function seriesDetailToForm(detail: SeriesWithStages): SeriesFormState {
     discovery_interval_ms: (detail as { discovery_interval_ms?: number | null }).discovery_interval_ms
       ? String((detail as { discovery_interval_ms?: number | null }).discovery_interval_ms)
       : '',
+    youtube_search_first_page_only: Number(detail.metadata?.youtube_search_pages) === 1,
     status: detail.status,
     min_role: detail.min_role ?? 'viewer',
     stages: detail.stages.map((stage) => ({
@@ -183,6 +188,7 @@ function emptyForm(): SeriesFormState {
     partner: '',
     timezone: 'UTC',
     auto_start_polling: true,
+    auto_start_discovery: false,
     is_public: false,
     start_date: '',
     end_date: '',
@@ -192,6 +198,7 @@ function emptyForm(): SeriesFormState {
     discovery_game_ids_kick: '',
     discovery_default_tier: 'watch_party',
     discovery_interval_ms: '',
+    youtube_search_first_page_only: false,
     status: 'draft',
     min_role: 'viewer',
     stages: [],
@@ -564,6 +571,7 @@ export function SeriesFormPage({
         status: form.status,
         timezone: form.timezone,
         auto_start_polling: form.auto_start_polling,
+        auto_start_discovery: form.auto_start_discovery,
         is_public: form.is_public,
         min_role: isAdmin ? form.min_role : undefined,
         start_date: form.start_date || undefined,
@@ -578,7 +586,7 @@ export function SeriesFormPage({
 
       // Merge existing metadata on edit so we don't clobber autoReports/blocklist/etc.
       const existingMeta = (seriesDetail?.metadata ?? {}) as Record<string, unknown>;
-      const metadata = { ...existingMeta, viewGroups };
+      const metadata = { ...existingMeta, viewGroups, youtube_search_pages: form.youtube_search_first_page_only ? 1 : 4 };
 
       let targetId = seriesId;
       if (isEdit && targetId) {
@@ -932,6 +940,18 @@ export function SeriesFormPage({
                   </span>
                 </Col>
               </div>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, paddingTop: 22 }}>
+                <Toggle
+                  on={form.auto_start_discovery}
+                  onChange={(v) => updateField('auto_start_discovery', v)}
+                />
+                <Col gap={2}>
+                  <span style={{ fontSize: 12.5, fontWeight: 500 }}>Auto-start Scout</span>
+                  <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+                    Start Scout when a broadcast day goes live, no Start click needed
+                  </span>
+                </Col>
+              </div>
             </div>
 
             {/* Public dashboard sub-block */}
@@ -1020,6 +1040,18 @@ export function SeriesFormPage({
                   ))}
                 </select>
               </Field>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, paddingTop: 22 }}>
+                <Toggle
+                  on={form.youtube_search_first_page_only}
+                  onChange={(v) => updateField('youtube_search_first_page_only', v)}
+                />
+                <Col gap={2}>
+                  <span style={{ fontSize: 12.5, fontWeight: 500 }}>Cap YouTube searches at one page</span>
+                  <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+                    50 results per keyword instead of up to 200. Each Google project allows 100 searches a day, and a page costs one search.
+                  </span>
+                </Col>
+              </div>
             </div>
 
             {/* Discovery Game IDs section */}
