@@ -645,6 +645,31 @@ router.get('/:slug/leaderboard', async (req: Request, res: Response, next: NextF
   }
 });
 
+/**
+ * GET /:slug/live-summary
+ * Live channels and viewers right now, in total and per platform, over
+ * EVERY live channel. The leaderboard caps at 200 rows; totals belong here.
+ */
+router.get('/:slug/live-summary', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);
+    if (!tracker) {
+      res.status(404).json({ error: 'Game tracker not found' });
+      return;
+    }
+    const at = new Date();
+    const platforms = await RollupReads.liveTotalsByPlatform(tracker.id, at, 120);
+    res.json({
+      at,
+      channels: platforms.reduce((n, p) => n + p.channels, 0),
+      viewers: platforms.reduce((n, p) => n + p.viewers, 0),
+      platforms,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:slug/breakdown', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const tracker = await GameTrackerModel.findBySlug(req.params.slug as string);

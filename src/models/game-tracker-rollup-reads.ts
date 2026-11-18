@@ -480,6 +480,37 @@ export async function channelRangeStats(
 
 // ── Live leaderboard count (for "200 of 299") ──────────────────────────
 
+/**
+ * Live channels and viewers per platform at `at`: every channel's most
+ * recent reading inside the window, the same rule the live leaderboard
+ * uses. The leaderboard returns at most 200 rows, so a page that totals
+ * its rows understates a large tracker; this is the whole picture.
+ */
+export async function liveTotalsByPlatform(
+  gameTrackerId: string,
+  at: Date,
+  windowSeconds = 120,
+): Promise<Array<{ platform: string; channels: number; viewers: number }>> {
+  const fromTs = new Date(at.getTime() - windowSeconds * 1000);
+  const result = await db.raw<{ rows: Array<{ platform: string; channels: string; viewers: string | null }> }>(
+    `SELECT platform, COUNT(*) AS channels, SUM(concurrent_viewers) AS viewers
+       FROM (
+         SELECT DISTINCT ON (channel_id) channel_id, platform, concurrent_viewers
+           FROM game_tracker_snapshots
+          WHERE game_tracker_id = ? AND "timestamp" >= ? AND "timestamp" <= ?
+          ORDER BY channel_id, "timestamp" DESC
+       ) latest
+      GROUP BY platform
+      ORDER BY SUM(concurrent_viewers) DESC`,
+    [gameTrackerId, fromTs, at],
+  );
+  return result.rows.map((r) => ({
+    platform: r.platform,
+    channels: Number(r.channels),
+    viewers: Number(r.viewers ?? 0),
+  }));
+}
+
 export async function liveChannelCount(
   gameTrackerId: string,
   at: Date,
