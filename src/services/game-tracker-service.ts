@@ -24,8 +24,8 @@ import type { TwitchAdapter } from '../adapters/twitch';
 import type { KickAdapter } from '../adapters/kick';
 import type { YouTubeAdapter } from '../adapters/youtube';
 import type { DiscoveredStream } from '../adapters/types';
-import { YouTubeGameTracker, titleNamesGame, type YouTubeTrackerConfig } from './youtube-game-tracker';
-import { tiktokExtraCategories } from '../utils/tiktok-extra-categories';
+import { YouTubeGameTracker, titleExcluded, titleNamesGame, type YouTubeTrackerConfig } from './youtube-game-tracker';
+import { tiktokExtraCategories, tiktokExtraRule } from '../utils/tiktok-extra-categories';
 import { chzzkCategory, kickLanguageSplit } from '../utils/tracker-metadata';
 import type { ChzzkAdapter } from '../adapters/chzzk';
 import { nextPollBoundary, pollBoundaryAtOrBefore } from '../utils/gt-ranges';
@@ -330,13 +330,22 @@ export class GameTrackerService {
           for (const r of rows) add(r);
           // Neighbouring categories (metadata.tiktok_extra_categories): a
           // new game's streams filed under its predecessor. Those grids
-          // hold the other game too, so only rooms whose TITLE names this
-          // game count, judged by the tracker's own title vocabulary.
+          // hold the other game too. By default only rooms whose TITLE
+          // names this game count; with tiktok_extra_rule
+          // "all_but_excluded" every room counts unless its title carries
+          // an excluded word, which is how the other game is kept out.
           const vocabulary = (tracker.youtube_config ?? {}) as YouTubeTrackerConfig;
+          const extraRule = tiktokExtraRule(tracker.metadata);
           for (const category of tiktokExtraCategories(tracker.metadata)) {
             if (category === tracker.tiktok_category_slug) continue;
             const extra = await TikTokDiscoveredModel.freshStreamsForCategory(category);
-            for (const r of extra) if (titleNamesGame(r.title, vocabulary)) add(r);
+            for (const r of extra) {
+              const counts =
+                extraRule === 'all_but_excluded'
+                  ? !titleExcluded(r.title, vocabulary)
+                  : titleNamesGame(r.title, vocabulary);
+              if (counts) add(r);
+            }
           }
         } catch (err) {
           failedPlatforms.add('tiktok');

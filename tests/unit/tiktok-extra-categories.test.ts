@@ -1,7 +1,8 @@
 /**
  * Neighbouring TikTok categories read from a tracker's metadata.
  */
-import { tiktokExtraCategories } from '../../src/utils/tiktok-extra-categories';
+import { tiktokExtraCategories, tiktokExtraRule } from '../../src/utils/tiktok-extra-categories';
+import { titleExcluded, titleNamesGame } from '../../src/services/youtube-game-tracker';
 
 describe('tiktokExtraCategories', () => {
   it('reads the list from an object or from stored JSON text', () => {
@@ -22,5 +23,44 @@ describe('tiktokExtraCategories', () => {
     expect(tiktokExtraCategories(null)).toEqual([]);
     expect(tiktokExtraCategories('not json')).toEqual([]);
     expect(tiktokExtraCategories({ tiktok_extra_categories: 'gaming/X' })).toEqual([]);
+  });
+});
+
+describe('tiktokExtraRule', () => {
+  it('defaults to counting only rooms that name the game', () => {
+    expect(tiktokExtraRule({})).toBe('named');
+    expect(tiktokExtraRule(null)).toBe('named');
+    expect(tiktokExtraRule({ tiktok_extra_rule: 'everything' })).toBe('named');
+  });
+  it('reads the wider rule from an object or stored JSON text', () => {
+    expect(tiktokExtraRule({ tiktok_extra_rule: 'all_but_excluded' })).toBe('all_but_excluded');
+    expect(tiktokExtraRule(JSON.stringify({ tiktok_extra_rule: 'all_but_excluded' }))).toBe('all_but_excluded');
+  });
+});
+
+describe('rooms of the GTA V category on GTA VI launch day', () => {
+  // Titles as TikTok's feed gave them on 2026-11-18.
+  const cfg = { strongPhrases: ['gta 6', 'gta vi', 'vice city'], exclude: ['gta 5', 'gta v ', 'fivem'] };
+  const counted = (title: string) => !titleExcluded(title, cfg);
+
+  it('counts rooms whose title names no game at all', () => {
+    for (const title of ['Lets Go LIVE!', 'Te doy la bienvenida a mi LIVE', 'เจ้าเก่า', 'ON', '']) {
+      expect(counted(title)).toBe(true);
+      expect(titleNamesGame(title, cfg)).toBe(false); // the old rule left them out
+    }
+  });
+  it('counts a misspelt GTA VI title the vocabulary would miss', () => {
+    expect(counted('🛬FLYING INTO VISE CITY GET HEA')).toBe(true);
+  });
+  it('leaves out a title that ends in the other game, and never mistakes VI for V', () => {
+    expect(counted('Playing GTA V')).toBe(false);
+    expect(counted('GTA V')).toBe(false);
+    expect(counted('GTA VI')).toBe(true);
+    expect(counted('Playing GTA VI')).toBe(true);
+  });
+  it('still leaves out rooms whose title names GTA 5', () => {
+    expect(counted('GTA V MOD DE POLIA')).toBe(false);
+    expect(counted('FiveM Unive Roleplay')).toBe(false);
+    expect(counted('GTA 6 LAUNCH DAY+ BYE GTA 5')).toBe(false);
   });
 });

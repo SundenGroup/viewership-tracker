@@ -200,6 +200,25 @@ export function titleMatchesGame(
 }
 
 /**
+ * True when a title carries one of the tracker's excluded words: another
+ * game of the series, a trailer, a mod server.
+ *
+ * The title is padded with a space at both ends, so a term written with a
+ * trailing space ("gta v ", which must not match "gta vi") also matches at
+ * the very end of a title ("Playing GTA V").
+ */
+export function titleExcluded(
+  rawTitle: string | null | undefined,
+  cfg: YouTubeTrackerConfig,
+): boolean {
+  const title = ` ${normalizeTitle(rawTitle)} `;
+  return (cfg.exclude ?? [])
+    .map((x) => x.toLowerCase())
+    .filter(Boolean)
+    .some((kw) => title.includes(kw));
+}
+
+/**
  * The strict title test for a source whose category cannot be trusted (a
  * neighbouring TikTok category, say): the title must name the game from
  * the tracker's own vocabulary and must not carry an excluded word.
@@ -208,12 +227,7 @@ export function titleNamesGame(
   rawTitle: string | null | undefined,
   cfg: YouTubeTrackerConfig,
 ): boolean {
-  const title = normalizeTitle(rawTitle);
-  const excluded = (cfg.exclude ?? [])
-    .map((x) => x.toLowerCase())
-    .filter(Boolean)
-    .some((kw) => title.includes(kw));
-  return !excluded && titleMatchesGame(rawTitle, cfg) !== null;
+  return !titleExcluded(rawTitle, cfg) && titleMatchesGame(rawTitle, cfg) !== null;
 }
 
 /**
