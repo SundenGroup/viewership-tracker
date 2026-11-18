@@ -1,5 +1,8 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import logger from '../utils/logger';
+import { KickTailRoster } from '../utils/kick-tail-roster';
 import { config } from '../utils/config';
 import type { PlatformAdapter, ChannelSnapshot, DiscoveredStream } from './types';
 
@@ -69,6 +72,30 @@ const LANGUAGE_CONCURRENCY = 4;
 /** Languages that returned nothing are asked again this often. */
 const LANGUAGE_REPROBE_MS = 10 * 60_000;
 
+// ── Below a language's 100 rows (see utils/kick-tail-roster) ─────────────
+/** Channel ids per read-by-id call. Kick's limit. */
+const TAIL_IDS_PER_CALL = 50;
+/** Read-by-id calls in flight at once. */
+const TAIL_CONCURRENCY = 4;
+/** A followed stream is forgotten this long after it was last seen live. */
+const TAIL_TTL_MS = 12 * 60_000;
+/** Streams first seen within this window are read on every poll. */
+const TAIL_YOUNG_MS = 20 * 60_000;
+/** Small old streams are read this often. */
+const TAIL_COLD_EVERY_MS = 5 * 60_000;
+/** Who is being followed survives a restart in this file. */
+const TAIL_FILE = path.resolve(process.cwd(), '.kick-tail-roster.json');
+const TAIL_SAVE_EVERY_MS = 60_000;
+
+/** Kick takes a list as a repeated key: broadcaster_user_id=1&broadcaster_user_id=2. */
+function repeatedKeys(params: Record<string, unknown>): string {
+  const out = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    for (const v of Array.isArray(value) ? value : [value]) out.append(key, String(v));
+  }
+  return out.toString();
+}
+
 interface KickTokenResponse {
   access_token: string;
   token_type: string;
@@ -85,6 +112,9 @@ export class KickAdapter implements PlatformAdapter {
   private circuitOpen = false;
   /** categoryId → languages that returned rows, and when all were last asked. */
   private readonly languageState = new Map<number, { active: Set<string>; probedAt: number }>();
+  /** "categoryId:language" → the streams followed below that language's list. */
+  private tailRosters: Map<string, KickTailRoster> | null = null;
+  private tailSavedAt = 0;
   private circuitOpenedAt = 0;
 
   constructor() {
@@ -484,10 +514,14 @@ export class KickAdapter implements PlatformAdapter {
    * below the global top 100 (GTA VI launch, 2026-11-18: 963 streams
    * against 100, 406 of them above 50 viewers).
    *
-   * Per-language requests are only made when the plain listing is full and
+     * Per-language requests are only made when the plain listing is full and
    * still above `minViewers`; otherwise it is already complete. They are
    * best effort: the first failure ends the pass and the plain listing
    * still stands, and they never touch the circuit breaker.
+   *
+   * A language whose own list is full and still above `minViewers` (English
+   * and Portuguese on a big launch) has more streams below it. Those are
+   * followed by channel id: see followBelowList.
    */
   async listCategoryByLanguage(
     gameId: string,
@@ -505,6 +539,8 @@ export class KickAdapter implements PlatformAdapter {
 
     const found = new Map<string, DiscoveredStream>(base.map((s) => [s.channelIdentifier, s]));
     const withRows = new Set<string>();
+    /** language → channel ids its full list returned (the list is cut above the floor). */
+    const cutLists = new Map<string, Set<number>>();
     let failed = false;
     for (let i = 0; i < languages.length && !failed; i += LANGUAGE_CONCURRENCY) {
       await Promise.all(
@@ -515,6 +551,12 @@ export class KickAdapter implements PlatformAdapter {
             });
             const rows = Array.isArray(data?.data) ? data.data : [];
             if (rows.length > 0) withRows.add(language);
+            if (rows.length >= 100 && rows.every((r) => (r.viewer_count ?? 0) >= opts.minViewers)) {
+              cutLists.set(
+                language,
+                new Set(rows.filter((r) => r.category?.id === target).map((r) => Number(r.broadcaster_user_id))),
+              );
+            }
             for (const raw of rows) {
               // The category filter has returned other categories before: check each row.
               if (raw.category?.id !== target || !raw.slug || found.has(raw.slug)) continue;
@@ -530,11 +572,112 @@ export class KickAdapter implements PlatformAdapter {
     if (probeAll && !failed) this.languageState.set(target, { active: withRows, probedAt: Date.now() });
     else for (const l of withRows) state.active.add(l);
 
+    let below = 0;
+    for (const [language, listed] of cutLists) {
+      below += await this.followBelowList(target, language, listed, found, opts.minViewers);
+    }
+
     logger.info(
       `Kick: category ${target} by language: ${found.size} livestreams from ${languages.length} language list(s)` +
+        (cutLists.size > 0 ? `, ${below} of them below the full list(s) of ${[...cutLists.keys()].join(', ')}` : '') +
         (failed ? ' (pass cut short by a failed request)' : ''),
     );
     return [...found.values()];
+  }
+
+  /**
+   * Streams of one language that sit below its 100-row list. Notes the
+   * language's most recently started streams, then reads every followed
+   * stream the lists did not return by channel id. Adds what is live in
+   * this category to `found` and returns how many it added.
+   *
+   * Best effort like the language lists: a failed call ends this pass for
+   * the language and nothing already found is lost.
+   */
+  private async followBelowList(
+    target: number,
+    language: string,
+    listed: Set<number>,
+    found: Map<string, DiscoveredStream>,
+    minViewers: number,
+  ): Promise<number> {
+    const now = Date.now();
+    const roster = this.tailRoster(`${target}:${language}`, now);
+    const covered = new Set<number>(listed);
+    let added = 0;
+    const take = (raw: KickLivestreamResponse): void => {
+      const id = Number(raw.broadcaster_user_id);
+      if (raw.category?.id !== target || !raw.slug || !Number.isFinite(id)) return;
+      roster.observe(id, raw.viewer_count ?? 0, now);
+      covered.add(id);
+      if (found.has(raw.slug)) return;
+      found.set(raw.slug, this.parseLivestreamResponse(raw));
+      added++;
+    };
+    // A stream in the list is followed too: it stays known when it drops out of the top 100.
+    for (const id of listed) roster.observe(id, minViewers, now);
+
+    try {
+      const { data } = await this.client.get<{ data: KickLivestreamResponse[] }>('/public/v1/livestreams', {
+        params: { limit: 100, sort: 'started_at', category_id: target, language },
+      });
+      for (const raw of Array.isArray(data?.data) ? data.data : []) take(raw);
+
+      const due = roster.due(now, covered, {
+        hotAtLeast: Math.max(1, Math.floor(minViewers * 0.4)),
+        youngForMs: TAIL_YOUNG_MS,
+        coldEveryMs: TAIL_COLD_EVERY_MS,
+      });
+      const batches: number[][] = [];
+      for (let i = 0; i < due.length; i += TAIL_IDS_PER_CALL) batches.push(due.slice(i, i + TAIL_IDS_PER_CALL));
+      for (let i = 0; i < batches.length; i += TAIL_CONCURRENCY) {
+        await Promise.all(
+          batches.slice(i, i + TAIL_CONCURRENCY).map(async (batch) => {
+            const { data: read } = await this.client.get<{ data: KickLivestreamResponse[] }>('/public/v1/livestreams', {
+              params: { broadcaster_user_id: batch, limit: 100 },
+              paramsSerializer: { serialize: repeatedKeys },
+            });
+            for (const raw of Array.isArray(read?.data) ? read.data : []) take(raw);
+            roster.markRead(batch, now);
+          }),
+        );
+      }
+    } catch (err) {
+      logger.debug(`Kick: following ${language} below its list failed for category ${target}: ${(err as Error).message}`);
+    }
+    roster.prune(now, TAIL_TTL_MS);
+    this.saveTailRosters(now);
+    return added;
+  }
+
+  private tailRoster(key: string, now: number): KickTailRoster {
+    if (!this.tailRosters) {
+      this.tailRosters = new Map();
+      if (process.env.NODE_ENV !== 'test') {
+        try {
+          const stored = JSON.parse(fs.readFileSync(TAIL_FILE, 'utf-8')) as Record<string, unknown>;
+          for (const [k, rows] of Object.entries(stored)) {
+            this.tailRosters.set(k, KickTailRoster.load(rows, now, TAIL_TTL_MS));
+          }
+        } catch {
+          // No file yet, or unreadable: start empty.
+        }
+      }
+    }
+    let roster = this.tailRosters.get(key);
+    if (!roster) {
+      roster = new KickTailRoster();
+      this.tailRosters.set(key, roster);
+    }
+    return roster;
+  }
+
+  private saveTailRosters(now: number): void {
+    if (process.env.NODE_ENV === 'test' || !this.tailRosters || now - this.tailSavedAt < TAIL_SAVE_EVERY_MS) return;
+    this.tailSavedAt = now;
+    const out: Record<string, unknown> = {};
+    for (const [key, roster] of this.tailRosters) out[key] = roster.dump();
+    fs.promises.writeFile(TAIL_FILE, JSON.stringify(out)).catch(() => {});
   }
 
   async searchLiveStreams(

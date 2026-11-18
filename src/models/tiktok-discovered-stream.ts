@@ -56,13 +56,15 @@ export async function freshStreams(maxAgeMinutes = FRESH_WINDOW_MINUTES): Promis
 
 /**
  * One category's fresh rooms, for the Discover live tracker. Tighter
- * window than event discovery: one relay interval (5 min) plus slack,
- * so a stream that ended stops being served within ~2 poll cycles
- * instead of lingering for 15 minutes.
+ * window than event discovery: one capture pass plus slack, so a stream
+ * that ended stops being served soon instead of lingering for 15 minutes.
+ * Nine minutes since 2026-11-18: with the language sweep a pass over five
+ * categories takes about five and a half minutes, and at seven a room
+ * dropped out for a poll or two whenever a pass ran a little long.
  */
 export async function freshStreamsForCategory(
   category: string,
-  maxAgeMinutes = 7,
+  maxAgeMinutes = 9,
 ): Promise<TikTokDiscoveredStream[]> {
   return db<TikTokDiscoveredStream>(TABLE)
     .where('category', category)

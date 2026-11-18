@@ -10,3 +10,4 @@ src/dashboard/dist/
 .youtube-pool-quota.json
 scripts/twitch-browser-profile/
 scripts/.twitch-browser-cdp
+.kick-tail-roster.json
