@@ -54,6 +54,9 @@ const ONLY_CATEGORIES = (process.env.TIKTOK_DISCOVER_ONLY ?? '').split('|').map(
 /** Cursor-paginate the category feed up to this many pages per pass. */
 const MAX_FEED_PAGES = 12;
 const PAGE_SETTLE_MS = 8_000;
+/** Longest wait for the page to fire its signed feed call (a background tab is slower). */
+const FEED_WAIT_MS = 25_000;
+const FEED_SEEN_EXPR = `performance.getEntriesByType('resource').some(e => e.name.includes('webcast.tiktok.com/webcast/feed/') && e.name.includes('pc_web_game_category_feed'))`;
 
 function log(msg: string) {
   const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
@@ -184,7 +187,19 @@ async function captureCategory(cdp: CDP, category: string): Promise<TikTokFeedRo
     }
     await cdp.send('Page.enable', {}, sessionId);
     await cdp.send('Page.navigate', { url: pageUrl }, sessionId);
-    await sleep(PAGE_SETTLE_MS); // let TikTok's JS fire the signed feed call
+    // Let TikTok's JS fire the signed feed call: wait until it shows up
+    // among the page's requests instead of a fixed pause. A background tab
+    // in a covered window can take far longer than a foreground one.
+    const deadline = Date.now() + FEED_WAIT_MS;
+    await sleep(3_000);
+    while (Date.now() < deadline) {
+      const seen = await cdp
+        .send<{ result?: { value?: boolean } }>('Runtime.evaluate', { expression: FEED_SEEN_EXPR, returnByValue: true }, sessionId)
+        .catch(() => null);
+      if (seen?.result?.value === true) break;
+      await sleep(1_000);
+    }
+    await sleep(1_500);
 
     const evalRes = await cdp.send<{ result?: { value?: { error?: string; feeds?: unknown[] } } }>(
       'Runtime.evaluate',
@@ -242,7 +257,10 @@ async function runPass(): Promise<void> {
   try {
     for (const category of categories) {
       try {
-        const rooms = await captureCategory(cdp, category);
+        let rooms = await captureCategory(cdp, category);
+        // An empty capture is usually a page that never fired its feed call:
+        // one more try before this category goes without rooms for a pass.
+        if (rooms.length === 0) rooms = await captureCategory(cdp, category);
         const top = rooms.slice(0, 3).map((r) => `${r.username}=${r.viewerCount}`).join(', ');
         log(`  ${category}: ${rooms.length} live room(s)${top ? ` — top: ${top}` : ''}`);
         if (rooms.length > 0) await pushRooms(category, rooms);
@@ -279,13 +297,18 @@ async function main() {
   }
   while (true) {
     let intervalSeconds = 300;
+    const startedAt = Date.now();
     try {
       intervalSeconds = (await fetchConfig()).intervalSeconds || 300;
       await runPass();
     } catch (err) {
       log(`Pass ERROR: ${(err as Error).message}`);
     }
-    await sleep(intervalSeconds * 1000);
+    // The interval runs from pass START to pass start. The server serves a
+    // room for seven minutes after its capture; sleeping a full interval
+    // after a two-minute pass left every room missing for a minute or more.
+    const elapsedMs = Date.now() - startedAt;
+    await sleep(Math.max(30_000, intervalSeconds * 1000 - elapsedMs));
   }
 }
 
