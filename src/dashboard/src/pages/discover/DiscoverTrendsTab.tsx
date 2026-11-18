@@ -240,12 +240,14 @@ export function DiscoverTrendsTab({
     const sum = buckets.reduce((acc, b) => acc + b.total_ccv, 0);
     return Math.round(sum / buckets.length);
   }, [buckets]);
+  // Peak = the highest single minute in the range, whatever the bucket
+  // size of the chart. (The largest bucket average changed with the range.)
   const peakCcv = useMemo(
-    () => buckets.reduce((max, b) => (b.total_ccv > max ? b.total_ccv : max), 0),
+    () => buckets.reduce((max, b) => Math.max(max, api.bucketPeak(b)), 0),
     [buckets],
   );
   const peakBucket = useMemo(
-    () => buckets.find((b) => b.total_ccv === peakCcv) ?? null,
+    () => buckets.find((b) => api.bucketPeak(b) === peakCcv) ?? null,
     [buckets, peakCcv],
   );
   // Hours watched ≈ Σ(bucket avg CCV × bucket length). Same math the

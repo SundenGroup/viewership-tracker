@@ -1535,8 +1535,16 @@ export interface GameTrackerLeaderboardRow {
 
 export interface GameTrackerRangeBucket {
   ts: string;
+  /** Average of the per-minute totals in the bucket. */
   total_ccv: number;
   stream_count: number;
+  /** Highest single minute in the bucket. Absent on a server older than 2026-11-18. */
+  peak_ccv?: number;
+}
+
+/** A bucket's peak: its highest minute, or its average when the server sends none. */
+export function bucketPeak(b: { total_ccv: number; peak_ccv?: number }): number {
+  return b.peak_ccv ?? b.total_ccv;
 }
 
 export interface GameTrackerPlatformBreakdown {

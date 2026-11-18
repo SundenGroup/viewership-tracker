@@ -22,7 +22,7 @@ import { Avatar } from './DiscoverDetailPage';
  * Grid of card-style tiles. Empty state guides admin to /discover/admin/new.
  */
 interface TrackerPulse {
-  buckets: Array<{ ts: string; total_ccv: number }>;
+  buckets: Array<{ ts: string; total_ccv: number; peak_ccv?: number }>;
   /** Current live rows — feeds the top-3. */
   live?: api.GameTrackerLeaderboardRow[];
   /** Totals over every live channel — viewers now and the platform split. */
@@ -276,8 +276,9 @@ function TrackerPulseStrip({ pulse }: { pulse: TrackerPulse | null | undefined }
     // latest hourly bucket otherwise.
     const now = pulse?.summary ? pulse.summary.viewers : buckets[buckets.length - 1]?.total_ccv ?? 0;
     const last24 = buckets.slice(-24);
-    const peak24 = last24.reduce((m, b) => Math.max(m, b.total_ccv), 0);
-    const peak7d = buckets.reduce((m, b) => Math.max(m, b.total_ccv), 0);
+    // Peaks are the highest single minute, not the highest hourly average.
+    const peak24 = last24.reduce((m, b) => Math.max(m, api.bucketPeak(b)), 0);
+    const peak7d = buckets.reduce((m, b) => Math.max(m, api.bucketPeak(b)), 0);
     return { now, peak24, peak7d, buckets };
   }, [pulse]);
 

@@ -746,9 +746,12 @@ function LiveTab({
         const sixAgo = to.getTime() - 6 * 3600_000;
         const base = r.buckets.find((b) => Date.parse(b.ts) >= sixAgo && b.total_ccv > 0);
         setBaseline6h(base ? base.total_ccv : null);
+        // The peak is the highest single minute, not the highest 10-minute
+        // average: an average moves with the bucket size, a peak must not.
         let best: { value: number; at: string } | null = null;
         for (const b of r.buckets) {
-          if (!best || b.total_ccv > best.value) best = { value: b.total_ccv, at: b.ts };
+          const peak = api.bucketPeak(b);
+          if (!best || peak > best.value) best = { value: peak, at: b.ts };
         }
         setPeak24(best && best.value > 0 ? best : null);
       })
