@@ -272,7 +272,7 @@ router.get(
  * never silently drops a key the UI doesn't render.
  */
 const STRING_LIST_KEYS = [
-  'queries', 'include', 'exclude', 'strongTags', 'strongPhrases',
+  'queries', 'include', 'exclude', 'strongTags', 'strongPhrases', 'extraCategoryIds',
 ] as const;
 const NUMERIC_KEYS: Record<string, { min: number; max: number }> = {
   autoAllowWeakBelowCcv: { min: 0, max: 1_000_000 },

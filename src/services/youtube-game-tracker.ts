@@ -131,6 +131,13 @@ export interface YouTubeTrackerConfig {
   maxRoster?: number;
   /** Seconds between Live-search scrapes (default 600, floor 120). */
   discoveryIntervalSeconds?: number;
+  /**
+   * Category ids accepted besides Gaming (20), for streams whose TITLE
+   * names the game. Creators file launch streams under Entertainment (24)
+   * or People & Blogs (22); the title is then the only evidence, so a
+   * stream in one of these categories without a title hit stays out.
+   */
+  extraCategoryIds?: string[];
 }
 
 const DEFAULT_AUTO_ALLOW_WEAK_BELOW_CCV = 200;
@@ -141,6 +148,8 @@ const DEFAULT_ESCALATE_DENIED_ABOVE_CCV = 2_000;
 /** Automatic denials are re-tested after this long; human ones are final. */
 const DEFAULT_DENY_RETEST_DAYS = 7;
 const ESCALATION_REASON_PREFIX = 'auto-denied channel seen with';
+/** Share of the roster kept for ids whose audience is not known yet. */
+const UNKNOWN_ROSTER_SHARE = 0.1;
 
 export interface YouTubeCycleResult {
   rosterSize: number;
@@ -183,6 +192,42 @@ export function titleMatchesGame(
 }
 
 /**
+ * The strict title test for a source whose category cannot be trusted (a
+ * neighbouring TikTok category, say): the title must name the game from
+ * the tracker's own vocabulary and must not carry an excluded word.
+ */
+export function titleNamesGame(
+  rawTitle: string | null | undefined,
+  cfg: YouTubeTrackerConfig,
+): boolean {
+  const title = normalizeTitle(rawTitle);
+  const excluded = (cfg.exclude ?? [])
+    .map((x) => x.toLowerCase())
+    .filter(Boolean)
+    .some((kw) => title.includes(kw));
+  return !excluded && titleMatchesGame(rawTitle, cfg) !== null;
+}
+
+/**
+ * Pick the ids to poll when there are more candidates than the roster
+ * holds: biggest audience first, so a full roster can never keep a new
+ * large stream out. A small share stays reserved for ids whose audience
+ * is not known yet (approved channels' newest uploads from RSS), or they
+ * would never be looked at once the roster is full.
+ */
+export function orderRoster(
+  known: Map<string, number>,
+  unknown: string[],
+  maxRoster: number,
+): string[] {
+  const byViewers = [...known.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+  const fresh = [...new Set(unknown)].filter((id) => !known.has(id));
+  const reserve = Math.min(fresh.length, Math.max(1, Math.floor(maxRoster * UNKNOWN_ROSTER_SHARE)));
+  const head = byViewers.slice(0, Math.max(0, maxRoster - reserve));
+  return [...head, ...fresh.slice(0, Math.max(0, maxRoster - head.length))];
+}
+
+/**
  * Decide whether one live video belongs to this tracker.
  *
  * Two problems shaped this. First, a title alone is a poor signal — an
@@ -206,11 +251,17 @@ export function gateVideo(
   const reviewFloorEarly = cfg.alwaysReviewAboveCcv ?? DEFAULT_ALWAYS_REVIEW_ABOVE_CCV;
   const titleEarly = normalizeTitle(video.title);
 
-  /** YouTube itself says this isn't gaming — true for every path. */
-  const notGaming =
-    video.categoryId != null && video.categoryId !== GAMING_CATEGORY_ID
-      ? `category ${video.categoryId} is not Gaming`
-      : null;
+  /**
+   * YouTube itself says this isn't gaming — true for every path. The one
+   * way round it: a category the tracker lists as acceptable AND a title
+   * that names the game (a launch stream filed under Entertainment).
+   */
+  const categoryAccepted =
+    video.categoryId == null ||
+    video.categoryId === GAMING_CATEGORY_ID ||
+    ((cfg.extraCategoryIds ?? []).map(String).includes(video.categoryId) &&
+      titleMatchesGame(video.title, cfg) !== null);
+  const notGaming = categoryAccepted ? null : `category ${video.categoryId} is not Gaming`;
 
   /**
    * Does THIS stream look like the tracked game — judged on the TITLE only.
@@ -277,14 +328,18 @@ export function gateVideo(
     // denies it with the explicit reason.
   }
   if (existing?.decision === 'deny') {
-    if (video.concurrentViewers >= escalateFloor && !hardExcluded) {
+    const since = existing.decidedAt ?? existing.createdAt ?? null;
+    const stale = !since || Date.now() - since.getTime() > retestMs;
+    // A re-test that is due and that this stream's own title would pass
+    // needs no human: it falls through to the fresh verdict below instead
+    // of joining the queue.
+    const retestWouldMatch = stale && !hardExcluded && matchesThisGame() !== null;
+    if (video.concurrentViewers >= escalateFloor && !hardExcluded && !retestWouldMatch) {
       return {
         decision: 'pending',
         reason: `${ESCALATION_REASON_PREFIX} ${video.concurrentViewers} viewers; confirm before counting`,
       };
     }
-    const since = existing.decidedAt ?? existing.createdAt ?? null;
-    const stale = !since || Date.now() - since.getTime() > retestMs;
     if (!stale) {
       return { decision: 'deny', reason: existing.reason ?? 'channel denied', evaluated: false };
     }
@@ -399,19 +454,21 @@ export class YouTubeGameTracker {
   }
 
   /**
-   * Video ids seen live for this tracker within ROSTER_TTL_MS. Derived from
-   * the snapshots we already write, so no extra roster table to keep in
-   * sync — a stream that ends ages out on its own.
+   * Video ids seen live for this tracker within ROSTER_TTL_MS, each with
+   * the largest audience seen in that window. Derived from the snapshots
+   * we already write, so no extra roster table to keep in sync — a stream
+   * that ends ages out on its own.
    */
-  private async recentRoster(trackerId: string): Promise<string[]> {
-    const rows = await this.db('game_tracker_snapshots')
+  private async recentRoster(trackerId: string): Promise<Map<string, number>> {
+    const rows = (await this.db('game_tracker_snapshots')
       .where('game_tracker_id', trackerId)
       .where('platform', 'youtube')
       .where('timestamp', '>=', new Date(Date.now() - ROSTER_TTL_MS))
       .whereNotNull('stream_id')
-      .distinct('stream_id')
-      .pluck('stream_id');
-    return rows as string[];
+      .groupBy('stream_id')
+      .select('stream_id')
+      .max({ viewers: 'concurrent_viewers' })) as Array<{ stream_id: string; viewers: number | string | null }>;
+    return new Map(rows.map((r) => [r.stream_id, Number(r.viewers) || 0]));
   }
 
   /**
@@ -426,7 +483,11 @@ export class YouTubeGameTracker {
     };
 
     // ── 1. Roster ──────────────────────────────────────────────────────
-    const roster = new Set(await this.recentRoster(tracker.id));
+    // id → audience, for every id whose size we know; ids we only have
+    // from RSS (size unknown) are kept apart so the roster can be cut by
+    // audience when it is over its cap (see orderRoster).
+    const roster = await this.recentRoster(tracker.id);
+    const unsized = new Set<string>();
 
     // Channels a human already approved are watched directly via their RSS
     // feed, so they keep being tracked on days their title matches nothing
@@ -437,7 +498,7 @@ export class YouTubeGameTracker {
       .map(([channelId]) => channelId);
     if (allowedChannelIds.length > 0) {
       try {
-        for (const id of await watchlistVideoIds(allowedChannelIds)) roster.add(id);
+        for (const id of await watchlistVideoIds(allowedChannelIds)) unsized.add(id);
       } catch (err) {
         logger.debug(`[YT:${tracker.slug}] watchlist failed: ${(err as Error).message}`);
       }
@@ -453,14 +514,17 @@ export class YouTubeGameTracker {
       this.lastDiscovery.set(tracker.id, Date.now());
       result.discoveryRan = true;
       const candidates = await discoverLive(cfg.queries!, cfg.discoveryPagesPerQuery ?? 3);
-      for (const c of candidates) roster.add(c.videoId);
+      for (const c of candidates) {
+        if (c.roughViewers == null) unsized.add(c.videoId);
+        else roster.set(c.videoId, Math.max(roster.get(c.videoId) ?? 0, c.roughViewers));
+      }
       logger.debug(
-        `[YT:${tracker.slug}] discovery found ${candidates.length}, roster now ${roster.size}`,
+        `[YT:${tracker.slug}] discovery found ${candidates.length}, roster now ${roster.size} sized + ${unsized.size} unsized`,
       );
     }
 
     const maxRoster = cfg.maxRoster ?? DEFAULT_MAX_ROSTER;
-    const ids = [...roster].slice(0, maxRoster);
+    const ids = orderRoster(roster, [...unsized], maxRoster);
     result.rosterSize = ids.length;
     if (ids.length === 0) return { streams: [], result };
     result.quotaCalls = Math.ceil(ids.length / 50);

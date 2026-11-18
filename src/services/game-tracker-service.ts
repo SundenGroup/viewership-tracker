@@ -24,7 +24,8 @@ import type { TwitchAdapter } from '../adapters/twitch';
 import type { KickAdapter } from '../adapters/kick';
 import type { YouTubeAdapter } from '../adapters/youtube';
 import type { DiscoveredStream } from '../adapters/types';
-import { YouTubeGameTracker } from './youtube-game-tracker';
+import { YouTubeGameTracker, titleNamesGame, type YouTubeTrackerConfig } from './youtube-game-tracker';
+import { tiktokExtraCategories } from '../utils/tiktok-extra-categories';
 
 type TrackedPlatform = 'twitch' | 'kick' | 'youtube' | 'soop' | 'tiktok';
 
@@ -257,7 +258,11 @@ export class GameTrackerService {
           const rows = await TikTokDiscoveredModel.freshStreamsForCategory(
             tracker.tiktok_category_slug!,
           );
-          for (const r of rows) {
+          // A room can sit in two category grids at once; count it once.
+          const seen = new Set<string>();
+          const add = (r: (typeof rows)[number]): void => {
+            if (seen.has(r.username)) return;
+            seen.add(r.username);
             liveStreams.push({
               platform: 'tiktok',
               stream: {
@@ -271,6 +276,17 @@ export class GameTrackerService {
                 streamId: r.room_id,
               },
             });
+          };
+          for (const r of rows) add(r);
+          // Neighbouring categories (metadata.tiktok_extra_categories): a
+          // new game's streams filed under its predecessor. Those grids
+          // hold the other game too, so only rooms whose TITLE names this
+          // game count, judged by the tracker's own title vocabulary.
+          const vocabulary = (tracker.youtube_config ?? {}) as YouTubeTrackerConfig;
+          for (const category of tiktokExtraCategories(tracker.metadata)) {
+            if (category === tracker.tiktok_category_slug) continue;
+            const extra = await TikTokDiscoveredModel.freshStreamsForCategory(category);
+            for (const r of extra) if (titleNamesGame(r.title, vocabulary)) add(r);
           }
         } catch (err) {
           failedPlatforms.add('tiktok');

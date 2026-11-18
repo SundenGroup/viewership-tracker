@@ -16,6 +16,7 @@ import db from '../../utils/db';
 import logger from '../../utils/logger';
 import { getPushNotifier } from '../../services/push-notifier';
 import * as TikTokDiscoveredModel from '../../models/tiktok-discovered-stream';
+import { tiktokExtraCategories } from '../../utils/tiktok-extra-categories';
 import { ingestTikTokReadings, type TikTokReading } from '../../services/tiktok-ingest';
 
 /** One guard for the process — state must persist across pushes. */
@@ -579,18 +580,21 @@ router.get('/tiktok/channels', requireRelayToken, async (_req: Request, res: Res
  * GET /api/relay/tiktok/discover-config
  * Category pages the relay box should capture: every active game
  * tracker's tiktok_category_slug (so enabling TikTok on a tracker
- * starts capture automatically), plus any env extras
+ * starts capture automatically), each tracker's neighbouring categories
+ * (metadata.tiktok_extra_categories), plus any env extras
  * (TIKTOK_DISCOVER_CATEGORIES="slug|slug").
  */
 router.get('/tiktok/discover-config', requireRelayToken, async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    const rows = await db('game_trackers')
+    const trackers = (await db('game_trackers')
       .where('status', 'active')
       .whereNotNull('tiktok_category_slug')
-      .pluck('tiktok_category_slug');
+      .select('tiktok_category_slug', 'metadata')) as Array<{ tiktok_category_slug: string; metadata: unknown }>;
+    const rows = trackers.map((t) => t.tiktok_category_slug);
+    const neighbours = trackers.flatMap((t) => tiktokExtraCategories(t.metadata));
     const extra = (process.env.TIKTOK_DISCOVER_CATEGORIES ?? '')
       .split('|').map((s) => s.trim()).filter(Boolean);
-    const categories = [...new Set([...rows, ...extra])];
+    const categories = [...new Set([...rows, ...neighbours, ...extra])];
     res.json({ categories, intervalSeconds: 300 });
   } catch (err) {
     next(err);
