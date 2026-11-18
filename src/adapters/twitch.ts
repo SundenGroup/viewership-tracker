@@ -404,13 +404,41 @@ export class TwitchAdapter implements PlatformAdapter {
     return results;
   }
 
+  /** The first five pages of a category, optionally filtered by title keywords. */
   async searchLiveStreams(
     gameId?: string,
     keywords?: string[],
   ): Promise<DiscoveredStream[]> {
+    return this.listStreams(gameId, keywords, {});
+  }
+
+  /**
+   * A category read down to a viewer floor, for the live game tracker:
+   * reading goes on until a whole page sits below `minViewers`, bounded
+   * by `maxPages`.
+   */
+  async listCategoryToFloor(
+    gameId: string,
+    opts: { minViewers?: number; maxPages?: number },
+  ): Promise<DiscoveredStream[]> {
+    return this.listStreams(gameId, undefined, opts);
+  }
+
+  /**
+   * Live streams of a category (and, with keywords, those whose title has
+   * one). Helix lists a category by audience, largest first, 100 a page.
+   */
+  private async listStreams(
+    gameId: string | undefined,
+    keywords: string[] | undefined,
+    opts: { minViewers?: number; maxPages?: number },
+  ): Promise<DiscoveredStream[]> {
     const allStreams: DiscoveredStream[] = [];
     let cursor: string | undefined;
-    const maxPages = 5;
+    const maxPages = Math.max(1, opts.maxPages ?? 5);
+    const floor = opts.minViewers ?? null;
+    // The list shifts while it is read, so a stream can show up on two pages.
+    const seen = new Set<string>();
 
     for (let page = 0; page < maxPages; page++) {
       const pageResult = await this.requestWithRetry(async () => {
@@ -428,6 +456,8 @@ export class TwitchAdapter implements PlatformAdapter {
       if (!pageResult || pageResult.data.length === 0) break;
 
       for (const stream of pageResult.data) {
+        if (seen.has(stream.user_login)) continue;
+        seen.add(stream.user_login);
         const matches = !keywords || keywords.length === 0 || keywords.some(
           (kw) => stream.title.toLowerCase().includes(kw.toLowerCase()),
         );
@@ -445,6 +475,9 @@ export class TwitchAdapter implements PlatformAdapter {
           });
         }
       }
+
+      // Everything on this page is under the floor, and so is what follows.
+      if (floor != null && pageResult.data.every((s) => s.viewer_count < floor)) break;
 
       cursor = pageResult.pagination.cursor;
       if (!cursor) break;

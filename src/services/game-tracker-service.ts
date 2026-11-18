@@ -186,7 +186,13 @@ export class GameTrackerService {
         (async () => {
           try {
             const twitch = this.registry.getAdapter('twitch') as TwitchAdapter;
-            const streams = await twitch.searchLiveStreams(tracker.twitch_game_id!);
+            // Read as deep as this tracker can keep: down to its viewer
+            // floor, and no further than its channel cap (five pages, the
+            // long-standing depth, at the default cap of 500).
+            const streams = await twitch.listCategoryToFloor(tracker.twitch_game_id!, {
+              minViewers: tracker.min_ccv_threshold,
+              maxPages: Math.max(5, Math.ceil(tracker.max_active_channels / 100)),
+            });
             for (const s of streams) {
               liveStreams.push({
                 platform: 'twitch',

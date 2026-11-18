@@ -47,6 +47,10 @@ const RELAY_URL = process.env.RELAY_URL || 'https://tracker.clutch.game';
 const RELAY_SECRET = process.env.RELAY_SECRET || '';
 const CDP_PORT = 9224;
 const LOOP_MODE = process.argv.includes('--loop');
+/** Open capture tabs in front (the behaviour before 2026-11-18). */
+const FOREGROUND_TABS = process.env.TIKTOK_DISCOVER_FOREGROUND === '1';
+/** Capture only these categories ("a|b"), for a manual test pass. */
+const ONLY_CATEGORIES = (process.env.TIKTOK_DISCOVER_ONLY ?? '').split('|').map((x) => x.trim()).filter(Boolean);
 /** Cursor-paginate the category feed up to this many pages per pass. */
 const MAX_FEED_PAGES = 12;
 const PAGE_SETTLE_MS = 8_000;
@@ -161,14 +165,23 @@ async function captureCategory(cdp: CDP, category: string): Promise<TikTokFeedRo
   // The /live/category/ GRID page — not the /live/ player, whose feed
   // only samples a handful of rooms (see CAPTURE_EXPR).
   const pageUrl = `https://www.tiktok.com/live/category/${category}`;
+  // Background tab: a foreground one pulls the Chrome window in front of
+  // whatever the person at this machine is doing, once per category, every
+  // pass. TIKTOK_DISCOVER_FOREGROUND=1 restores the old behaviour.
   const { targetId } = await cdp.send<{ targetId: string }>('Target.createTarget', {
     url: 'about:blank',
+    background: !FOREGROUND_TABS,
   });
   try {
     const { sessionId } = await cdp.send<{ sessionId: string }>('Target.attachToTarget', {
       targetId,
       flatten: true,
     });
+    // A background tab reads as unfocused to the page; say otherwise, so
+    // TikTok's own JS still loads the grid and fires its signed feed call.
+    if (!FOREGROUND_TABS) {
+      await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId).catch(() => {});
+    }
     await cdp.send('Page.enable', {}, sessionId);
     await cdp.send('Page.navigate', { url: pageUrl }, sessionId);
     await sleep(PAGE_SETTLE_MS); // let TikTok's JS fire the signed feed call
@@ -218,7 +231,8 @@ async function pushRooms(category: string, rooms: TikTokFeedRoom[]): Promise<voi
 // ── Main ─────────────────────────────────────────────────────────────────
 
 async function runPass(): Promise<void> {
-  const { categories } = await fetchConfig();
+  const configured = (await fetchConfig()).categories;
+  const categories = ONLY_CATEGORIES.length > 0 ? configured.filter((c) => ONLY_CATEGORIES.includes(c)) : configured;
   if (categories.length === 0) {
     log('No categories configured (TIKTOK_DISCOVER_CATEGORIES on server).');
     return;
