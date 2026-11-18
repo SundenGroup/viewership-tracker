@@ -1,6 +1,8 @@
 import {
   splitRangeByUtcDays,
   mergeBucketParts,
+  nextPollBoundary,
+  pollBoundaryAtOrBefore,
   classifyTrend,
   clampInt,
   servableFromBucketRollup,
@@ -54,18 +56,54 @@ describe('mergeBucketParts', () => {
   it('averages per-minute totals across rolled and raw parts of one bucket', () => {
     const ts = Date.parse('2026-09-02T06:00:00Z');
     const rows = mergeBucketParts([
-      { ts, ccv_sum: 1000 * 50, stream_sum: 10 * 50, minutes: 50 },
-      { ts, ccv_sum: 1300 * 10, stream_sum: 13 * 10, minutes: 10 },
-      { ts: ts + 3_600_000, ccv_sum: 500 * 60, stream_sum: 5 * 60, minutes: 60 },
+      { ts, ccv_sum: 1000 * 50, stream_sum: 10 * 50, minutes: 50, ccv_max: 1100 },
+      { ts, ccv_sum: 1300 * 10, stream_sum: 13 * 10, minutes: 10, ccv_max: 1400 },
+      { ts: ts + 3_600_000, ccv_sum: 500 * 60, stream_sum: 5 * 60, minutes: 60, ccv_max: 620 },
     ]);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toEqual({ ts: new Date(ts), total_ccv: 1050, stream_count: 11 });
-    expect(rows[1]).toEqual({ ts: new Date(ts + 3_600_000), total_ccv: 500, stream_count: 5 });
+    expect(rows[0]).toEqual({ ts: new Date(ts), total_ccv: 1050, stream_count: 11, peak_ccv: 1400 });
+    expect(rows[1]).toEqual({ ts: new Date(ts + 3_600_000), total_ccv: 500, stream_count: 5, peak_ccv: 620 });
+  });
+
+  it('reports the highest single minute as the peak, not the bucket average', () => {
+    // Ten minutes around 7.0M with one minute at 7.17M: the average is not the peak.
+    const ts = Date.parse('2026-11-18T16:10:00Z');
+    const [row] = mergeBucketParts([
+      { ts, ccv_sum: 70_600_000, stream_sum: 18_000, minutes: 10, ccv_max: 7_169_676 },
+    ]);
+    expect(row.total_ccv).toBe(7_060_000);
+    expect(row.peak_ccv).toBe(7_169_676);
   });
 
   it('returns zero for buckets without minutes', () => {
-    const rows = mergeBucketParts([{ ts: 0, ccv_sum: 0, stream_sum: 0, minutes: 0 }]);
-    expect(rows[0]).toEqual({ ts: new Date(0), total_ccv: 0, stream_count: 0 });
+    const rows = mergeBucketParts([{ ts: 0, ccv_sum: 0, stream_sum: 0, minutes: 0, ccv_max: 0 }]);
+    expect(rows[0]).toEqual({ ts: new Date(0), total_ccv: 0, stream_count: 0, peak_ccv: 0 });
+  });
+});
+
+describe('poll boundaries', () => {
+  const MIN = 60_000;
+  it('the next poll is the next whole minute, whatever second the app started at', () => {
+    expect(new Date(nextPollBoundary(Date.parse('2026-11-18T15:30:42.000Z'), MIN)).toISOString()).toBe(
+      '2026-11-18T15:31:00.000Z',
+    );
+    expect(new Date(nextPollBoundary(Date.parse('2026-11-18T13:39:02.500Z'), MIN)).toISOString()).toBe(
+      '2026-11-18T13:40:00.000Z',
+    );
+  });
+  it('is strictly after now: exactly on a boundary means the following one', () => {
+    const onTheMinute = Date.parse('2026-11-18T15:31:00.000Z');
+    expect(nextPollBoundary(onTheMinute, MIN)).toBe(onTheMinute + MIN);
+  });
+  it('a poll started by hand is stamped with the minute it started in', () => {
+    expect(new Date(pollBoundaryAtOrBefore(Date.parse('2026-11-18T16:03:04.000Z'), MIN)).toISOString()).toBe(
+      '2026-11-18T16:03:00.000Z',
+    );
+  });
+  it('follows the interval for trackers that poll slower than a minute', () => {
+    expect(new Date(nextPollBoundary(Date.parse('2026-11-18T16:03:04.000Z'), 5 * MIN)).toISOString()).toBe(
+      '2026-11-18T16:05:00.000Z',
+    );
   });
 });
 

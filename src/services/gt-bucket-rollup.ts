@@ -5,10 +5,12 @@
  * or every language, '-' = no language tag)
  * so the Trends timeline and the 24h peak stop scanning raw minute rows.
  *
- * Semantics are exactly rangeAggregate()'s: a minute's total is the SUM
- * of that minute's snapshot rows, a minute's stream count is the number
- * of distinct channels, and a bucket stores the SUM of those per-minute
- * values plus how many minutes had data (so AVG = sum / minutes).
+ * Semantics are exactly rangeAggregate()'s: a minute's total is every
+ * stream's latest reading in that minute, added up (never the sum of all
+ * rows: a minute can hold two polls), a minute's stream count is the
+ * number of distinct channels, and a bucket stores the SUM of those
+ * per-minute values, the highest of them, and how many minutes had data
+ * (so AVG = sum / minutes).
  *
  * Scheduled every 2 minutes from src/index.ts (kill switch GT_ROLLUP=0),
  * re-rolling the last 30 minutes so late rows settle; idempotent. History
@@ -18,6 +20,7 @@
 import db from '../utils/db';
 import logger from '../utils/logger';
 import { BUCKET_EPOCH, BUCKET_ROLLUP_SECONDS, bucketFloor } from '../utils/gt-ranges';
+import { perStreamMinuteByDimensionSql } from '../utils/gt-minute-sql';
 
 export interface BucketRollupResult {
   from: Date;
@@ -36,16 +39,19 @@ export async function rollupBuckets(from: Date, to: Date): Promise<BucketRollupR
   if (end.getTime() <= start.getTime()) return { from: start, to: end, rows: 0 };
   const result = await db.raw<{ rowCount: number }>(
     `
-    WITH per_minute AS (
+    WITH per_stream AS (
+      -- one value per stream per minute: its latest reading (gt-minute-sql)
+${perStreamMinuteByDimensionSql('"timestamp" >= ? AND "timestamp" < ?')}
+    ),
+    per_minute AS (
       -- finest grain: one row per tracker / platform / language / minute
       SELECT game_tracker_id,
-             platform::text AS platform,
-             COALESCE(NULLIF(LOWER(language), ''), '-') AS language,
-             date_trunc('minute', "timestamp") AS minute,
-             SUM(concurrent_viewers) AS ccv,
+             platform,
+             language,
+             minute,
+             SUM(ccv) AS ccv,
              COUNT(DISTINCT channel_id) AS streams
-      FROM game_tracker_snapshots
-      WHERE "timestamp" >= ? AND "timestamp" < ?
+      FROM per_stream
       GROUP BY 1, 2, 3, 4
     ),
     u AS (

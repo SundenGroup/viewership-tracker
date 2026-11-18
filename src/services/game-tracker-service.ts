@@ -28,6 +28,7 @@ import { YouTubeGameTracker, titleNamesGame, type YouTubeTrackerConfig } from '.
 import { tiktokExtraCategories } from '../utils/tiktok-extra-categories';
 import { chzzkCategory, kickLanguageSplit } from '../utils/tracker-metadata';
 import type { ChzzkAdapter } from '../adapters/chzzk';
+import { nextPollBoundary, pollBoundaryAtOrBefore } from '../utils/gt-ranges';
 
 type TrackedPlatform = 'twitch' | 'kick' | 'youtube' | 'soop' | 'tiktok' | 'chzzk';
 
@@ -66,7 +67,8 @@ interface CycleResult {
 export class GameTrackerService {
   private readonly registry: AdapterRegistry;
   private readonly db: Knex;
-  private readonly intervals = new Map<string, ReturnType<typeof setInterval>>();
+  /** Pending timer of each tracker's next poll. A tracker is polling while it has an entry. */
+  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly lastResults = new Map<string, CycleResult>();
   private running = false;
   private youtubeTracker: YouTubeGameTracker | null = null;
@@ -104,19 +106,25 @@ export class GameTrackerService {
 
   async stop(): Promise<void> {
     this.running = false;
-    for (const [trackerId, handle] of this.intervals) {
-      clearInterval(handle);
+    for (const [trackerId, handle] of this.timers) {
+      clearTimeout(handle);
       logger.debug(`[GameTracker] Stopped poll loop for tracker ${trackerId}`);
     }
-    this.intervals.clear();
+    this.timers.clear();
   }
 
   /**
    * Start the poll loop for one tracker. Idempotent — if already running,
    * does nothing. Reads the tracker config fresh from DB every call.
+   *
+   * Polls start on whole multiples of the interval (the clock minute at
+   * 60 s), not at whatever second the process happened to start, and each
+   * poll is stamped with that boundary. The next poll is scheduled only
+   * when the current one has finished, so a tracker never runs two polls
+   * at once: a poll that overruns a boundary skips it.
    */
   async startTracker(trackerId: string): Promise<void> {
-    if (this.intervals.has(trackerId)) {
+    if (this.timers.has(trackerId)) {
       logger.debug(`[GameTracker] Already running for ${trackerId}`);
       return;
     }
@@ -126,22 +134,43 @@ export class GameTrackerService {
       logger.debug(`[GameTracker] Skipping ${trackerId} (not active)`);
       return;
     }
+    // Another start for the same tracker may have won while we read it.
+    if (this.timers.has(trackerId)) return;
 
     const intervalMs = tracker.polling_interval_seconds * 1000;
-    logger.info(`[GameTracker:${tracker.slug}] starting (every ${intervalMs / 1000}s)`);
+    logger.info(`[GameTracker:${tracker.slug}] starting (every ${intervalMs / 1000}s, on the clock)`);
+    this.scheduleNextPoll(trackerId, tracker.slug, intervalMs);
+  }
 
-    // First cycle immediately.
-    this.runCycleSafe(trackerId);
-
-    const handle = setInterval(() => this.runCycleSafe(trackerId), intervalMs);
-    this.intervals.set(trackerId, handle);
+  /** Arm the timer for the next poll boundary and, once it ran, the one after. */
+  private scheduleNextPoll(trackerId: string, slug: string, intervalMs: number, previousBoundary?: number): void {
+    const now = Date.now();
+    const boundary = nextPollBoundary(now, intervalMs);
+    if (previousBoundary !== undefined) {
+      const skipped = Math.round((boundary - previousBoundary) / intervalMs) - 1;
+      if (skipped > 0) {
+        logger.warn(
+          `[GameTracker:${slug}] the last poll ran past ${skipped} poll time(s): ` +
+            `no rows for ${skipped} interval(s)`,
+        );
+      }
+    }
+    const handle = setTimeout(() => {
+      void (async () => {
+        await this.runCycleSafe(trackerId, new Date(boundary));
+        // Stopped (or the service shut down) while the poll ran: do not re-arm.
+        if (this.timers.get(trackerId) !== handle) return;
+        this.scheduleNextPoll(trackerId, slug, intervalMs, boundary);
+      })();
+    }, Math.max(0, boundary - now));
+    this.timers.set(trackerId, handle);
   }
 
   stopTracker(trackerId: string): void {
-    const handle = this.intervals.get(trackerId);
+    const handle = this.timers.get(trackerId);
     if (!handle) return;
-    clearInterval(handle);
-    this.intervals.delete(trackerId);
+    clearTimeout(handle);
+    this.timers.delete(trackerId);
     logger.info(`[GameTracker] stopped tracker ${trackerId}`);
   }
 
@@ -151,9 +180,9 @@ export class GameTrackerService {
 
   // ── Per-cycle logic ───────────────────────────────────────────────────
 
-  private async runCycleSafe(trackerId: string): Promise<void> {
+  private async runCycleSafe(trackerId: string, pollAt?: Date): Promise<void> {
     try {
-      await this.runCycle(trackerId);
+      await this.runCycle(trackerId, pollAt);
     } catch (err) {
       logger.error(`[GameTracker] cycle failed for ${trackerId}`, {
         error: (err as Error).message,
@@ -166,12 +195,18 @@ export class GameTrackerService {
    * stream list for the configured game on each platform, then reconciles
    * with the active channel set: upsert matches, bump or drop misses.
    */
-  async runCycle(trackerId: string): Promise<CycleResult> {
+  async runCycle(trackerId: string, pollAt?: Date): Promise<CycleResult> {
     const start = Date.now();
     const tracker = await GameTrackerModel.findById(trackerId);
     if (!tracker) {
       throw new Error(`tracker ${trackerId} not found`);
     }
+    // Every row of this poll carries the time the poll was scheduled for,
+    // not the moment its reads finish: the reads take 10 to 40 seconds, and
+    // a stamp taken at their end drifted across minute boundaries, leaving
+    // one minute with two polls and its neighbour with none.
+    const cycleTimestamp =
+      pollAt ?? new Date(pollBoundaryAtOrBefore(start, tracker.polling_interval_seconds * 1000));
 
     const slug = tracker.slug;
     const liveStreams: PlatformStream[] = [];
@@ -348,7 +383,7 @@ export class GameTrackerService {
             return;
           }
           try {
-            const { streams, result: ytResult } = await yt.collect(tracker);
+            const { streams, result: ytResult } = await yt.collect(tracker, cycleTimestamp);
             if (ytResult.degraded) failedPlatforms.add('youtube');
             for (const s of streams) liveStreams.push({ platform: 'youtube', stream: s });
             logger.info(
@@ -374,8 +409,6 @@ export class GameTrackerService {
       .filter((p) => p.stream.concurrentViewers >= tracker.min_ccv_threshold)
       .sort((a, b) => b.stream.concurrentViewers - a.stream.concurrentViewers)
       .slice(0, tracker.max_active_channels);
-
-    const cycleTimestamp = new Date();
 
     // ── Resolve channels (insert if new, reuse if known) ──────────────
     const result: CycleResult = {

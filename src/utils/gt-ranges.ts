@@ -74,23 +74,26 @@ export interface BucketPart {
   ccv_sum: number;
   stream_sum: number;
   minutes: number;
+  /** Highest single-minute total inside this part. */
+  ccv_max: number;
 }
 
 /**
  * Merge bucket parts that may come from the rollup table and from the raw
  * tail (the same query bucket can be split across both) into the shape
- * rangeAggregate() has always returned: per-bucket average of the
- * per-minute totals.
+ * rangeAggregate() returns: per bucket, the average of the per-minute
+ * totals and the highest single minute.
  */
 export function mergeBucketParts(
   parts: BucketPart[],
-): Array<{ ts: Date; total_ccv: number; stream_count: number }> {
-  const byTs = new Map<number, { ccv: number; streams: number; minutes: number }>();
+): Array<{ ts: Date; total_ccv: number; stream_count: number; peak_ccv: number }> {
+  const byTs = new Map<number, { ccv: number; streams: number; minutes: number; peak: number }>();
   for (const p of parts) {
-    const cur = byTs.get(p.ts) ?? { ccv: 0, streams: 0, minutes: 0 };
+    const cur = byTs.get(p.ts) ?? { ccv: 0, streams: 0, minutes: 0, peak: 0 };
     cur.ccv += p.ccv_sum;
     cur.streams += p.stream_sum;
     cur.minutes += p.minutes;
+    cur.peak = Math.max(cur.peak, p.ccv_max);
     byTs.set(p.ts, cur);
   }
   return [...byTs.entries()]
@@ -99,8 +102,35 @@ export function mergeBucketParts(
       ts: new Date(ts),
       total_ccv: v.minutes > 0 ? Math.round(v.ccv / v.minutes) : 0,
       stream_count: v.minutes > 0 ? Math.round(v.streams / v.minutes) : 0,
+      peak_ccv: Math.round(v.peak),
     }));
 }
+
+// ── Poll scheduling ──────────────────────────────────────────────────────
+// A tracker polls on whole multiples of its interval: the clock minute at
+// the default 60 s. Every row of a poll is stamped with that boundary, not
+// with the moment the platform reads happened to finish, so one poll is
+// one minute on every chart no matter how long its reads took.
+
+/** The first poll boundary strictly after `nowMs`. */
+export function nextPollBoundary(nowMs: number, intervalMs: number): number {
+  const size = Math.max(1000, Math.floor(intervalMs));
+  return (Math.floor(nowMs / size) + 1) * size;
+}
+
+/** The poll boundary `nowMs` falls in: the stamp of a poll started by hand. */
+export function pollBoundaryAtOrBefore(nowMs: number, intervalMs: number): number {
+  const size = Math.max(1000, Math.floor(intervalMs));
+  return Math.floor(nowMs / size) * size;
+}
+
+/**
+ * How far back "live right now" looks for a channel's latest reading.
+ * Rows carry the minute their poll was scheduled for and are written when
+ * its reads finish, so the newest complete poll can be a full interval
+ * plus one slow poll old.
+ */
+export const LIVE_WINDOW_SECONDS = 150;
 
 /** True when a query bucket can be assembled from 10-minute rollup buckets. */
 export function servableFromBucketRollup(bucketSeconds: number): boolean {

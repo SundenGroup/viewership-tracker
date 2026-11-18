@@ -12,6 +12,7 @@ import {
   splitRangeByUtcDays,
   type BucketPart,
 } from '../utils/gt-ranges';
+import { perStreamMinuteSql } from '../utils/gt-minute-sql';
 
 /**
  * Fast read paths for Discover, served from the two rollup tables:
@@ -48,7 +49,7 @@ export async function rangeAggregate(
   toTs: Date,
   bucketSeconds: number,
   platform?: string | null,
-): Promise<Array<{ ts: Date; total_ccv: number; stream_count: number }>> {
+): Promise<Array<{ ts: Date; total_ccv: number; stream_count: number; peak_ccv: number }>> {
   if (!servableFromBucketRollup(bucketSeconds)) {
     return Snapshots.rangeAggregate(gameTrackerId, fromTs, toTs, bucketSeconds, platform);
   }
@@ -67,7 +68,7 @@ async function rangeAggregateFromRollup(
   toTs: Date,
   bucketSeconds: number,
   platform?: string | null,
-): Promise<Array<{ ts: Date; total_ccv: number; stream_count: number }>> {
+): Promise<Array<{ ts: Date; total_ccv: number; stream_count: number; peak_ccv: number }>> {
   const plat = platform ?? '*';
   const maxRow = await db('game_tracker_bucket_stats_v2')
     .where({ game_tracker_id: gameTrackerId, platform: plat, language: '*' })
@@ -83,11 +84,12 @@ async function rangeAggregateFromRollup(
 
   if (cutoff.getTime() > fromTs.getTime()) {
     const rolled = await db.raw<{
-      rows: Array<{ ts: Date; ccv_sum: string; stream_sum: string; minutes: string }>;
+      rows: Array<{ ts: Date; ccv_sum: string; stream_sum: string; minutes: string; ccv_max: string }>;
     }>(
       `
       SELECT date_bin(?::interval, bucket_ts, ?::timestamptz) AS ts,
-             SUM(ccv_sum) AS ccv_sum, SUM(stream_sum) AS stream_sum, SUM(minutes) AS minutes
+             SUM(ccv_sum) AS ccv_sum, SUM(stream_sum) AS stream_sum, SUM(minutes) AS minutes,
+             MAX(ccv_max) AS ccv_max
       FROM game_tracker_bucket_stats_v2
       WHERE game_tracker_id = ? AND platform = ? AND language = '*' AND bucket_ts >= ? AND bucket_ts < ?
       GROUP BY 1
@@ -100,29 +102,33 @@ async function rangeAggregateFromRollup(
         ccv_sum: Number(r.ccv_sum),
         stream_sum: Number(r.stream_sum),
         minutes: Number(r.minutes),
+        ccv_max: Number(r.ccv_max ?? 0),
       });
     }
   }
   if (cutoff.getTime() < toTs.getTime()) {
     const rawFrom = new Date(Math.max(cutoff.getTime(), fromTs.getTime()));
-    const platformSql = platform ? 'AND platform = ?' : '';
+    const where =
+      'game_tracker_id = ? AND "timestamp" >= ? AND "timestamp" < ?' + (platform ? ' AND platform = ?' : '');
     const params: unknown[] = platform
       ? [gameTrackerId, rawFrom, toTs, platform, interval, BUCKET_EPOCH]
       : [gameTrackerId, rawFrom, toTs, interval, BUCKET_EPOCH];
     const raw = await db.raw<{
-      rows: Array<{ ts: Date; ccv_sum: string; stream_sum: string; minutes: string }>;
+      rows: Array<{ ts: Date; ccv_sum: string; stream_sum: string; minutes: string; ccv_max: string }>;
     }>(
       `
-      WITH per_minute AS (
-        SELECT date_trunc('minute', "timestamp") AS minute_ts,
-               SUM(concurrent_viewers) AS ccv,
+      WITH per_stream AS (${perStreamMinuteSql(where)}
+      ),
+      per_minute AS (
+        SELECT minute AS minute_ts,
+               SUM(ccv) AS ccv,
                COUNT(DISTINCT channel_id) AS streams
-        FROM game_tracker_snapshots
-        WHERE game_tracker_id = ? AND "timestamp" >= ? AND "timestamp" < ? ${platformSql}
+        FROM per_stream
         GROUP BY 1
       )
       SELECT date_bin(?::interval, minute_ts, ?::timestamptz) AS ts,
-             SUM(ccv) AS ccv_sum, SUM(streams) AS stream_sum, COUNT(*) AS minutes
+             SUM(ccv) AS ccv_sum, SUM(streams) AS stream_sum, COUNT(*) AS minutes,
+             MAX(ccv) AS ccv_max
       FROM per_minute
       GROUP BY 1
       `,
@@ -134,6 +140,7 @@ async function rangeAggregateFromRollup(
         ccv_sum: Number(r.ccv_sum),
         stream_sum: Number(r.stream_sum),
         minutes: Number(r.minutes),
+        ccv_max: Number(r.ccv_max ?? 0),
       });
     }
   }
@@ -428,25 +435,18 @@ async function breakdownFromRollup(
     }
   }
   // Raw tail — the minutes the rollup has not reached yet (≤ a few minutes).
+  // Totalled the way the buckets are: per-minute totals, then their sum and
+  // their highest minute, so both parts mean the same thing.
   if (cutoff.getTime() < toTs.getTime()) {
     const rawFrom = new Date(Math.max(cutoff.getTime(), fromTs.getTime()));
-    const tail = await db.raw<{
-      rows: Array<{ platform: string; language: string | null; ccv_sum: string; ccv_max: string }>;
-    }>(
-      `
-      SELECT platform::text AS platform, language, SUM(concurrent_viewers) AS ccv_sum, MAX(concurrent_viewers) AS ccv_max
-      FROM game_tracker_snapshots
-      WHERE game_tracker_id = ? AND "timestamp" >= ? AND "timestamp" < ? ${platformFilter ? 'AND platform = ?' : ''}
-      GROUP BY 1, 2
-      `,
-      platformFilter ? [gameTrackerId, rawFrom, toTs, platformFilter] : [gameTrackerId, rawFrom, toTs],
-    );
-    for (const r of tail.rows) {
-      const total = Number(r.ccv_sum);
-      const peak = Number(r.ccv_max);
-      add(byPlatform as Map<string | null, { total: number; peak: number }>, r.platform, total, peak);
-      add(byLanguage, r.language ? r.language.toLowerCase() : null, total, peak);
+    const [tailPlatform, tailLanguage] = await Promise.all([
+      Snapshots.platformBreakdown(gameTrackerId, rawFrom, toTs, platformFilter),
+      Snapshots.languageBreakdown(gameTrackerId, rawFrom, toTs, platformFilter),
+    ]);
+    for (const r of tailPlatform) {
+      add(byPlatform as Map<string | null, { total: number; peak: number }>, r.platform, r.total_ccv_minutes, r.peak);
     }
+    for (const r of tailLanguage) add(byLanguage, r.language, r.total_ccv_minutes, r.peak);
   }
   const platform = [...byPlatform.entries()]
     .map(([platform, v]) => ({ platform, total_ccv_minutes: v.total, peak: v.peak }))

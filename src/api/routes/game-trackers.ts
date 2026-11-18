@@ -10,7 +10,7 @@ import * as QuarantineModel from '../../models/game-tracker-youtube-quarantine';
 import { promoteHeldSnapshots } from '../../services/youtube-quarantine-promote';
 import * as RollupReads from '../../models/game-tracker-rollup-reads';
 import { trendsV2 } from '../../models/game-tracker-trends';
-import { clampInt } from '../../utils/gt-ranges';
+import { clampInt, LIVE_WINDOW_SECONDS } from '../../utils/gt-ranges';
 import { requireRole } from '../middleware/auth';
 import type { GameTrackerService } from '../../services/game-tracker-service';
 import logger from '../../utils/logger';
@@ -611,8 +611,8 @@ router.get('/:slug/leaderboard', async (req: Request, res: Response, next: NextF
       language: req.query.language ? String(req.query.language) : null,
     };
     const [rows, total] = await Promise.all([
-      GameTrackerSnapshotModel.leaderboardAt(tracker.id, at, 120, limit, offset, filters),
-      envelope ? RollupReads.liveChannelCount(tracker.id, at, 120, filters) : Promise.resolve(0),
+      GameTrackerSnapshotModel.leaderboardAt(tracker.id, at, LIVE_WINDOW_SECONDS, limit, offset, filters),
+      envelope ? RollupReads.liveChannelCount(tracker.id, at, LIVE_WINDOW_SECONDS, filters) : Promise.resolve(0),
     ]);
     if (rows.length === 0) {
       res.json(envelope ? { rows: [], total, limit, offset } : []);
@@ -658,7 +658,7 @@ router.get('/:slug/live-summary', async (req: Request, res: Response, next: Next
       return;
     }
     const at = new Date();
-    const platforms = await RollupReads.liveTotalsByPlatform(tracker.id, at, 120);
+    const platforms = await RollupReads.liveTotalsByPlatform(tracker.id, at, LIVE_WINDOW_SECONDS);
     res.json({
       at,
       channels: platforms.reduce((n, p) => n + p.channels, 0),

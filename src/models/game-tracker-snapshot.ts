@@ -1,4 +1,5 @@
 import db from '../utils/db';
+import { perStreamMinuteByDimensionSql, perStreamMinuteSql } from '../utils/gt-minute-sql';
 
 export interface GameTrackerSnapshot {
   id: string;
@@ -44,9 +45,10 @@ export async function bulkInsert(rows: InsertSnapshot[]): Promise<number> {
  * a flow. Naively SUM-ing all rows in a bucket inflates the value by
  * the number of minutes in the bucket (every channel writes one row
  * per minute). The correct shape is two steps:
- *   1. SUM per minute → "total concurrent viewers across all channels
- *      at this minute" (this IS a sum because the channels are distinct
- *      at the same instant).
+ *   1. Total per minute → "total concurrent viewers across all channels
+ *      at this minute": every stream's latest reading in the minute,
+ *      added up. Not the sum of all rows — a minute can hold two polls
+ *      (see utils/gt-minute-sql).
  *   2. AVG over minutes inside the bucket → "typical total CCV across
  *      this 5-min window".
  *
@@ -62,33 +64,33 @@ export async function rangeAggregate(
   toTs: Date,
   bucketSeconds = 60,
   platform?: string | null,
-): Promise<Array<{ ts: Date; total_ccv: number; stream_count: number }>> {
+): Promise<Array<{ ts: Date; total_ccv: number; stream_count: number; peak_ccv: number }>> {
   // Optional platform scope so the Trends chart honours the page filter —
   // snapshots carry platform directly, no join needed.
-  const platformSql = platform ? 'AND platform = ?' : '';
+  const where =
+    'game_tracker_id = ? AND "timestamp" >= ? AND "timestamp" < ?' + (platform ? ' AND platform = ?' : '');
   const params: unknown[] = platform
     ? [gameTrackerId, fromTs, toTs, platform, `${bucketSeconds} seconds`, fromTs]
     : [gameTrackerId, fromTs, toTs, `${bucketSeconds} seconds`, fromTs];
   const rows = await db.raw<{
-    rows: Array<{ ts: Date; total_ccv: string | null; stream_count: string | null }>;
+    rows: Array<{ ts: Date; total_ccv: string | null; stream_count: string | null; peak_ccv: string | null }>;
   }>(
     `
-    WITH per_minute AS (
+    WITH per_stream AS (${perStreamMinuteSql(where)}
+    ),
+    per_minute AS (
       SELECT
-        date_trunc('minute', "timestamp") AS minute_ts,
-        SUM(concurrent_viewers) AS minute_total_ccv,
+        minute AS minute_ts,
+        SUM(ccv) AS minute_total_ccv,
         COUNT(DISTINCT channel_id) AS minute_stream_count
-      FROM game_tracker_snapshots
-      WHERE game_tracker_id = ?
-        AND "timestamp" >= ?
-        AND "timestamp" < ?
-        ${platformSql}
-      GROUP BY minute_ts
+      FROM per_stream
+      GROUP BY minute
     )
     SELECT
       date_bin(?::interval, minute_ts, ?::timestamptz) AS ts,
       AVG(minute_total_ccv)::float AS total_ccv,
-      AVG(minute_stream_count)::float AS stream_count
+      AVG(minute_stream_count)::float AS stream_count,
+      MAX(minute_total_ccv) AS peak_ccv
     FROM per_minute
     GROUP BY ts
     ORDER BY ts ASC
@@ -99,6 +101,7 @@ export async function rangeAggregate(
     ts: r.ts,
     total_ccv: r.total_ccv ? Math.round(Number(r.total_ccv)) : 0,
     stream_count: r.stream_count ? Math.round(Number(r.stream_count)) : 0,
+    peak_ccv: r.peak_ccv ? Math.round(Number(r.peak_ccv)) : 0,
   }));
 }
 
@@ -291,30 +294,59 @@ export async function countRangeLeaderboard(
   return Number(result.rows[0]?.n ?? 0);
 }
 
+/**
+ * Viewer-minutes and peak per platform or language over a range, from raw
+ * rows: per-minute totals first (one value per stream per minute), then
+ * their sum and their highest minute — the same two figures the bucket
+ * rollup stores, so the raw and rolled parts of a breakdown can be merged.
+ */
+async function dimensionBreakdown(
+  dimension: 'platform' | 'language',
+  gameTrackerId: string,
+  fromTs: Date,
+  toTs: Date,
+  platform?: string | null,
+): Promise<Array<{ key: string; total_ccv_minutes: number; peak: number }>> {
+  const where =
+    'game_tracker_id = ? AND "timestamp" >= ? AND "timestamp" < ?' + (platform ? ' AND platform = ?' : '');
+  const params: unknown[] = platform ? [gameTrackerId, fromTs, toTs, platform] : [gameTrackerId, fromTs, toTs];
+  const result = await db.raw<{ rows: Array<{ key: string; total_ccv_minutes: string; peak: string }> }>(
+    `
+    WITH per_stream AS (${perStreamMinuteByDimensionSql(where)}
+    ),
+    per_minute AS (
+      SELECT ${dimension} AS key, minute, SUM(ccv) AS ccv
+      FROM per_stream
+      GROUP BY 1, 2
+    )
+    SELECT key, SUM(ccv) AS total_ccv_minutes, MAX(ccv) AS peak
+    FROM per_minute
+    GROUP BY key
+    ORDER BY SUM(ccv) DESC
+    `,
+    params,
+  );
+  // pg returns SUM()/MAX() as strings — coerce, or JSON consumers end up
+  // string-concatenating totals (the 0.0% breakdown bug).
+  return result.rows.map((r) => ({
+    key: r.key,
+    total_ccv_minutes: Number(r.total_ccv_minutes),
+    peak: Number(r.peak),
+  }));
+}
+
 export async function languageBreakdown(
   gameTrackerId: string,
   fromTs: Date,
   toTs: Date,
   platform?: string | null,
 ): Promise<Array<{ language: string | null; total_ccv_minutes: number; peak: number }>> {
-  // pg returns SUM()/MAX() of integer columns as strings — coerce, or JSON
-  // consumers end up string-concatenating totals (the 0.0% breakdown bug).
-  const rows = await db(TABLE)
-    .select('language')
-    .sum<{ total_ccv_minutes: string }[]>({ total_ccv_minutes: 'concurrent_viewers' })
-    .max<{ peak: number }[]>({ peak: 'concurrent_viewers' })
-    .where('game_tracker_id', gameTrackerId)
-    .where('timestamp', '>=', fromTs)
-    .where('timestamp', '<', toTs)
-    .modify((q) => {
-      if (platform) q.where('platform', platform);
-    })
-    .groupBy('language')
-    .orderBy('total_ccv_minutes', 'desc');
-  return (rows as Array<{ language: string | null; total_ccv_minutes: unknown; peak: unknown }>).map((r) => ({
-    language: r.language,
-    total_ccv_minutes: Number(r.total_ccv_minutes),
-    peak: Number(r.peak),
+  const rows = await dimensionBreakdown('language', gameTrackerId, fromTs, toTs, platform);
+  return rows.map((r) => ({
+    // '-' is the stored key for "no language tag".
+    language: r.key === '-' ? null : r.key,
+    total_ccv_minutes: r.total_ccv_minutes,
+    peak: r.peak,
   }));
 }
 
@@ -520,24 +552,8 @@ export async function platformBreakdown(
   toTs: Date,
   platform?: string | null,
 ): Promise<Array<{ platform: string; total_ccv_minutes: number; peak: number }>> {
-  // Same coercion as languageBreakdown — pg SUM()/MAX() arrive as strings.
-  const rows = await db(TABLE)
-    .select('platform')
-    .sum<{ total_ccv_minutes: string }[]>({ total_ccv_minutes: 'concurrent_viewers' })
-    .max<{ peak: number }[]>({ peak: 'concurrent_viewers' })
-    .where('game_tracker_id', gameTrackerId)
-    .where('timestamp', '>=', fromTs)
-    .where('timestamp', '<', toTs)
-    .modify((q) => {
-      if (platform) q.where('platform', platform);
-    })
-    .groupBy('platform')
-    .orderBy('total_ccv_minutes', 'desc');
-  return (rows as Array<{ platform: string; total_ccv_minutes: unknown; peak: unknown }>).map((r) => ({
-    platform: r.platform,
-    total_ccv_minutes: Number(r.total_ccv_minutes),
-    peak: Number(r.peak),
-  }));
+  const rows = await dimensionBreakdown('platform', gameTrackerId, fromTs, toTs, platform);
+  return rows.map((r) => ({ platform: r.key, total_ccv_minutes: r.total_ccv_minutes, peak: r.peak }));
 }
 
 export async function purgeOlderThan(daysOld: number): Promise<number> {

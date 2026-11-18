@@ -475,7 +475,11 @@ export class YouTubeGameTracker {
    * One YouTube pass for a tracker. Returns streams in the same shape the
    * Twitch/Kick adapters emit, so the caller's reconcile logic is untouched.
    */
-  async collect(tracker: GameTracker): Promise<{ streams: DiscoveredStream[]; result: YouTubeCycleResult }> {
+  async collect(
+    tracker: GameTracker,
+    /** The poll's stamp: held rows carry it, so they land on their own poll when promoted. */
+    pollAt: Date = new Date(),
+  ): Promise<{ streams: DiscoveredStream[]; result: YouTubeCycleResult }> {
     const cfg = (tracker.youtube_config ?? {}) as YouTubeTrackerConfig;
     const result: YouTubeCycleResult = {
       rosterSize: 0, liveFound: 0, allowed: 0, pending: 0, denied: 0,
@@ -542,7 +546,7 @@ export class YouTubeGameTracker {
     const streams: DiscoveredStream[] = [];
     const observations: Parameters<typeof GatingModel.observe>[0] = [];
     const heldRows: Quarantine.InsertHeldSnapshot[] = [];
-    const cycleTime = new Date();
+    const cycleTime = pollAt;
 
     for (const v of live) {
       const { decision, reason, evaluated } = gateVideo(v, cfg, decisions.get(v.channelId));
