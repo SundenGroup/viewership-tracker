@@ -45,6 +45,33 @@ interface ChzzkChannelResponse {
   } | null;
 }
 
+interface ChzzkCategoryLivesResponse {
+  code: number;
+  content: {
+    page: { next: { concurrentUserCount: number; liveId: number } | null } | null;
+    data: Array<{
+      liveId: number;
+      liveTitle: string | null;
+      concurrentUserCount: number;
+      /** "2026-11-18 19:24:37", Korea time. */
+      openDate: string | null;
+      liveCategory: string | null;
+      liveCategoryValue: string | null;
+      channel?: { channelId: string; channelName: string; channelImageUrl: string | null };
+    }>;
+  } | null;
+}
+
+/** Items per category page (the site itself asks for 20 to 50). */
+const CATEGORY_PAGE_SIZE = 50;
+
+/** "2026-11-18 19:24:37" in Korea time → ISO, or null when unreadable. */
+export function chzzkOpenDateToIso(openDate: string | null | undefined): string | null {
+  if (!openDate || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(openDate)) return null;
+  const t = new Date(`${openDate.replace(' ', 'T')}+09:00`);
+  return Number.isNaN(t.getTime()) ? null : t.toISOString();
+}
+
 // ── ChzzkAdapter ──────────────────────────────────────────────────────────
 
 export class ChzzkAdapter implements PlatformAdapter {
@@ -122,6 +149,63 @@ export class ChzzkAdapter implements PlatformAdapter {
   ): Promise<DiscoveredStream[]> {
     // Manual tracking only for now
     return [];
+  }
+
+  /**
+   * Live streams of one category, largest audience first, for the live
+   * game tracker. `category` is the id from the category URL
+   * ("Grand_Theft_Auto_VI"; "TYPE/id" for a type other than GAME).
+   * Reading stops at the first page wholly below `minViewers`. Throws when
+   * the first page cannot be read, so the caller can tell a failed listing
+   * from an empty category.
+   */
+  async listCategoryLives(
+    category: string,
+    opts: { minViewers?: number; maxPages?: number } = {},
+  ): Promise<DiscoveredStream[]> {
+    const path = category.includes('/') ? category : `GAME/${category}`;
+    const floor = opts.minViewers ?? 0;
+    const maxPages = Math.max(1, opts.maxPages ?? 20);
+    const out: DiscoveredStream[] = [];
+    const seen = new Set<string>();
+    let next: { concurrentUserCount: number; liveId: number } | null = null;
+
+    for (let page = 0; page < maxPages; page++) {
+      if (page > 0) await this.delay(INTER_REQUEST_DELAY_MS);
+      const cursor: Record<string, number> = next ?? {};
+      const res = await this.requestWithRetry(
+        () =>
+          this.client.get<ChzzkCategoryLivesResponse>(`/service/v2/categories/${path}/lives`, {
+            params: { size: CATEGORY_PAGE_SIZE, sortType: 'POPULAR', ...cursor },
+          }),
+        `categoryLives(${path} p${page + 1})`,
+      );
+      const content = res?.data?.content;
+      if (!content || !Array.isArray(content.data)) {
+        if (page === 0) throw new Error(`Chzzk category ${path} could not be listed`);
+        break;
+      }
+      for (const item of content.data) {
+        const channelId = item.channel?.channelId;
+        if (!channelId || seen.has(channelId)) continue;
+        seen.add(channelId);
+        out.push({
+          channelIdentifier: channelId,
+          displayName: item.channel?.channelName || channelId,
+          concurrentViewers: item.concurrentUserCount ?? 0,
+          language: 'ko', // Chzzk is Korean-only
+          title: item.liveTitle ?? '',
+          gameName: item.liveCategoryValue ?? null,
+          startedAt: chzzkOpenDateToIso(item.openDate),
+          streamId: item.liveId != null ? String(item.liveId) : null,
+          platformCategoryId: item.liveCategory ?? null,
+        });
+      }
+      if (content.data.length === 0 || content.data.every((i) => (i.concurrentUserCount ?? 0) < floor)) break;
+      next = content.page?.next ?? null;
+      if (!next) break;
+    }
+    return out;
   }
 
   // ── Private: API fetching ───────────────────────────────────────────────

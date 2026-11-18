@@ -55,6 +55,20 @@ interface KickLivestreamResponse {
   category?: KickCategory;
 }
 
+/**
+ * Languages the category listing is asked for, one request each (see
+ * listCategoryByLanguage). Kick's own language filter values.
+ */
+export const KICK_LISTING_LANGUAGES = [
+  'en', 'es', 'pt', 'ar', 'tr', 'de', 'fr', 'ru', 'it', 'pl', 'nl', 'ja', 'ko', 'zh', 'id', 'th', 'vi', 'hi',
+  'sv', 'fi', 'no', 'da', 'cs', 'hu', 'ro', 'el', 'uk', 'he', 'fa', 'ms', 'tl', 'bg', 'sr', 'hr', 'sk', 'ca',
+  'bn', 'ur', 'az', 'ka', 'sq',
+];
+/** Requests in flight at once while asking per language. */
+const LANGUAGE_CONCURRENCY = 4;
+/** Languages that returned nothing are asked again this often. */
+const LANGUAGE_REPROBE_MS = 10 * 60_000;
+
 interface KickTokenResponse {
   access_token: string;
   token_type: string;
@@ -69,6 +83,8 @@ export class KickAdapter implements PlatformAdapter {
   private accessToken: string | null = null;
   private tokenExpiresAt = 0;
   private circuitOpen = false;
+  /** categoryId → languages that returned rows, and when all were last asked. */
+  private readonly languageState = new Map<number, { active: Set<string>; probedAt: number }>();
   private circuitOpenedAt = 0;
 
   constructor() {
@@ -457,6 +473,68 @@ export class KickAdapter implements PlatformAdapter {
 
     if (!result || !Array.isArray(result.data)) return [];
     return result.data.slice(0, 10).map((c) => ({ id: c.id, name: c.name }));
+  }
+
+  /**
+   * A category beyond the listing's 100 rows, for the live game tracker.
+   *
+   * The listing has no paging: every request returns at most the 100
+   * largest streams. It does take a language filter, and then returns that
+   * language's own 100 largest, so the union over languages reaches far
+   * below the global top 100 (GTA VI launch, 2026-11-18: 963 streams
+   * against 100, 406 of them above 50 viewers).
+   *
+   * Per-language requests are only made when the plain listing is full and
+   * still above `minViewers`; otherwise it is already complete. They are
+   * best effort: the first failure ends the pass and the plain listing
+   * still stands, and they never touch the circuit breaker.
+   */
+  async listCategoryByLanguage(
+    gameId: string,
+    opts: { minViewers: number },
+  ): Promise<DiscoveredStream[]> {
+    const base = await this.searchLiveStreams(gameId);
+    const target = parseInt(gameId, 10);
+    if (isNaN(target) || base.length < 100 || base.some((s) => s.concurrentViewers < opts.minViewers)) {
+      return base;
+    }
+
+    const state = this.languageState.get(target) ?? { active: new Set<string>(), probedAt: 0 };
+    const probeAll = Date.now() - state.probedAt >= LANGUAGE_REPROBE_MS;
+    const languages = probeAll ? KICK_LISTING_LANGUAGES : KICK_LISTING_LANGUAGES.filter((l) => state.active.has(l));
+
+    const found = new Map<string, DiscoveredStream>(base.map((s) => [s.channelIdentifier, s]));
+    const withRows = new Set<string>();
+    let failed = false;
+    for (let i = 0; i < languages.length && !failed; i += LANGUAGE_CONCURRENCY) {
+      await Promise.all(
+        languages.slice(i, i + LANGUAGE_CONCURRENCY).map(async (language) => {
+          try {
+            const { data } = await this.client.get<{ data: KickLivestreamResponse[] }>('/public/v1/livestreams', {
+              params: { limit: 100, sort: 'viewer_count', category_id: target, language },
+            });
+            const rows = Array.isArray(data?.data) ? data.data : [];
+            if (rows.length > 0) withRows.add(language);
+            for (const raw of rows) {
+              // The category filter has returned other categories before: check each row.
+              if (raw.category?.id !== target || !raw.slug || found.has(raw.slug)) continue;
+              found.set(raw.slug, this.parseLivestreamResponse(raw));
+            }
+          } catch (err) {
+            failed = true;
+            logger.debug(`Kick: language listing ${language} failed for category ${target}: ${(err as Error).message}`);
+          }
+        }),
+      );
+    }
+    if (probeAll && !failed) this.languageState.set(target, { active: withRows, probedAt: Date.now() });
+    else for (const l of withRows) state.active.add(l);
+
+    logger.info(
+      `Kick: category ${target} by language: ${found.size} livestreams from ${languages.length} language list(s)` +
+        (failed ? ' (pass cut short by a failed request)' : ''),
+    );
+    return [...found.values()];
   }
 
   async searchLiveStreams(

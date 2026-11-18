@@ -26,8 +26,10 @@ import type { YouTubeAdapter } from '../adapters/youtube';
 import type { DiscoveredStream } from '../adapters/types';
 import { YouTubeGameTracker, titleNamesGame, type YouTubeTrackerConfig } from './youtube-game-tracker';
 import { tiktokExtraCategories } from '../utils/tiktok-extra-categories';
+import { chzzkCategory, kickLanguageSplit } from '../utils/tracker-metadata';
+import type { ChzzkAdapter } from '../adapters/chzzk';
 
-type TrackedPlatform = 'twitch' | 'kick' | 'youtube' | 'soop' | 'tiktok';
+type TrackedPlatform = 'twitch' | 'kick' | 'youtube' | 'soop' | 'tiktok' | 'chzzk';
 
 /** SOOP's "this user has no picture" placeholder — a fixed-size asset. */
 export const SOOP_DEFAULT_AVATAR_BYTES = 2948;
@@ -213,7 +215,14 @@ export class GameTrackerService {
         (async () => {
           try {
             const kick = this.registry.getAdapter('kick') as KickAdapter;
-            const streams = await kick.searchLiveStreams(String(tracker.kick_category_id));
+            // Kick lists 100 streams and no more. A tracker that opts in
+            // (metadata.kick_language_split) also asks per language when
+            // that list is full and still above its viewer floor.
+            const streams = kickLanguageSplit(tracker.metadata)
+              ? await kick.listCategoryByLanguage(String(tracker.kick_category_id), {
+                  minViewers: tracker.min_ccv_threshold,
+                })
+              : await kick.searchLiveStreams(String(tracker.kick_category_id));
             for (const s of streams) {
               liveStreams.push({
                 platform: 'kick',
@@ -297,6 +306,31 @@ export class GameTrackerService {
         } catch (err) {
           failedPlatforms.add('tiktok');
             logger.warn(`[GameTracker:${tracker.slug}] TikTok buffer read failed`, {
+            error: (err as Error).message,
+          });
+        }
+      })());
+    }
+    // CHZZK: an authoritative category live-list like SOOP's, read down to
+    // the tracker's viewer floor. The category lives in metadata
+    // (chzzk_category_id / chzzk_category_name), not in a column.
+    const chzzk = chzzkCategory(tracker.metadata);
+    if (chzzk) {
+      fetches.push((async () => {
+        try {
+          const adapter = this.registry.getAdapter('chzzk') as ChzzkAdapter;
+          const streams = await adapter.listCategoryLives(chzzk.id, {
+            minViewers: tracker.min_ccv_threshold,
+          });
+          for (const s of streams) {
+            liveStreams.push({
+              platform: 'chzzk',
+              stream: { ...s, gameName: s.gameName ?? chzzk.name ?? null },
+            });
+          }
+        } catch (err) {
+          failedPlatforms.add('chzzk');
+          logger.warn(`[GameTracker:${tracker.slug}] Chzzk fetch failed`, {
             error: (err as Error).message,
           });
         }
@@ -478,6 +512,8 @@ export class GameTrackerService {
                 ? tracker.soop_category_name
               : platform === 'tiktok'
                 ? tracker.tiktok_category_name
+              : platform === 'chzzk'
+                ? chzzkCategory(tracker.metadata)?.name
               : tracker.name) ??
           null,
         started_at: stream.startedAt ? new Date(stream.startedAt) : null,
