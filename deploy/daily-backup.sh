@@ -4,16 +4,17 @@
 #
 # Run via cron (suggested 03:00 UTC, after PAS broadcasts end). Produces
 # a compressed pg_dump in $APP_DIR/backups/daily/ with rotation:
-#   - 3 most recent daily snapshots
-#   - 2 most recent SUNDAY snapshots (weekly retention)
+#   - 2 most recent daily snapshots
+#   - 1 most recent SUNDAY snapshot (weekly retention)
 #
-# Why so few: a dump is 8.7 GB and grows every day, the droplet disk is
-# 154 GB with the 41 GB database on it, and on 2026-09-27 the old
+# Why so few: a dump is 12 GB and grows every day, the droplet disk is
+# 154 GB with the 54 GB database on it, and on 2026-09-27 the old
 # retention (7 daily + 4 weekly) filled the disk at 03:14 UTC. Postgres
 # stopped accepting connections until space was freed by hand. The script
 # now checks free space before it writes, drops the oldest daily first
-# when short, and never leaves a half-written file behind. Backups off
-# the box are the real fix.
+# when short, and never leaves a half-written file behind. Retention went
+# from 3 + 2 to 2 + 1 on 2026-11-20 when the GTA VI tracker started
+# writing 5 million raw rows a day. Backups off the box are the real fix.
 #
 # To pull a snapshot down to your laptop:
 #   scp root@165.232.126.195:/opt/clutch-viewership-tracker/backups/daily/<file>.sql.gz ./
@@ -28,8 +29,8 @@ APP_DIR="/opt/clutch-viewership-tracker"
 DAILY_DIR="$APP_DIR/backups/daily"
 WEEKLY_DIR="$APP_DIR/backups/weekly"
 LOG_FILE="$APP_DIR/backups/daily-backup.log"
-KEEP_DAILY=3
-KEEP_WEEKLY=2
+KEEP_DAILY=2
+KEEP_WEEKLY=1
 
 mkdir -p "$DAILY_DIR" "$WEEKLY_DIR"
 

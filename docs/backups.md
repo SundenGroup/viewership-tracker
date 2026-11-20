@@ -7,8 +7,10 @@ Two scripts handle backups, both in `deploy/`.
 [`deploy/daily-backup.sh`](../deploy/daily-backup.sh) runs from cron at **03:00 UTC** every day. Produces a `pg_dump` only — no code, no config, since those live in git.
 
 Output:
-- `/opt/clutch-viewership-tracker/backups/daily/daily-YYYYMMDD-HHMMSS.sql.gz` — last 7 retained
-- `/opt/clutch-viewership-tracker/backups/weekly/weekly-YYYYMMDD-HHMMSS.sql.gz` — last 4 Sunday snapshots retained
+- `/opt/clutch-viewership-tracker/backups/daily/daily-YYYYMMDD-HHMMSS.sql.gz`: last 2 retained
+- `/opt/clutch-viewership-tracker/backups/weekly/weekly-YYYYMMDD-HHMMSS.sql.gz`: last 1 Sunday snapshot retained
+
+Retention was 7 + 4 until the disk filled on 2026-09-27, then 3 + 2, then 2 + 1 from 2026-11-20 (a dump is about 12 GB and the GTA VI tracker adds about 1.2 GB a day to the database). The script skips the dump rather than fill the disk when free space is short.
 
 Log: `/opt/clutch-viewership-tracker/backups/daily-backup.log`
 
